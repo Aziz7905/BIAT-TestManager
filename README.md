@@ -84,8 +84,6 @@ API documentation is available at:
 ## 👥 Team
 
 - **Project Lead**: Wael Abid
-- **Backend Developer**: Aziz Allah Barkaoui
-- **Frontend Developer**: Aziz Allah Barkaoui
-- **AI/ML Engineer**: Aziz Allah Barkaoui 
+- **ML Engineer**: Aziz Allah Barkaoui 
 - **QA Engineer**: Baccar Mihed
 
