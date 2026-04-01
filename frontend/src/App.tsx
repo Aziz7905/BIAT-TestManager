@@ -1,12 +1,5 @@
-import React from 'react';
-import Login from './app/features/auth/login';
+import AppRouter from "./router/AppRouter";
 
-function App() {
-  return (
-    <div>
-      <Login />
-    </div>
-  );
+export default function App() {
+  return <AppRouter />;
 }
-
-export default App;
