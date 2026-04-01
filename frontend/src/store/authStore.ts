@@ -22,9 +22,15 @@ const clearStoredTokens = (): void => {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 };
 
+const hasStoredSession = (): boolean =>
+  Boolean(
+    localStorage.getItem(ACCESS_TOKEN_KEY) ||
+      localStorage.getItem(REFRESH_TOKEN_KEY)
+  );
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-  isAuthenticated: Boolean(localStorage.getItem(ACCESS_TOKEN_KEY)),
+  isAuthenticated: hasStoredSession(),
   isLoading: false,
 
   async login(identifier: string, password: string) {
@@ -67,8 +73,9 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   async initializeAuth() {
     const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
 
-    if (!accessToken) {
+    if (!accessToken && !refreshToken) {
       set({
         user: null,
         isAuthenticated: false,
