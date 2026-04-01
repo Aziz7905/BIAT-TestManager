@@ -29,6 +29,7 @@ export default function HomePage() {
     role === "team_manager" ||
     role === "tester" ||
     role === "viewer";
+  const canSeeSpecifications = canSeeProjects;
 
   return (
     <div className="space-y-6">
@@ -55,6 +56,15 @@ export default function HomePage() {
               className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
             >
               Open Projects
+            </Link>
+          ) : null}
+
+          {canSeeSpecifications ? (
+            <Link
+              to={isAdmin ? "/admin/specifications" : "/specifications"}
+              className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+            >
+              Open Specifications
             </Link>
           ) : null}
 

@@ -1,0 +1,55 @@
+from django.urls import path
+
+from apps.specs.views import (
+    SpecificationDetailView,
+    SpecificationListCreateView,
+    SpecificationSourceDetailView,
+    SpecificationSourceImportView,
+    SpecificationSourceListCreateView,
+    SpecificationSourceParseView,
+    SpecificationSourceRecordDetailView,
+    SpecificationSourceRecordListView,
+)
+
+urlpatterns = [
+    path(
+        "specification-sources/",
+        SpecificationSourceListCreateView.as_view(),
+        name="specification-source-list-create",
+    ),
+    path(
+        "specification-sources/<uuid:pk>/",
+        SpecificationSourceDetailView.as_view(),
+        name="specification-source-detail",
+    ),
+    path(
+        "specification-sources/<uuid:pk>/parse/",
+        SpecificationSourceParseView.as_view(),
+        name="specification-source-parse",
+    ),
+    path(
+        "specification-sources/<uuid:pk>/import/",
+        SpecificationSourceImportView.as_view(),
+        name="specification-source-import",
+    ),
+    path(
+        "specification-sources/<uuid:source_pk>/records/",
+        SpecificationSourceRecordListView.as_view(),
+        name="specification-source-record-list",
+    ),
+    path(
+        "specification-sources/<uuid:source_pk>/records/<uuid:record_pk>/",
+        SpecificationSourceRecordDetailView.as_view(),
+        name="specification-source-record-detail",
+    ),
+    path(
+        "specifications/",
+        SpecificationListCreateView.as_view(),
+        name="specification-list-create",
+    ),
+    path(
+        "specifications/<uuid:pk>/",
+        SpecificationDetailView.as_view(),
+        name="specification-detail",
+    ),
+]

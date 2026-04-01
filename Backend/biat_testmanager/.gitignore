@@ -33,6 +33,10 @@ db.sqlite3
 db.sqlite3-journal
 media/
 staticfiles/
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-*
 
 # Environment Variables
 .env

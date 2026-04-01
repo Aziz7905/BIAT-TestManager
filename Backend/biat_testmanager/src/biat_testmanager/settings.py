@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.postgres',
     #third party apps
     'rest_framework',
     'rest_framework_simplejwt',
@@ -54,6 +55,7 @@ INSTALLED_APPS = [
 
     'apps.accounts.apps.AccountsConfig',
     'apps.projects.apps.ProjectsConfig',
+    'apps.specs.apps.SpecsConfig',
 ]
 
 
@@ -178,4 +180,59 @@ MEDIA_ROOT = BASE_DIR / "media"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+SPEC_EMBEDDING_MODEL_NAME = config(
+    "SPEC_EMBEDDING_MODEL_NAME",
+    default="BAAI/bge-m3",
+)
+SPEC_EMBEDDING_DEVICE_PREFERENCE = config(
+    "SPEC_EMBEDDING_DEVICE_PREFERENCE",
+    default="auto",
+)
+SPEC_EMBEDDING_BATCH_SIZE = config(
+    "SPEC_EMBEDDING_BATCH_SIZE",
+    default=2,
+    cast=int,
+)
+SPEC_EMBEDDING_MAX_LENGTH = config(
+    "SPEC_EMBEDDING_MAX_LENGTH",
+    default=1024,
+    cast=int,
+)
+SPEC_EMBEDDING_VECTOR_DIMENSIONS = config(
+    "SPEC_EMBEDDING_VECTOR_DIMENSIONS",
+    default=1024,
+    cast=int,
+)
+SPEC_EMBEDDING_NORMALIZE = config(
+    "SPEC_EMBEDDING_NORMALIZE",
+    default=True,
+    cast=bool,
+)
+SPEC_CHUNK_STRATEGY = config(
+    "SPEC_CHUNK_STRATEGY",
+    default="structure_aware_v1",
+)
+SPEC_CHUNK_MAX_CHARS = config(
+    "SPEC_CHUNK_MAX_CHARS",
+    default=1400,
+    cast=int,
+)
+SPEC_CHUNK_OVERLAP_CHARS = config(
+    "SPEC_CHUNK_OVERLAP_CHARS",
+    default=120,
+    cast=int,
+)
+MLFLOW_TRACKING_URI = config(
+    "MLFLOW_TRACKING_URI",
+    default=f"sqlite:///{(BASE_DIR / 'mlflow.db').as_posix()}",
+)
+MLFLOW_ARTIFACT_ROOT = config(
+    "MLFLOW_ARTIFACT_ROOT",
+    default=(BASE_DIR / "mlruns").resolve().as_uri(),
+)
+MLFLOW_EXPERIMENT_NAME = config(
+    "MLFLOW_EXPERIMENT_NAME",
+    default="biat-test-manager-specs",
+)
 

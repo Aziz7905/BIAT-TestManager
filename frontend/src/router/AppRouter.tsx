@@ -13,6 +13,7 @@ import OrganisationsPage from "../pages/OrganisationsPage";
 import TeamsPage from "../pages/TeamsPage";
 import ProfilePage from "../pages/ProfilePage";
 import ProjectsPage from "../pages/ProjectsPage";
+import SpecificationsPage from "../pages/SpecificationsPage";
 import ProtectedRoute from "./ProtectedRoute";
 import { useAuthStore } from "../store/authStore";
 import type { CurrentUser, UserProfileRole } from "../types/accounts";
@@ -57,6 +58,13 @@ function AdminLayout() {
 
             <Link to="/admin/projects" className="text-gray-700 hover:text-black">
               Projects
+            </Link>
+
+            <Link
+              to="/admin/specifications"
+              className="text-gray-700 hover:text-black"
+            >
+              Specifications
             </Link>
 
             <Link to="/admin/profile" className="text-gray-700 hover:text-black">
@@ -131,6 +139,12 @@ function AppShell() {
               </Link>
             ) : null}
 
+            {canSeeProjects ? (
+              <Link to="/specifications" className="text-gray-700 hover:text-black">
+                Specifications
+              </Link>
+            ) : null}
+
             {isTeamManager ? (
               <Link to="/team/members" className="text-gray-700 hover:text-black">
                 Team Members
@@ -197,6 +211,7 @@ export default function AppRouter() {
             }
           >
             <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/specifications" element={<SpecificationsPage />} />
           </Route>
 
           <Route element={<ProtectedRoute allowedRoles={["team_manager"]} />}>
@@ -217,6 +232,7 @@ export default function AppRouter() {
             <Route path="/admin/users" element={<AdminUserPage />} />
             <Route path="/admin/teams" element={<TeamsPage />} />
             <Route path="/admin/projects" element={<ProjectsPage />} />
+            <Route path="/admin/specifications" element={<SpecificationsPage />} />
 
             <Route element={<ProtectedRoute allowedRoles={["platform_owner"]} />}>
               <Route
