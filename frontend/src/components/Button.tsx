@@ -1,3 +1,4 @@
+/** Shared button styles aligned with the BIAT Test Manager brand palette. */
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger";
@@ -13,16 +14,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    "bg-gray-900 text-white hover:bg-black disabled:hover:bg-gray-900",
+    "border border-[rgb(var(--color-primary))] bg-[rgb(var(--color-primary))] text-white shadow-sm hover:bg-[rgb(var(--color-primary))/0.94] disabled:hover:bg-[rgb(var(--color-primary))]",
   secondary:
-    "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:hover:bg-white",
-  danger: "bg-red-600 text-white hover:bg-red-700 disabled:hover:bg-red-600",
+    "border border-[rgb(var(--color-primary-light))] bg-transparent text-[rgb(var(--color-primary-light))] hover:bg-[rgb(var(--color-primary-light))/0.10] hover:text-[rgb(var(--color-primary))] disabled:hover:bg-transparent",
+  danger:
+    "border border-red-200 bg-white text-red-500 hover:bg-red-50 disabled:hover:bg-white",
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-xs",
-  md: "px-4 py-2 text-sm",
-  lg: "px-4 py-3 text-sm",
+  sm: "px-3 py-2 text-xs",
+  md: "px-4 py-2.5 text-sm",
+  lg: "px-5 py-3 text-sm",
 };
 
 export function Button({
@@ -44,7 +46,7 @@ export function Button({
     <button
       type={type}
       disabled={isDisabled}
-      className={`rounded-lg font-medium disabled:opacity-60 ${variantClass} ${sizeClass} ${className}`}
+      className={`inline-flex items-center justify-center rounded-2xl font-semibold tracking-tight transition focus-visible:ring-2 focus-visible:ring-[rgb(var(--color-primary-light))] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgb(var(--color-surface))] disabled:cursor-not-allowed disabled:opacity-60 ${variantClass} ${sizeClass} ${className}`}
       {...props}
     >
       {isLoading ? (

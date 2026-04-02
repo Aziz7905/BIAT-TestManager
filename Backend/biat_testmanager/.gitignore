@@ -37,6 +37,7 @@ mlruns/
 mlartifacts/
 mlflow.db
 mlflow.db-*
+HuggingFace_models/
 
 # Environment Variables
 .env

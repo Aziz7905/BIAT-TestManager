@@ -1,3 +1,4 @@
+/** Organisation management workspace refreshed to match the branded admin surfaces. */
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
@@ -11,6 +12,7 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { FormInput } from "../components/FormInput";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
+import { Badge } from "../components/ui";
 import type { Organization, OrganizationFormData } from "../types/accounts";
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -167,42 +169,42 @@ export default function OrganisationsPage() {
     );
   } else if (organizations.length === 0) {
     organizationsContent = (
-      <div className="p-6 text-sm text-gray-500">No organisations found.</div>
+      <div className="p-6 text-sm text-muted">No organisations found.</div>
     );
   } else {
     organizationsContent = (
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-border">
+        <thead className="bg-bg">
           <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Name
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Domain
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Created
             </th>
-            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Actions
             </th>
           </tr>
         </thead>
 
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-border">
           {organizations.map((organization) => {
             const isDeletingThisOrganization =
               deletingOrganizationId === organization.id;
 
             return (
-              <tr key={organization.id}>
-                <td className="px-6 py-4 text-sm text-gray-900">
+              <tr key={organization.id} className="transition hover:bg-bg">
+                <td className="px-6 py-4 text-sm font-medium text-text">
                   {organization.name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {organization.domain}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {new Date(organization.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4 text-right text-sm">
@@ -241,13 +243,14 @@ export default function OrganisationsPage() {
   const submitLabel = editingOrganization ? "Update" : "Create";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
+          <Badge variant="tag">Administration</Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">
             Organisations
           </h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-2 text-sm leading-6 text-muted">
             Manage platform organisations.
           </p>
         </div>
@@ -256,7 +259,7 @@ export default function OrganisationsPage() {
       </div>
 
       {successMessage ? (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
           {successMessage}
         </div>
       ) : null}
@@ -269,7 +272,7 @@ export default function OrganisationsPage() {
         />
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel">
         {organizationsContent}
       </div>
 

@@ -1,3 +1,4 @@
+/** Route guard with a branded loading state for authenticated app sections. */
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import type { UserProfileRole } from "../types/accounts";
@@ -23,7 +24,7 @@ export default function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
   // ======================
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 text-sm text-gray-600">
+      <div className="flex min-h-screen items-center justify-center bg-bg text-sm text-muted">
         Loading...
       </div>
     );

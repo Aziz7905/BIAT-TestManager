@@ -1,3 +1,4 @@
+/** Dismissible inline error banner with warm contrast and clear hierarchy. */
 import { useState } from "react";
 
 interface ErrorMessageProps {
@@ -24,7 +25,7 @@ export function ErrorMessage({
 
   return (
     <div
-      className={`rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 ${className}`}
+      className={`rounded-2xl border border-red-200 bg-red-50/80 px-4 py-3 text-sm text-red-600 shadow-sm ${className}`}
       role="alert"
       aria-live="polite"
     >
@@ -35,7 +36,7 @@ export function ErrorMessage({
           <button
             type="button"
             onClick={handleDismiss}
-            className="text-red-700 hover:text-red-900"
+            className="text-red-500 transition hover:text-red-700"
             aria-label="Dismiss error"
           >
             <svg

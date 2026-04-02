@@ -1,3 +1,4 @@
+/** Shared component exports for the branded BIAT Test Manager frontend. */
 export { Button } from "./Button";
 
 export { ErrorMessage } from "./ErrorMessage";

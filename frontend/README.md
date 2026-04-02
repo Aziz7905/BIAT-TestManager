@@ -1,73 +1,123 @@
-# React + TypeScript + Vite
+# BIAT Test Manager Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This frontend is the React application for BIAT Test Manager. It provides the authenticated workspace for project navigation, specifications, test design, and the first Layer 5 automation controls.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Vite
+- React
+- TypeScript
+- Tailwind CSS
+- React Router
+- Zustand
+- Axios
 
-## React Compiler
+## Current Frontend Scope
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Implemented areas include:
 
-## Expanding the ESLint configuration
+- authentication flow
+- protected app shell
+- project listing and project workspace
+- specifications views
+- manual test design views
+- requirement traceability views
+- minimal automation controls inside test-case detail
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Layer 5 frontend is intentionally small right now. It supports:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- listing automation scripts for a selected test case
+- creating and editing scripts
+- validating scripts
+- activating and deactivating scripts
+- queueing a test execution
+- viewing execution history
+- pause, resume, and stop actions
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Important Product Notes
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- The current workspace is functional but still needs structural UX refinement
+- The UI should keep BA source artifacts, normalized requirements, test design, and execution concerns conceptually separate
+- Automation currently reflects the backend v1 execution model, which is Python Playwright first
+
+## Project Structure
+
+```text
+frontend/
+├─ public/
+├─ src/
+│  ├─ api/
+│  ├─ components/
+│  ├─ pages/
+│  ├─ router/
+│  ├─ store/
+│  ├─ types/
+│  └─ assets/
+├─ package.json
+├─ vite.config.ts
+└─ tsconfig*.json
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment Variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Create `frontend/.env` if it does not exist:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000/api
 ```
+
+## Install Dependencies
+
+From `frontend`:
+
+```powershell
+npm install
+```
+
+## Start the Frontend
+
+From `frontend`:
+
+```powershell
+npm run dev
+```
+
+The Vite app is typically available at `http://127.0.0.1:5173/`.
+
+## Build and Type Check
+
+```powershell
+npm run build
+```
+
+## Lint
+
+```powershell
+npm run lint
+```
+
+## Backend Dependency
+
+The frontend expects the Django API to be running locally. In normal development, start:
+
+1. PostgreSQL
+2. Redis
+3. Django API
+4. Celery worker
+5. Frontend Vite app
+
+## Routing Notes
+
+The app uses protected routes and a project-first workspace model. The main authenticated user flow centers on:
+
+- login
+- projects
+- project workspace
+- specifications
+- team/admin pages depending on role
+
+## Known Limitations
+
+- The current project workspace is still heavier than intended
+- Navigation and tree structure need a later UX simplification pass
+- Automation is embedded into the existing test-case detail rather than having a fully dedicated execution workspace

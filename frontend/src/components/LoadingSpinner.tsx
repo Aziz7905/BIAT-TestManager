@@ -1,3 +1,4 @@
+/** Brand-colored loading spinner for async surfaces and modal states. */
 type SpinnerSize = "sm" | "md" | "lg";
 
 interface LoadingSpinnerProps {
@@ -26,7 +27,7 @@ export function LoadingSpinner({
       aria-label={label}
     >
       <div
-        className={`${sizeClass} animate-spin rounded-full border-2 border-gray-300 border-t-gray-900`}
+        className={`${sizeClass} animate-spin rounded-full border-2 border-primary-light/25 border-t-primary`}
         aria-hidden="true"
       />
       <span className="sr-only">{label}</span>

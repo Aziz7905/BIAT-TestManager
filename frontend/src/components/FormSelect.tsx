@@ -1,3 +1,4 @@
+/** Branded select field with palette-safe focus and helper messaging. */
 import { forwardRef } from "react";
 import type { SelectHTMLAttributes } from "react";
 
@@ -37,13 +38,15 @@ export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
         ? `${selectId}-helper`
         : undefined;
 
-    const borderClass = error ? "border-red-500" : "border-gray-300";
+    const borderClass = error
+      ? "border-red-300 focus-visible:ring-red-200"
+      : "border-border hover:border-primary-light/50 focus-visible:ring-primary-light/20";
 
     return (
       <div className={containerClassName}>
         <label
           htmlFor={selectId}
-          className="mb-1.5 block text-sm font-medium text-gray-700"
+          className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
         >
           {label}
         </label>
@@ -51,7 +54,7 @@ export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
         <select
           ref={ref}
           id={selectId}
-          className={`w-full rounded-lg border px-4 py-2.5 text-sm outline-none focus:border-gray-900 ${borderClass} ${className}`}
+          className={`w-full rounded-2xl border bg-surface px-4 py-3 text-sm text-text outline-none transition focus-visible:ring-4 ${borderClass} ${className}`}
           aria-invalid={error ? "true" : "false"}
           aria-describedby={describedBy}
           {...props}
@@ -70,13 +73,13 @@ export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
         </select>
 
         {error ? (
-          <p id={`${selectId}-error`} className="mt-1 text-sm text-red-600">
+          <p id={`${selectId}-error`} className="mt-2 text-sm text-red-500">
             {error}
           </p>
         ) : null}
 
         {!error && helperText ? (
-          <p id={`${selectId}-helper`} className="mt-1 text-sm text-gray-500">
+          <p id={`${selectId}-helper`} className="mt-2 text-sm text-muted">
             {helperText}
           </p>
         ) : null}

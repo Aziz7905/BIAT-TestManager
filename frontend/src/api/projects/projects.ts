@@ -1,3 +1,4 @@
+/** Client helpers for the BIAT Test Manager project and project-member endpoints. */
 import { apiClient } from "../client";
 import type {
   Project,
@@ -10,6 +11,11 @@ import type {
 
 export const getProjects = async (): Promise<Project[]> => {
   const response = await apiClient.get<Project[]>("/projects/");
+  return response.data;
+};
+
+export const getProject = async (projectId: string): Promise<Project> => {
+  const response = await apiClient.get<Project>(`/projects/${projectId}/`);
   return response.data;
 };
 

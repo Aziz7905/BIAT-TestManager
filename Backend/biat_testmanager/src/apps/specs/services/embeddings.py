@@ -34,6 +34,7 @@ class EmbeddingResult:
 class LocalEmbeddingService:
     def __init__(self):
         self.model_name = settings.SPEC_EMBEDDING_MODEL_NAME
+        self.local_files_only = settings.SPEC_EMBEDDING_LOCAL_FILES_ONLY
         self.device_preference = settings.SPEC_EMBEDDING_DEVICE_PREFERENCE
         self.default_batch_size = settings.SPEC_EMBEDDING_BATCH_SIZE
         self.max_length = settings.SPEC_EMBEDDING_MAX_LENGTH
@@ -70,7 +71,11 @@ class LocalEmbeddingService:
 
             from sentence_transformers import SentenceTransformer
 
-            model = SentenceTransformer(self.model_name, device=device)
+            model = SentenceTransformer(
+                self.model_name,
+                device=device,
+                local_files_only=self.local_files_only,
+            )
             model.max_seq_length = self.max_length
 
             if device == "cuda" and hasattr(model, "half"):
@@ -175,4 +180,3 @@ def get_embedding_service() -> LocalEmbeddingService:
     if _SERVICE is None:
         _SERVICE = LocalEmbeddingService()
     return _SERVICE
-

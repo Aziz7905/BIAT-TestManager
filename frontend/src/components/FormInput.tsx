@@ -1,3 +1,4 @@
+/** Branded text input with consistent labels, helper text, and focus treatment. */
 import { forwardRef } from "react";
 import type { InputHTMLAttributes } from "react";
 
@@ -28,13 +29,15 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
         ? `${inputId}-helper`
         : undefined;
 
-    const borderClass = error ? "border-red-500" : "border-gray-300";
+    const borderClass = error
+      ? "border-red-300 focus-visible:ring-red-200"
+      : "border-border hover:border-primary-light/50 focus-visible:ring-primary-light/20";
 
     return (
       <div className={containerClassName}>
         <label
           htmlFor={inputId}
-          className="mb-1.5 block text-sm font-medium text-gray-700"
+          className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
         >
           {label}
         </label>
@@ -42,20 +45,20 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
         <input
           ref={ref}
           id={inputId}
-          className={`w-full rounded-lg border px-4 py-2.5 text-sm outline-none focus:border-gray-900 ${borderClass} ${className}`}
+          className={`w-full rounded-2xl border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 ${borderClass} ${className}`}
           aria-invalid={error ? "true" : "false"}
           aria-describedby={describedBy}
           {...props}
         />
 
         {error ? (
-          <p id={`${inputId}-error`} className="mt-1 text-sm text-red-600">
+          <p id={`${inputId}-error`} className="mt-2 text-sm text-red-500">
             {error}
           </p>
         ) : null}
 
         {!error && helperText ? (
-          <p id={`${inputId}-helper`} className="mt-1 text-sm text-gray-500">
+          <p id={`${inputId}-helper`} className="mt-2 text-sm text-muted">
             {helperText}
           </p>
         ) : null}

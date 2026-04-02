@@ -49,6 +49,20 @@ export interface QTestPreview {
   expected_result: string;
 }
 
+export type SpecificationCoverageStatus = "covered" | "uncovered";
+
+export interface LinkedTestCasePreview {
+  id: string;
+  title: string;
+  status: string;
+  automation_status: string;
+  version: number;
+  scenario_id: string;
+  scenario_title: string;
+  suite_id: string;
+  suite_name: string;
+}
+
 export interface Specification {
   id: string;
   project: string;
@@ -74,6 +88,11 @@ export interface Specification {
   can_manage: boolean;
   qtest_preview: QTestPreview;
   chunks: SpecChunk[];
+  linked_test_case_count: number;
+  linked_scenario_count: number;
+  linked_suite_count: number;
+  linked_test_cases: LinkedTestCasePreview[];
+  coverage_status: SpecificationCoverageStatus;
   created_at: string;
   updated_at: string;
 }

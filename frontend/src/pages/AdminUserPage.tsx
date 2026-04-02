@@ -1,3 +1,4 @@
+/** User management workspace refreshed to match the branded shell and controls. */
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
@@ -13,6 +14,7 @@ import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
+import { Badge } from "../components/ui";
 import { useAuthStore } from "../store/authStore";
 import type {
   AdminCreateUserPayload,
@@ -344,32 +346,32 @@ export default function AdminUserPage() {
     );
   } else if (visibleUsers.length === 0) {
     usersContent = (
-      <div className="p-6 text-sm text-gray-500">No users found.</div>
+      <div className="p-6 text-sm text-muted">No users found.</div>
     );
   } else {
     usersContent = (
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-border">
+        <thead className="bg-bg">
           <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Name
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Email
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Role
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Team
             </th>
-            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Actions
             </th>
           </tr>
         </thead>
 
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-border">
           {visibleUsers.map((appUser) => {
             const teamNames = appUser.profile?.team_memberships?.map(
               (membership) => membership.team_name
@@ -379,17 +381,21 @@ export default function AdminUserPage() {
             const isDeletingThisUser = deletingUserId === appUser.id;
 
             return (
-              <tr key={appUser.id}>
-                <td className="px-6 py-4 text-sm text-gray-900">
+              <tr key={appUser.id} className="transition hover:bg-bg">
+                <td className="px-6 py-4 text-sm font-medium text-text">
                   {appUser.first_name} {appUser.last_name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {appUser.email}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {appUser.profile?.role ?? "-"}
+                <td className="px-6 py-4 text-sm text-muted">
+                  {appUser.profile?.role ? (
+                    <Badge variant="tag">{appUser.profile.role}</Badge>
+                  ) : (
+                    "-"
+                  )}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {teamDisplay}
                 </td>
                 <td className="px-6 py-4 text-right text-sm">
@@ -412,9 +418,7 @@ export default function AdminUserPage() {
                         Delete
                       </Button>
                     </div>
-                  ) : (
-                    <span className="text-gray-400">View only</span>
-                  )}
+                  ) : <span className="text-muted">View only</span>}
                 </td>
               </tr>
             );
@@ -425,13 +429,14 @@ export default function AdminUserPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
+          <Badge variant="tag">{isTeamManager ? "Team workspace" : "Administration"}</Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">
             {isTeamManager ? "Team Members" : "Users"}
           </h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-2 text-sm leading-6 text-muted">
             {isTeamManager
               ? "Review and manage the members assigned to your team."
               : "Manage users in your organisation."}
@@ -442,7 +447,7 @@ export default function AdminUserPage() {
       </div>
 
       {successMessage ? (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
           {successMessage}
         </div>
       ) : null}
@@ -455,7 +460,7 @@ export default function AdminUserPage() {
         />
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel">
         {usersContent}
       </div>
 
@@ -556,7 +561,7 @@ export default function AdminUserPage() {
               />
               <label
                 htmlFor="create-is-staff"
-                className="text-sm text-gray-700"
+                className="text-sm text-text"
               >
                 Django staff access
               </label>
@@ -683,7 +688,7 @@ export default function AdminUserPage() {
                 }
                 className="h-4 w-4"
               />
-              <label htmlFor="edit-is-staff" className="text-sm text-gray-700">
+              <label htmlFor="edit-is-staff" className="text-sm text-text">
                 Django staff access
               </label>
             </div>

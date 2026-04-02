@@ -1,10 +1,7 @@
 from .base import (
-    ParsedSourceRecord,
     ParsedSourceResult,
     SpecificationSourceParseError,
-    build_reference_from_row,
-    build_title_from_row,
-    row_to_content,
+    build_record_from_row,
 )
 
 
@@ -25,6 +22,7 @@ class XLSXSpecificationSourceParser:
 
         records = []
         column_mapping: dict[str, list[str]] = {}
+        languages: set[str] = set()
 
         for sheet in workbook.worksheets:
             rows = list(sheet.iter_rows(values_only=True))
@@ -42,17 +40,14 @@ class XLSXSpecificationSourceParser:
                 if not any(str(value).strip() for value in row.values() if value is not None):
                     continue
 
-                title = build_title_from_row(row, f"{sheet.title} row {row_offset}")
-                records.append(
-                    ParsedSourceRecord(
-                        title=title,
-                        content=row_to_content(row, ignore_keys=["title", "summary", "name"]),
-                        external_reference=build_reference_from_row(row),
-                        section_label=sheet.title,
-                        row_number=row_offset,
-                        record_metadata=row,
-                    )
+                record = build_record_from_row(
+                    row,
+                    fallback_title=f"{sheet.title} row {row_offset}",
+                    default_section_label=sheet.title,
+                    row_number=row_offset,
                 )
+                languages.add(record.record_metadata.get("language", "unknown"))
+                records.append(record)
 
         return ParsedSourceResult(
             records=records,
@@ -60,7 +55,8 @@ class XLSXSpecificationSourceParser:
                 "filename": source.file.name.split("/")[-1],
                 "format": "xlsx",
                 "sheet_count": len(workbook.worksheets),
+                "languages": sorted(language for language in languages if language),
+                "parser_strategy": "structured_tabular_v1",
             },
             column_mapping=column_mapping,
         )
-

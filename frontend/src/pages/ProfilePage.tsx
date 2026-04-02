@@ -1,3 +1,4 @@
+/** Profile workspace updated to use the shared brand surfaces and spacing system. */
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -10,6 +11,7 @@ import { ErrorMessage } from "../components/ErrorMessage";
 import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { Badge } from "../components/ui";
 import { useAuthStore } from "../store/authStore";
 import type {
   ChangePasswordPayload,
@@ -223,27 +225,28 @@ export default function ProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-gray-200 bg-white">
+      <div className="flex min-h-[220px] items-center justify-center rounded-[28px] border border-border bg-surface shadow-sm">
         <LoadingSpinner size="lg" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">My Profile</h1>
-        <p className="mt-1 text-sm text-gray-600">
+    <div className="space-y-6">
+      <div>
+        <Badge variant="tag">Account workspace</Badge>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">My Profile</h1>
+        <p className="mt-2 text-sm leading-6 text-muted">
           Update your account details, integrations, and notification settings.
         </p>
       </div>
 
       <div className="space-y-6">
-        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Account</h2>
+        <section className="rounded-[28px] border border-border bg-surface p-6 shadow-panel">
+          <h2 className="mb-4 text-lg font-semibold tracking-tight text-text">Account</h2>
 
           {profileSuccessMessage ? (
-            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            <div className="mb-4 rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
               {profileSuccessMessage}
             </div>
           ) : null}
@@ -330,7 +333,7 @@ export default function ProfilePage() {
             </div>
 
             <div>
-              <h3 className="mb-4 text-base font-semibold text-gray-900">
+              <h3 className="mb-4 text-base font-semibold tracking-tight text-text">
                 Integrations
               </h3>
 
@@ -366,7 +369,7 @@ export default function ProfilePage() {
             </div>
 
             <div>
-              <h3 className="mb-4 text-base font-semibold text-gray-900">
+              <h3 className="mb-4 text-base font-semibold tracking-tight text-text">
                 Notifications
               </h3>
 
@@ -384,7 +387,7 @@ export default function ProfilePage() {
                 />
 
                 <div className="flex items-end">
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <label className="flex items-center gap-2 text-sm text-text">
                     <input
                       type="checkbox"
                       checked={Boolean(profileForm.notifications_enabled)}
@@ -464,13 +467,13 @@ export default function ProfilePage() {
           </form>
         </section>
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">
+        <section className="rounded-[28px] border border-border bg-surface p-6 shadow-panel">
+          <h2 className="mb-4 text-lg font-semibold tracking-tight text-text">
             Change Password
           </h2>
 
           {passwordSuccessMessage ? (
-            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            <div className="mb-4 rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
               {passwordSuccessMessage}
             </div>
           ) : null}

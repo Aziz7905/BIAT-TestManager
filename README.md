@@ -1,89 +1,140 @@
 # BIAT Test Manager
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
-![Django](https://img.shields.io/badge/django-5.x-green.svg)
-![React](https://img.shields.io/badge/react-18.x-blue.svg)
+BIAT Test Manager is a QA platform for managing specifications, designing tests, maintaining requirement traceability, and running browser automation from a single workspace.
 
-An intelligent test management and automation platform that leverages artificial intelligence to revolutionize the software quality assurance lifecycle in banking environments.
+The product is being built in layers:
 
-## 🎯 Project Overview
+- Layer 1: accounts and tenancy
+- Layer 2: projects and membership
+- Layer 3: specification ingestion, normalization, and RAG foundations
+- Layer 4: manual qTest-like test design and requirement traceability
+- Layer 5: automation and execution
 
-BIAT Test Manager is an AI-powered testing platform inspired by industry leaders like Focus & Thunders. It combines comprehensive test management with AI-driven test generation and live execution capabilities, enabling human-AI collaboration in software testing.
+The current focus is a strong manual-first QA product with clean execution foundations. AI and agent workflows are planned to sit on top of that foundation later.
 
-## 🚀 Key Features
+## Current Capabilities
 
-### 1. **Core Platform**
-- Project and test management structures
-- User authentication and role-based access control
-- Core data models: Requirements, Test Suites, Scenarios, Test Cases, Execution Sessions
-- Complete traceability from requirements to test results
+- Multi-tenant project structure with teams, projects, and project roles
+- Specification ingestion from BA-owned source artifacts
+- Normalized requirement records with project-level traceability
+- Manual test design with `suite -> scenario -> test case`
+- Requirement coverage at the test-case level
+- Automation script storage and execution history
+- Celery-backed execution pipeline with Playwright support in v1
 
-### 2. **Requirement Ingestion & AI Test Generation**
-- Multi-source requirement ingestion:
-  - CSV, Excel... file uploads
-  - Jira issue synchronization
-  - Unified requirement normalization
-- AI-powered test generation:
-  - Automatic test suite generation
-  - Intelligent test scenario creation
-  - Advanced coverage analysis
-- Human review and approval workflow
-- Full requirement-to-test traceability
+## Current Layer 5 Status
 
-### 3. **Execution Engine & Real-time Streaming**
-- Automated test execution with Playwright
-- Parallel test execution support
-- Real-time streaming of:
-  - Execution states (running, passed, failed)
-  - Live logs
-  - Screenshots and videos
-- Reliable results storage and history
+Layer 5 is now partially implemented.
 
-### 4. **Live Control & Human Intervention** ⭐
-  - Pause/Resume/Stop execution controls
-  - Manual browser takeover during execution
-  - State preservation and resume capability
-- Handle unexpected UI behavior
-- Stabilization and error recovery
-- Human-AI collaborative testing
+- Backend automation app exists
+- `AutomationScript`, `TestExecution`, `ExecutionStep`, `TestResult`, `ExecutionSchedule`, and `HealingEvent` schema are implemented
+- Celery + Redis execution flow is wired
+- Only `Playwright` with `Python` scripts is runnable in v1
+- `Selenium` exists in the schema but is not runnable yet
+- Frontend includes a minimal automation section inside the project workspace test-case detail
 
-### 5. **Test Results Dashboard & CI/CD Integration**
-- Comprehensive results dashboard:
-  - Pass/fail metrics
-  - Execution time analytics
-  - Screenshot gallery
-- Jenkins CI/CD pipeline integration
-- Export runnable Playwright/Selenium test artifacts
+## Architecture
 
-## 🏗️ Architecture
+### Backend
 
-### Tech Stack
+- Django + Django REST Framework
+- PostgreSQL
+- pgvector
+- Celery
+- Redis
+- MLflow
+- Playwright
 
-**Backend:**
-- Django 5.x + Django REST Framework
-- Django Channels (WebSockets)
-- PostgreSQL (Database)
-- Redis (Caching & Message Broker)
+Main backend apps:
 
-**Frontend:**
-- React 18 + Vite
-- Tailwind CSS + shadcn/ui
-- Socket.io-client (Real-time updates)
+- `accounts`
+- `projects`
+- `specs`
+- `testing`
+- `automation`
 
-**AI/Automation:**
-- MCP servers like Playwright MCP etc...
-- LangChain (LLM orchestration) / LangGraph
-- Playwright (Browser automation)
+### Frontend
 
-## 📚 API Documentation
+- Vite
+- React
+- TypeScript
+- Tailwind CSS
+- Zustand
+- Axios
 
-API documentation is available at:
-- Swagger UI: `http://localhost:8000/api/docs/`
+## Repository Layout
 
-## 👥 Team
+```text
+BIAT-TestManager/
+├─ Backend/
+│  └─ biat_testmanager/
+│     ├─ pyproject.toml
+│     ├─ README.md
+│     └─ src/
+│        ├─ manage.py
+│        ├─ biat_testmanager/
+│        └─ apps/
+│           ├─ accounts/
+│           ├─ projects/
+│           ├─ specs/
+│           ├─ testing/
+│           └─ automation/
+├─ frontend/
+│  ├─ package.json
+│  ├─ README.md
+│  └─ src/
+└─ README.md
+```
 
-- **Project Lead**: Wael Abid
-- **ML Engineer**: Aziz Allah Barkaoui 
-- **QA Engineer**: Baccar Mihed
+## Quick Start
 
+### 1. Backend
+
+See the backend guide in [Backend/biat_testmanager/README.md](Backend/biat_testmanager/README.md).
+
+### 2. Frontend
+
+See the frontend guide in [frontend/README.md](frontend/README.md).
+
+## Local Runtime Overview
+
+Typical local development uses three terminals:
+
+1. Django API
+2. Frontend Vite app
+3. Celery worker
+
+Redis is also required for async execution.
+
+## Product Model
+
+These distinctions matter in the codebase and in the UI:
+
+- `SpecificationSource`: raw BA-owned source artifact
+- `SpecificationSourceRecord`: parsed row or extracted source record
+- `Specification`: normalized internal requirement
+- `TestSuite -> TestScenario -> TestCase`: QA-owned manual test design layer
+- `AutomationScript/TestExecution/...`: execution layer
+
+## Important Limitations Right Now
+
+- The frontend workspace is functional but still needs structural UX refinement
+- Layer 5 UI is intentionally minimal for now
+- Playwright execution is Python-only in v1
+- No mature releases/cycles/runs dashboard yet
+- AI generation and agent orchestration are not the current product focus
+
+## Suggested Startup Order
+
+1. Start PostgreSQL
+2. Start Redis
+3. Run Django migrations
+4. Start Django server
+5. Start Celery worker
+6. Start the frontend app
+
+## Team
+
+- Project Lead: Wael Abid
+- ML Engineer: Aziz Allah Barkaoui
+- QA Engineer: Baccar Mihed

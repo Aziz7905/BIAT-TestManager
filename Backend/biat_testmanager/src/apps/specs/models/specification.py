@@ -1,8 +1,9 @@
-import uuid
+﻿import uuid
 
 from django.apps import apps as django_apps
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 from apps.projects.models import Project
 
@@ -69,4 +70,7 @@ class Specification(models.Model):
             suite_model = django_apps.get_model("testing", "TestSuite")
         except LookupError:
             return []
-        return suite_model.objects.filter(specification=self)
+        return suite_model.objects.filter(
+            Q(specification=self) |
+            Q(scenarios__cases__linked_specifications=self)
+        ).distinct()

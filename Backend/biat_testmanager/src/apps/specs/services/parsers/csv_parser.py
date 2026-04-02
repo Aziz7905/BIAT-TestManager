@@ -2,12 +2,9 @@ import csv
 import io
 
 from .base import (
-    ParsedSourceRecord,
     ParsedSourceResult,
     SpecificationSourceParseError,
-    build_reference_from_row,
-    build_title_from_row,
-    row_to_content,
+    build_record_from_row,
 )
 
 
@@ -29,29 +26,28 @@ class CSVSpecificationSourceParser:
             raise SpecificationSourceParseError("The CSV file does not contain headers.")
 
         records = []
+        languages: set[str] = set()
         for index, row in enumerate(reader):
             if not any(str(value).strip() for value in row.values() if value is not None):
                 continue
 
-            title = build_title_from_row(row, f"{source.name} row {index + 1}")
-            records.append(
-                ParsedSourceRecord(
-                    title=title,
-                    content=row_to_content(row, ignore_keys=["title", "summary", "name"]),
-                    external_reference=build_reference_from_row(row),
-                    row_number=index + 2,
-                    record_metadata=row,
-                )
+            record = build_record_from_row(
+                row,
+                fallback_title=f"{source.name} row {index + 1}",
+                row_number=index + 2,
             )
+            languages.add(record.record_metadata.get("language", "unknown"))
+            records.append(record)
 
         return ParsedSourceResult(
             records=records,
             source_metadata={
                 "filename": source.file.name.split("/")[-1],
                 "format": "csv",
+                "languages": sorted(language for language in languages if language),
+                "parser_strategy": "structured_tabular_v1",
             },
             column_mapping={
                 "columns": [field for field in reader.fieldnames if field],
             },
         )
-

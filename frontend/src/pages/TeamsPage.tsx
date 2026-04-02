@@ -1,3 +1,4 @@
+/** Team management workspace aligned with the branded shell and data surfaces. */
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
@@ -18,6 +19,7 @@ import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
+import { Badge } from "../components/ui";
 import { useAuthStore } from "../store/authStore";
 import type {
   AdminUser,
@@ -664,61 +666,61 @@ export default function TeamsPage() {
     );
   } else if (visibleTeams.length === 0) {
     teamsContent = (
-      <div className="p-6 text-sm text-gray-500">No teams found.</div>
+      <div className="p-6 text-sm text-muted">No teams found.</div>
     );
   } else {
     teamsContent = (
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-border">
+        <thead className="bg-bg">
           <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Team
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Organisation
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Manager
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Members
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               AI Provider
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               AI Model
             </th>
-            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Actions
             </th>
           </tr>
         </thead>
 
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-border">
           {visibleTeams.map((team) => {
             const isDeletingThisTeam = deletingTeamId === team.id;
 
             return (
-              <tr key={team.id}>
-                <td className="px-6 py-4 text-sm text-gray-900">
+              <tr key={team.id} className="transition hover:bg-bg">
+                <td className="px-6 py-4 text-sm font-medium text-text">
                   {team.name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {team.organization_name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {team.manager_name ?? "-"}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {team.member_names.length > 0
                     ? team.member_names.join(", ")
                     : "-"}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {team.ai_provider_name ?? "-"}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {team.ai_model ?? "-"}
                 </td>
                 <td className="px-6 py-4 text-right text-sm">
@@ -772,13 +774,14 @@ export default function TeamsPage() {
   const submitLabel = editingTeam ? "Update" : "Create";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
+          <Badge variant="tag">{isTeamManager ? "Manager workspace" : "Team workspace"}</Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">
             {isTeamManager ? "My Teams" : "Teams"}
           </h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-2 text-sm leading-6 text-muted">
             {isTeamManager
               ? "Review your teams and manage their AI and integration settings."
               : "Manage teams and team-level configuration."}
@@ -791,7 +794,7 @@ export default function TeamsPage() {
       </div>
 
       {successMessage ? (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
           {successMessage}
         </div>
       ) : null}
@@ -804,7 +807,7 @@ export default function TeamsPage() {
         />
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel">
         {teamsContent}
       </div>
 
@@ -1024,7 +1027,7 @@ export default function TeamsPage() {
           {canAddMembers && selectedTeam ? (
             <form
               onSubmit={handleAddMember}
-              className="rounded-2xl border border-gray-200 bg-gray-50 p-4"
+              className="rounded-[28px] border border-border bg-bg p-5"
             >
               <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
                 <FormSelect
@@ -1058,7 +1061,7 @@ export default function TeamsPage() {
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
+                <label className="flex items-center gap-2 text-sm text-text">
                   <input
                     type="checkbox"
                     checked={memberForm.isPrimary}
@@ -1084,7 +1087,7 @@ export default function TeamsPage() {
               </div>
 
               {memberOptions.length === 0 ? (
-                <p className="mt-3 text-sm text-gray-500">
+                <p className="mt-3 text-sm text-muted">
                   All eligible users in this organisation are already assigned to this team.
                 </p>
               ) : null}
@@ -1096,53 +1099,53 @@ export default function TeamsPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : teamMembers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-sm text-gray-500">
+            <div className="rounded-[28px] border border-dashed border-border bg-surface p-6 text-sm text-muted">
               No members found for this team.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+            <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-sm">
+              <table className="min-w-full divide-y divide-border">
+                <thead className="bg-bg">
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Name
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Email
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       User Role
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Team Role
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Primary
                     </th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Actions
                     </th>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-border">
                   {teamMembers.map((member) => {
                     const isUpdatingThisMember = updatingMemberId === member.id;
                     const isDeletingThisMember = deletingMemberId === member.id;
                     const isBusy = isUpdatingThisMember || isDeletingThisMember;
 
                     return (
-                      <tr key={member.id}>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                      <tr key={member.id} className="transition hover:bg-bg">
+                        <td className="px-6 py-4 text-sm font-medium text-text">
                           {member.full_name}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {member.email}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {member.user_role}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {canManageMember(member) ? (
                             <select
                               value={member.role}
@@ -1153,7 +1156,7 @@ export default function TeamsPage() {
                                 )
                               }
                               disabled={isBusy}
-                              className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-gray-900"
+                              className="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none transition focus-visible:ring-4 focus-visible:ring-primary-light/20"
                             >
                               {getRoleOptionsForMember().map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1165,9 +1168,9 @@ export default function TeamsPage() {
                             member.role
                           )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {member.is_primary ? (
-                            <span className="rounded-full bg-gray-900 px-3 py-1 text-xs font-semibold text-white">
+                            <span className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white">
                               Primary
                             </span>
                           ) : canSetPrimaryMember(member) ? (
@@ -1195,9 +1198,7 @@ export default function TeamsPage() {
                             >
                               Remove
                             </Button>
-                          ) : (
-                            <span className="text-gray-400">View only</span>
-                          )}
+                          ) : <span className="text-muted">View only</span>}
                         </td>
                       </tr>
                     );

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+/** Specification import and review workspace redesigned around branded data-heavy surfaces. */
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { getProjects } from "../api/projects";
 import {
@@ -20,6 +21,22 @@ import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
+import {
+  SpecificationsDetailPanel,
+  type SpecificationDetailTab,
+} from "../components/specifications/SpecificationsDetailPanel";
+import {
+  SpecificationsTreePanel,
+  type SpecificationTreeSource,
+} from "../components/specifications/SpecificationsTreePanel";
+import {
+  getSourceDisplayName,
+  getSpecificationGroupLabel,
+  getSpecificationGroupSubtitle,
+  getStatusVariant,
+  labelize,
+} from "../components/specifications/presentation";
+import { Badge, EmptyState } from "../components/ui";
 import type { Project } from "../types/projects";
 import type {
   Specification,
@@ -108,8 +125,6 @@ const initialSourceForm = {
   jira_issue_key: "",
   file: null as File | null,
 };
-
-const labelize = (value: string) => value.replaceAll("_", " ");
 const isFileSource = (value: SpecificationSourceType) =>
   value === "csv" || value === "xlsx" || value === "pdf" || value === "docx";
 const hasTextArea = (value: SpecificationSourceType) =>
@@ -117,6 +132,107 @@ const hasTextArea = (value: SpecificationSourceType) =>
   value === "plain_text" ||
   value === "jira_issue" ||
   value === "url";
+
+function SourceImportIcon() {
+  return (
+    <svg className="h-10 w-10" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <rect x="8" y="8" width="32" height="24" rx="6" className="stroke-primary" strokeWidth="2.5" />
+      <path d="M16 38h16" className="stroke-primary-light" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="m24 17 6 6m0 0-6 6m6-6H18" className="stroke-warm" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function buildSpecificationTreeSources(
+  sources: SpecificationSource[],
+  specifications: Specification[]
+): SpecificationTreeSource[] {
+  const sourceNodes = new Map<string, SpecificationTreeSource>();
+  const groupsBySourceKey = new Map<
+    string,
+    Map<string, SpecificationTreeSource["groups"][number]>
+  >();
+
+  sources.forEach((source) => {
+    sourceNodes.set(`source:${source.id}`, {
+      key: `source:${source.id}`,
+      sourceId: source.id,
+      label: getSourceDisplayName(source) ?? "Imported source",
+      subtitle: `${source.project_name} / ${labelize(source.source_type)}`,
+      statusLabel: labelize(source.parser_status),
+      statusVariant: getStatusVariant(source.parser_status),
+      source,
+      groups: [],
+      specificationCount: 0,
+    });
+  });
+
+  specifications.forEach((specification) => {
+    const sourceKey = specification.source_id
+      ? `source:${specification.source_id}`
+      : "source:standalone";
+
+    if (!sourceNodes.has(sourceKey)) {
+      sourceNodes.set(sourceKey, {
+        key: sourceKey,
+        sourceId: specification.source_id,
+        label:
+          specification.source_id && specification.source_name
+            ? specification.source_name
+            : "Standalone specifications",
+        subtitle: specification.source_id
+          ? `${specification.project_name} / ${labelize(specification.source_type)}`
+          : "Created directly in the platform",
+        statusLabel: specification.source_id ? "imported" : "manual",
+        statusVariant: "verified",
+        source: null,
+        groups: [],
+        specificationCount: 0,
+      });
+    }
+
+    const sourceNode = sourceNodes.get(sourceKey);
+    if (!sourceNode) {
+      return;
+    }
+
+    sourceNode.specificationCount += 1;
+
+    const groupLabel = getSpecificationGroupLabel(specification);
+    const groupMap = groupsBySourceKey.get(sourceKey) ?? new Map();
+    let group = groupMap.get(groupLabel);
+
+    if (!group) {
+      group = {
+        key: `${sourceKey}:group:${encodeURIComponent(groupLabel.toLowerCase())}`,
+        sourceKey,
+        sourceId: sourceNode.sourceId,
+        label: groupLabel,
+        subtitle: getSpecificationGroupSubtitle(specification),
+        specifications: [],
+      };
+      groupMap.set(groupLabel, group);
+      sourceNode.groups.push(group);
+      groupsBySourceKey.set(sourceKey, groupMap);
+    }
+
+    group.specifications.push(specification);
+  });
+
+  return [...sourceNodes.values()]
+    .map((source) => ({
+      ...source,
+      groups: source.groups
+        .map((group) => ({
+          ...group,
+          specifications: [...group.specifications].sort((left, right) =>
+            left.title.localeCompare(right.title)
+          ),
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label)),
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
 
 export default function SpecificationsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -129,8 +245,6 @@ export default function SpecificationsPage() {
 
   const [isSpecificationModalOpen, setIsSpecificationModalOpen] = useState(false);
   const [editingSpecification, setEditingSpecification] =
-    useState<Specification | null>(null);
-  const [selectedSpecification, setSelectedSpecification] =
     useState<Specification | null>(null);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [selectedSource, setSelectedSource] =
@@ -150,6 +264,15 @@ export default function SpecificationsPage() {
   const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
   const [reparsingSourceId, setReparsingSourceId] = useState<string | null>(null);
   const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
+  const [selectedSourceKey, setSelectedSourceKey] = useState("");
+  const [selectedGroupKey, setSelectedGroupKey] = useState("");
+  const [selectedSpecificationId, setSelectedSpecificationId] = useState("");
+  const [selectedSpecificationIds, setSelectedSpecificationIds] = useState<
+    string[]
+  >([]);
+  const [selectedGroupPage, setSelectedGroupPage] = useState(1);
+  const [activeDetailTab, setActiveDetailTab] =
+    useState<SpecificationDetailTab>("overview");
 
   const projectOptions = useMemo(
     () =>
@@ -160,7 +283,23 @@ export default function SpecificationsPage() {
     [projects]
   );
 
-  const loadData = async (): Promise<void> => {
+  const specificationTreeSources = useMemo(
+    () => buildSpecificationTreeSources(sources, specifications),
+    [sources, specifications]
+  );
+  const selectedTreeSource =
+    specificationTreeSources.find((source) => source.key === selectedSourceKey) ??
+    specificationTreeSources[0] ??
+    null;
+  const selectedTreeGroup =
+    selectedTreeSource?.groups.find((group) => group.key === selectedGroupKey) ??
+    null;
+  const selectedTreeSpecification =
+    selectedTreeGroup?.specifications.find(
+      (specification) => specification.id === selectedSpecificationId
+    ) ?? null;
+
+  const loadData = useCallback(async (): Promise<void> => {
     try {
       setIsLoading(true);
       setErrorMessage("");
@@ -177,11 +316,127 @@ export default function SpecificationsPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [filterProjectId]);
 
   useEffect(() => {
     void loadData();
-  }, [filterProjectId]);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (specificationTreeSources.length === 0) {
+      setSelectedSourceKey("");
+      setSelectedGroupKey("");
+      setSelectedSpecificationId("");
+      return;
+    }
+
+    const sourceStillExists = specificationTreeSources.some(
+      (source) => source.key === selectedSourceKey
+    );
+
+    if (!sourceStillExists) {
+      const firstSource = specificationTreeSources[0];
+      setSelectedSourceKey(firstSource.key);
+      setSelectedGroupKey(firstSource.groups[0]?.key ?? "");
+      setSelectedSpecificationId("");
+      return;
+    }
+
+    const currentSource = specificationTreeSources.find(
+      (source) => source.key === selectedSourceKey
+    );
+
+    if (!currentSource) {
+      return;
+    }
+
+    if (
+      selectedGroupKey &&
+      !currentSource.groups.some((group) => group.key === selectedGroupKey)
+    ) {
+      setSelectedGroupKey(currentSource.groups[0]?.key ?? "");
+      setSelectedSpecificationId("");
+      return;
+    }
+
+    if (
+      selectedSpecificationId &&
+      !currentSource.groups.some((group) =>
+        group.specifications.some(
+          (specification) => specification.id === selectedSpecificationId
+        )
+      )
+    ) {
+      setSelectedSpecificationId("");
+    }
+  }, [
+    specificationTreeSources,
+    selectedSourceKey,
+    selectedGroupKey,
+    selectedSpecificationId,
+  ]);
+
+  useEffect(() => {
+    setSelectedGroupPage(1);
+  }, [selectedGroupKey]);
+
+  useEffect(() => {
+    setActiveDetailTab("overview");
+  }, [selectedSpecificationId]);
+
+  useEffect(() => {
+    const specificationIds = new Set(specifications.map((specification) => specification.id));
+    setSelectedSpecificationIds((previous) =>
+      previous.filter((specificationId) => specificationIds.has(specificationId))
+    );
+  }, [specifications]);
+
+  const handleSelectSource = (sourceKey: string): void => {
+    setSelectedSourceKey(sourceKey);
+    setSelectedGroupKey("");
+    setSelectedSpecificationId("");
+  };
+
+  const handleSelectGroup = (sourceKey: string, groupKey: string): void => {
+    setSelectedSourceKey(sourceKey);
+    setSelectedGroupKey(groupKey);
+    setSelectedSpecificationId("");
+  };
+
+  const handleSelectSpecification = (
+    sourceKey: string,
+    groupKey: string,
+    specificationId: string
+  ): void => {
+    setSelectedSourceKey(sourceKey);
+    setSelectedGroupKey(groupKey);
+    setSelectedSpecificationId(specificationId);
+  };
+
+  const handleToggleSpecificationSelection = (specificationId: string): void => {
+    setSelectedSpecificationIds((previous) =>
+      previous.includes(specificationId)
+        ? previous.filter((id) => id !== specificationId)
+        : [...previous, specificationId]
+    );
+  };
+
+  const handleTogglePageSelection = (
+    specificationIds: string[],
+    isSelected: boolean
+  ): void => {
+    setSelectedSpecificationIds((previous) => {
+      const next = new Set(previous);
+      specificationIds.forEach((specificationId) => {
+        if (isSelected) {
+          next.add(specificationId);
+        } else {
+          next.delete(specificationId);
+        }
+      });
+      return [...next];
+    });
+  };
 
   const openSpecificationCreateModal = (): void => {
     const defaultProject =
@@ -209,6 +464,17 @@ export default function SpecificationsPage() {
     const defaultProject =
       filterProjectId || (projects.length === 1 ? projects[0].id : "");
     setSourceForm({ ...initialSourceForm, project: defaultProject });
+    setIsSourceModalOpen(true);
+  };
+
+  const openSourceModalForType = (sourceType: SpecificationSourceType): void => {
+    const defaultProject =
+      filterProjectId || (projects.length === 1 ? projects[0].id : "");
+    setSourceForm({
+      ...initialSourceForm,
+      project: defaultProject,
+      source_type: sourceType,
+    });
     setIsSourceModalOpen(true);
   };
 
@@ -337,6 +603,12 @@ export default function SpecificationsPage() {
     try {
       setDeletingSpecificationId(specification.id);
       await deleteSpecification(specification.id);
+      setSelectedSpecificationId((previous) =>
+        previous === specification.id ? "" : previous
+      );
+      setSelectedSpecificationIds((previous) =>
+        previous.filter((specificationId) => specificationId !== specification.id)
+      );
       setSuccessMessage("Specification deleted successfully.");
       await loadData();
     } catch (error: unknown) {
@@ -352,6 +624,11 @@ export default function SpecificationsPage() {
       setDeletingSourceId(source.id);
       await deleteSpecificationSource(source.id);
       if (selectedSource?.id === source.id) setSelectedSource(null);
+      if (selectedSourceKey === `source:${source.id}`) {
+        setSelectedSourceKey("");
+        setSelectedGroupKey("");
+        setSelectedSpecificationId("");
+      }
       setSuccessMessage("Specification import deleted successfully.");
       await loadData();
     } catch (error: unknown) {
@@ -392,23 +669,69 @@ export default function SpecificationsPage() {
     }
   };
 
-  const getSourcePreview = (record: SpecificationSourceRecord) => ({
-    module: record.section_label || selectedSource?.project_name || "-",
-    requirementId:
-      record.external_reference || selectedSource?.jira_issue_key || "-",
-    summary: record.title,
-    description: record.content,
-    section: record.section_label || selectedSource?.team_name || "-",
-  });
+  const getStructuredFields = (metadata: Record<string, unknown> | undefined) => {
+    const structuredFields = metadata?.structured_fields;
+    if (!structuredFields || typeof structuredFields !== "object" || Array.isArray(structuredFields)) {
+      return {} as Record<string, string>;
+    }
+
+    return Object.fromEntries(
+      Object.entries(structuredFields).filter(([, value]) => typeof value === "string" && value.trim()),
+    ) as Record<string, string>;
+  };
+
+  const buildStructuredDescription = (fields: Record<string, string>, fallback: string) => {
+    const lines: string[] = [];
+
+    if (fields.description) lines.push(`Description: ${fields.description}`);
+    if (fields.actor) lines.push(`Acteur: ${fields.actor}`);
+    if (fields.preconditions) lines.push(`Precondition: ${fields.preconditions}`);
+    if (fields.steps) lines.push(`Steps: ${fields.steps}`);
+    if (fields.acceptance_criteria) {
+      lines.push(`Criteres d'acceptation: ${fields.acceptance_criteria}`);
+    }
+    if (fields.priority) lines.push(`Priorite: ${fields.priority}`);
+    if (fields.version) lines.push(`Version: ${fields.version}`);
+    if (fields.url) lines.push(`URL de reference: ${fields.url}`);
+
+    return lines.length ? lines.join("\n") : fallback;
+  };
+
+  const getSourcePreview = (record: SpecificationSourceRecord) => {
+    const structuredFields = getStructuredFields(record.record_metadata);
+
+    return {
+      module:
+        structuredFields.module ||
+        record.section_label ||
+        selectedSource?.project_name ||
+        "-",
+      requirementId:
+        structuredFields.reference ||
+        record.external_reference ||
+        selectedSource?.jira_issue_key ||
+        "-",
+      summary: structuredFields.title || record.title,
+      description: buildStructuredDescription(structuredFields, record.content),
+      section:
+        structuredFields.section ||
+        record.section_label ||
+        selectedSource?.team_name ||
+        "-",
+      preconditions: structuredFields.preconditions || "",
+      expectedResult: structuredFields.expected_result || "",
+    };
+  };
 
   return (
-    <div className="min-h-screen space-y-8 bg-gray-50">
+    <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Specifications</h1>
-          <p className="mt-1 max-w-3xl text-sm text-gray-600">
+          <Badge variant="tag">Context workspace</Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">Specifications</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             Import CSV, XLSX, PDF, DOCX, text, Jira, or URL context, review the
-            parsed records, and turn them into normalized specifications for RAG.
+            parsed records, and turn them into structured requirements for traceability and test design.
           </p>
         </div>
 
@@ -425,7 +748,7 @@ export default function SpecificationsPage() {
       </div>
 
       {successMessage ? (
-        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
           {successMessage}
         </div>
       ) : null}
@@ -434,236 +757,114 @@ export default function SpecificationsPage() {
         <ErrorMessage message={errorMessage} onDismiss={() => setErrorMessage("")} />
       ) : null}
 
-      <div className="max-w-md">
-        <FormSelect
-          id="specifications-filter-project"
-          label="Filter by project"
-          value={filterProjectId}
-          onChange={(event) => setFilterProjectId(event.target.value)}
-          options={projectOptions}
-          placeholder="All projects"
-        />
-      </div>
-
-      <section className="space-y-4">
+      <section className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Import Sources</h2>
-          <p className="mt-1 text-sm text-gray-600">
-            Keep your BIAT-IT source files close to the product context instead of
-            importing them blindly into tests.
-          </p>
+          <FormSelect
+            id="specifications-filter-project"
+            label="Filter by project"
+            value={filterProjectId}
+            onChange={(event) => setFilterProjectId(event.target.value)}
+            options={projectOptions}
+            placeholder="All projects"
+          />
         </div>
-
-        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-          {isLoading ? (
-            <div className="flex min-h-[180px] items-center justify-center">
-              <LoadingSpinner size="lg" />
-            </div>
-          ) : sources.length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">
-              No import sources found for this filter.
-            </div>
-          ) : (
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Import
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Project
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Type
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Records
-                  </th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sources.map((source) => (
-                  <tr key={source.id}>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="font-medium">{source.name}</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {source.file_name ?? source.uploaded_by_name ?? "-"}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      <div>{source.project_name}</div>
-                      <div className="mt-1 text-xs text-gray-500">{source.team_name}</div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      {labelize(source.source_type)}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      <div>{labelize(source.parser_status)}</div>
-                      {source.parser_error ? (
-                        <div className="mt-1 text-xs text-red-600">{source.parser_error}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      <div>{source.record_count} parsed</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {source.selected_record_count} selected / {source.imported_record_count} imported
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right text-sm">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          size="md"
-                          onClick={() => void loadSourceDetail(source.id)}
-                        >
-                          Review
-                        </Button>
-                        {source.can_manage ? (
-                          <>
-                            <Button
-                              variant="secondary"
-                              size="md"
-                              onClick={() => void handleReparseSource(source.id)}
-                              isLoading={reparsingSourceId === source.id}
-                              loadingText="Parsing..."
-                            >
-                              Reparse
-                            </Button>
-                            <Button
-                              size="md"
-                              onClick={() => void handleImportSource(source.id)}
-                              isLoading={importingSourceId === source.id}
-                              loadingText="Importing..."
-                              disabled={source.selected_record_count === 0}
-                            >
-                              Import
-                            </Button>
-                            <Button
-                              variant="danger"
-                              size="md"
-                              onClick={() => void handleDeleteSource(source)}
-                              isLoading={deletingSourceId === source.id}
-                              loadingText="Deleting..."
-                            >
-                              Delete
-                            </Button>
-                          </>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <div className="rounded-[28px] border border-border bg-surface p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+            Progressive disclosure
+          </p>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            The workspace now keeps heavy imported content hidden until you drill from source to grouped requirements to a single specification. Bulk row selection stays available in the list view, and detailed traceability or processing details only appear on demand.
+          </p>
         </div>
       </section>
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Normalized Specifications</h2>
-          <p className="mt-1 text-sm text-gray-600">
-            These are the clean records used by chunking, retrieval, and the next AI
-            testing layers.
+          <h2 className="text-lg font-semibold tracking-tight text-text">
+            Specifications workspace
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-muted">
+            Browse source context on the left, focus a grouped bucket in the middle, and inspect specification details only when needed.
           </p>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-          {isLoading ? (
-            <div className="flex min-h-[220px] items-center justify-center">
-              <LoadingSpinner size="lg" />
+        {isLoading ? (
+          <div className="flex min-h-[280px] items-center justify-center rounded-[28px] border border-border bg-surface shadow-panel">
+            <LoadingSpinner size="lg" />
+          </div>
+        ) : specificationTreeSources.length === 0 ? (
+          <EmptyState
+            icon={<SourceImportIcon />}
+            title="Build your specifications workspace"
+            description="Start with manual input for quick requirement capture or import a spreadsheet to structure source material before review, traceability, and test design."
+            primaryAction={
+              projects.length > 0 ? (
+                <Button onClick={openSourceModal}>New Import</Button>
+              ) : undefined
+            }
+            secondaryAction={
+              projects.length > 0 ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => openSourceModalForType("xlsx")}
+                >
+                  Import CSV / XLSX
+                </Button>
+              ) : undefined
+            }
+          >
+            {projects.length > 0 ? (
+              <div className="flex justify-center">
+                <Button variant="secondary" onClick={openSpecificationCreateModal}>
+                  New Specification
+                </Button>
+              </div>
+            ) : null}
+          </EmptyState>
+        ) : (
+          <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <SpecificationsTreePanel
+              sources={specificationTreeSources}
+              selectedSourceKey={selectedSourceKey}
+              selectedGroupKey={selectedGroupKey}
+              selectedSpecificationId={selectedSpecificationId}
+              onSelectSource={handleSelectSource}
+              onSelectGroup={handleSelectGroup}
+              onSelectSpecification={handleSelectSpecification}
+            />
+
+            <div className="min-w-0">
+              <SpecificationsDetailPanel
+                selectedSource={selectedTreeSource}
+                selectedGroup={selectedTreeGroup}
+                selectedSpecification={selectedTreeSpecification}
+                selectedSpecificationIds={selectedSpecificationIds}
+                selectedGroupPage={selectedGroupPage}
+                pageSize={10}
+                activeTab={activeDetailTab}
+                deletingSpecificationId={deletingSpecificationId}
+                deletingSourceId={deletingSourceId}
+                reparsingSourceId={reparsingSourceId}
+                importingSourceId={importingSourceId}
+                onSelectGroup={handleSelectGroup}
+                onSelectSpecification={handleSelectSpecification}
+                onToggleSpecificationSelection={handleToggleSpecificationSelection}
+                onTogglePageSelection={handleTogglePageSelection}
+                onClearSelection={() => setSelectedSpecificationIds([])}
+                onChangePage={setSelectedGroupPage}
+                onChangeTab={setActiveDetailTab}
+                onOpenSpecificationEdit={openSpecificationEditModal}
+                onDeleteSpecification={(specification) =>
+                  void handleDeleteSpecification(specification)
+                }
+                onOpenSourceReview={(sourceId) => void loadSourceDetail(sourceId)}
+                onReparseSource={(sourceId) => void handleReparseSource(sourceId)}
+                onImportSource={(sourceId) => void handleImportSource(sourceId)}
+                onDeleteSource={(source) => void handleDeleteSource(source)}
+              />
             </div>
-          ) : specifications.length === 0 ? (
-            <div className="p-6 text-sm text-gray-500">No specifications found.</div>
-          ) : (
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Specification
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Project
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Source
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Version
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Chunks
-                  </th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {specifications.map((specification) => (
-                  <tr key={specification.id}>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="font-medium">{specification.title}</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {specification.content.slice(0, 120)}
-                        {specification.content.length > 120 ? "..." : ""}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      <div>{specification.project_name}</div>
-                      <div className="mt-1 text-xs text-gray-500">{specification.team_name}</div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">
-                      <div>{labelize(specification.source_type)}</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {specification.source_name ?? specification.external_reference ?? "-"}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{specification.version}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{specification.chunk_count}</td>
-                    <td className="px-6 py-4 text-right text-sm">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          size="md"
-                          onClick={() => setSelectedSpecification(specification)}
-                        >
-                          Details
-                        </Button>
-                        {specification.can_manage ? (
-                          <>
-                            <Button
-                              variant="secondary"
-                              size="md"
-                              onClick={() => openSpecificationEditModal(specification)}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              variant="danger"
-                              size="md"
-                              onClick={() => void handleDeleteSpecification(specification)}
-                              isLoading={deletingSpecificationId === specification.id}
-                              loadingText="Deleting..."
-                            >
-                              Delete
-                            </Button>
-                          </>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       <Modal isOpen={isSourceModalOpen} onClose={() => setIsSourceModalOpen(false)} title="Create Specification Import" size="xl">
@@ -703,7 +904,10 @@ export default function SpecificationsPage() {
           </div>
           {isFileSource(sourceForm.source_type) ? (
             <div>
-              <label htmlFor="source-file" className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="source-file"
+                className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
+              >
                 Source file
               </label>
               <input
@@ -715,7 +919,7 @@ export default function SpecificationsPage() {
                     file: event.target.files?.[0] ?? null,
                   }))
                 }
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-gray-900"
+                className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition file:mr-3 file:rounded-xl file:border-0 file:bg-primary-light/10 file:px-3 file:py-2 file:font-medium file:text-primary hover:border-primary-light/50 focus-visible:ring-4 focus-visible:ring-primary-light/20"
                 required
               />
             </div>
@@ -742,7 +946,10 @@ export default function SpecificationsPage() {
           ) : null}
           {hasTextArea(sourceForm.source_type) ? (
             <div>
-              <label htmlFor="source-text" className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="source-text"
+                className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
+              >
                 Source content
               </label>
               <textarea
@@ -750,7 +957,7 @@ export default function SpecificationsPage() {
                 value={sourceForm.raw_text}
                 onChange={(event) => setSourceForm((previous) => ({ ...previous, raw_text: event.target.value }))}
                 rows={10}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-gray-900"
+                className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 focus-visible:ring-primary-light/20"
                 required={sourceForm.source_type === "plain_text"}
               />
             </div>
@@ -794,7 +1001,10 @@ export default function SpecificationsPage() {
             <FormInput id="specification-source-url" label="Source URL" type="url" value={specificationForm.source_url ?? ""} onChange={(event) => setSpecificationForm((previous) => ({ ...previous, source_url: event.target.value }))} />
           </div>
           <div>
-            <label htmlFor="specification-content" className="mb-1.5 block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="specification-content"
+              className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
+            >
               Content
             </label>
             <textarea
@@ -802,7 +1012,7 @@ export default function SpecificationsPage() {
               value={specificationForm.content}
               onChange={(event) => setSpecificationForm((previous) => ({ ...previous, content: event.target.value }))}
               rows={12}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-gray-900"
+              className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 focus-visible:ring-primary-light/20"
               required
             />
           </div>
@@ -822,6 +1032,50 @@ export default function SpecificationsPage() {
         onClose={() => setSelectedSource(null)}
         title={selectedSource ? `${selectedSource.name} Import Review` : "Import Review"}
         size="xl"
+        actions={
+          selectedSource?.can_manage ? (
+            <Button
+              variant="secondary"
+              onClick={() => void handleReparseSource(selectedSource.id)}
+              isLoading={reparsingSourceId === selectedSource.id}
+              loadingText="Parsing..."
+            >
+              Reparse
+            </Button>
+          ) : undefined
+        }
+        footer={
+          selectedSource ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted">
+                {selectedSource.records.length} records /{" "}
+                {
+                  selectedSource.records.filter((record) => record.is_selected)
+                    .length
+                }{" "}
+                selected
+              </p>
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setSelectedSource(null)}>
+                  Close
+                </Button>
+                {selectedSource.can_manage ? (
+                  <Button
+                    onClick={() => void handleImportSource(selectedSource.id)}
+                    isLoading={importingSourceId === selectedSource.id}
+                    loadingText="Importing..."
+                    disabled={
+                      selectedSource.records.filter((record) => record.is_selected)
+                        .length === 0
+                    }
+                  >
+                    Import Selected
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : undefined
+        }
       >
         {isSourceDetailLoading ? (
           <div className="flex min-h-[220px] items-center justify-center">
@@ -829,69 +1083,57 @@ export default function SpecificationsPage() {
           </div>
         ) : selectedSource ? (
           <div className="space-y-6">
-            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <div className="rounded-[28px] border border-border bg-bg p-5">
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Type</p>
-                  <p className="mt-1 text-sm text-gray-700">{labelize(selectedSource.source_type)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Type</p>
+                  <div className="mt-2">
+                    <Badge variant="tag">{labelize(selectedSource.source_type)}</Badge>
+                  </div>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Status</p>
-                  <p className="mt-1 text-sm text-gray-700">{labelize(selectedSource.parser_status)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Status</p>
+                  <div className="mt-2">
+                    <Badge variant={getStatusVariant(selectedSource.parser_status)}>
+                      {labelize(selectedSource.parser_status)}
+                    </Badge>
+                  </div>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Project</p>
-                  <p className="mt-1 text-sm text-gray-700">{selectedSource.project_name}</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Project</p>
+                  <p className="mt-2 text-sm font-medium text-text">{selectedSource.project_name}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Records</p>
-                  <p className="mt-1 text-sm text-gray-700">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Records</p>
+                  <p className="mt-2 text-sm font-medium text-text">
                     {selectedSource.record_count} parsed / {selectedSource.selected_record_count} selected
                   </p>
                 </div>
               </div>
-              {selectedSource.can_manage ? (
-                <div className="mt-4 flex flex-wrap justify-end gap-3">
-                  <Button
-                    variant="secondary"
-                    onClick={() => void handleReparseSource(selectedSource.id)}
-                    isLoading={reparsingSourceId === selectedSource.id}
-                    loadingText="Parsing..."
-                  >
-                    Reparse
-                  </Button>
-                  <Button
-                    onClick={() => void handleImportSource(selectedSource.id)}
-                    isLoading={importingSourceId === selectedSource.id}
-                    loadingText="Importing..."
-                    disabled={selectedSource.records.filter((record) => record.is_selected).length === 0}
-                  >
-                    Import Selected
-                  </Button>
-                </div>
-              ) : null}
             </div>
 
             {selectedSource.records.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-sm text-gray-500">
+              <div className="rounded-[28px] border border-dashed border-border bg-surface p-6 text-sm text-muted">
                 No parsed records are available for this source yet.
               </div>
             ) : (
               selectedSource.records.map((record) => {
                 const preview = getSourcePreview(record);
                 return (
-                  <div key={record.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div key={record.id} className="rounded-[28px] border border-border bg-bg p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                           Record {record.record_index + 1}
                         </p>
-                        <p className="mt-1 text-sm text-gray-700">
-                          {labelize(record.import_status)}
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-text">
+                          <Badge variant={getStatusVariant(record.import_status)}>
+                            {labelize(record.import_status)}
+                          </Badge>
                           {record.row_number ? ` - row ${record.row_number}` : ""}
-                        </p>
+                        </div>
                       </div>
-                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <label className="flex items-center gap-2 text-sm text-text">
                         <input
                           type="checkbox"
                           checked={record.is_selected}
@@ -901,7 +1143,7 @@ export default function SpecificationsPage() {
                               is_selected: event.target.checked,
                             }))
                           }
-                          className="h-4 w-4 rounded border-gray-300"
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary-light"
                           disabled={!selectedSource.can_manage}
                         />
                         Select for import
@@ -954,7 +1196,10 @@ export default function SpecificationsPage() {
                     </div>
 
                     <div className="mt-4">
-                      <label htmlFor={`record-content-${record.id}`} className="mb-1.5 block text-sm font-medium text-gray-700">
+                      <label
+                        htmlFor={`record-content-${record.id}`}
+                        className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
+                      >
                         Content
                       </label>
                       <textarea
@@ -967,32 +1212,44 @@ export default function SpecificationsPage() {
                           }))
                         }
                         rows={6}
-                        className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-gray-900"
+                        className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 focus-visible:ring-primary-light/20"
                         disabled={!selectedSource.can_manage}
                       />
                     </div>
 
-                    <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4">
-                      <h3 className="text-sm font-semibold text-gray-900">qTest-style preview</h3>
+                    <div className="mt-4 rounded-[28px] border border-border bg-surface p-5 shadow-sm">
+                      <h3 className="text-sm font-semibold tracking-tight text-text">qTest-style preview</h3>
                       <div className="mt-3 grid gap-3 md:grid-cols-2">
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Module</p>
-                          <p className="mt-1 text-sm text-gray-700">{preview.module}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Module</p>
+                          <p className="mt-1 text-sm text-text">{preview.module}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Requirement ID</p>
-                          <p className="mt-1 text-sm text-gray-700">{preview.requirementId}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Requirement ID</p>
+                          <p className="mt-1 text-sm text-text">{preview.requirementId}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Summary</p>
-                          <p className="mt-1 text-sm text-gray-700">{preview.summary}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Summary</p>
+                          <p className="mt-1 text-sm text-text">{preview.summary}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Section</p>
-                          <p className="mt-1 text-sm text-gray-700">{preview.section}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Section</p>
+                          <p className="mt-1 text-sm text-text">{preview.section}</p>
                         </div>
                       </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm text-gray-700">{preview.description}</p>
+                      {preview.preconditions ? (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Preconditions</p>
+                          <p className="mt-1 whitespace-pre-wrap text-sm text-text">{preview.preconditions}</p>
+                        </div>
+                      ) : null}
+                      {preview.expectedResult ? (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Expected Result</p>
+                          <p className="mt-1 whitespace-pre-wrap text-sm text-text">{preview.expectedResult}</p>
+                        </div>
+                      ) : null}
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-text">{preview.description}</p>
                     </div>
 
                     {selectedSource.can_manage ? (
@@ -1010,70 +1267,6 @@ export default function SpecificationsPage() {
                 );
               })
             )}
-          </div>
-        ) : null}
-      </Modal>
-
-      <Modal
-        isOpen={Boolean(selectedSpecification)}
-        onClose={() => setSelectedSpecification(null)}
-        title={selectedSpecification ? `${selectedSpecification.title} Details` : "Specification Details"}
-        size="xl"
-      >
-        {selectedSpecification ? (
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-gray-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-gray-900">qTest-style preview</h3>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Module</p>
-                  <p className="mt-1 text-sm text-gray-700">{selectedSpecification.qtest_preview.module}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Requirement ID</p>
-                  <p className="mt-1 text-sm text-gray-700">{selectedSpecification.qtest_preview.requirement_id || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Summary</p>
-                  <p className="mt-1 text-sm text-gray-700">{selectedSpecification.qtest_preview.summary}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Section</p>
-                  <p className="mt-1 text-sm text-gray-700">{selectedSpecification.qtest_preview.section}</p>
-                </div>
-              </div>
-              <p className="mt-3 whitespace-pre-wrap text-sm text-gray-700">
-                {selectedSpecification.qtest_preview.description}
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              {selectedSpecification.chunks.length ? (
-                selectedSpecification.chunks.map((chunk) => (
-                  <div key={chunk.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                    <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
-                      <span>Chunk {chunk.chunk_index + 1}</span>
-                      <span className="rounded-full bg-white px-2 py-1 text-[11px] text-gray-600">
-                        {labelize(chunk.chunk_type)}
-                      </span>
-                      {chunk.component_tag ? (
-                        <span className="rounded-full bg-white px-2 py-1 text-[11px] text-gray-600">
-                          {chunk.component_tag}
-                        </span>
-                      ) : null}
-                      <span className="rounded-full bg-white px-2 py-1 text-[11px] text-gray-600">
-                        {chunk.token_count} tokens
-                      </span>
-                    </div>
-                    <p className="mt-3 whitespace-pre-wrap text-sm text-gray-700">{chunk.content}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-sm text-gray-500">
-                  No chunks found for this specification.
-                </div>
-              )}
-            </div>
           </div>
         ) : null}
       </Modal>

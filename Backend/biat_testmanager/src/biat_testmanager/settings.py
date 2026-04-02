@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     'apps.accounts.apps.AccountsConfig',
     'apps.projects.apps.ProjectsConfig',
     'apps.specs.apps.SpecsConfig',
+    'apps.testing.apps.TestingConfig',
+    'apps.automation.apps.AutomationConfig',
 ]
 
 
@@ -185,6 +187,11 @@ SPEC_EMBEDDING_MODEL_NAME = config(
     "SPEC_EMBEDDING_MODEL_NAME",
     default="BAAI/bge-m3",
 )
+SPEC_EMBEDDING_LOCAL_FILES_ONLY = config(
+    "SPEC_EMBEDDING_LOCAL_FILES_ONLY",
+    default=False,
+    cast=bool,
+)
 SPEC_EMBEDDING_DEVICE_PREFERENCE = config(
     "SPEC_EMBEDDING_DEVICE_PREFERENCE",
     default="auto",
@@ -234,5 +241,46 @@ MLFLOW_ARTIFACT_ROOT = config(
 MLFLOW_EXPERIMENT_NAME = config(
     "MLFLOW_EXPERIMENT_NAME",
     default="biat-test-manager-specs",
+)
+
+CELERY_BROKER_URL = config(
+    "CELERY_BROKER_URL",
+    default="redis://localhost:6379/0",
+)
+CELERY_RESULT_BACKEND = config(
+    "CELERY_RESULT_BACKEND",
+    default=CELERY_BROKER_URL,
+)
+CELERY_TASK_ALWAYS_EAGER = config(
+    "CELERY_TASK_ALWAYS_EAGER",
+    default=False,
+    cast=bool,
+)
+CELERY_TASK_EAGER_PROPAGATES = config(
+    "CELERY_TASK_EAGER_PROPAGATES",
+    default=True,
+    cast=bool,
+)
+AUTOMATION_ARTIFACTS_ROOT = Path(
+    config(
+        "AUTOMATION_ARTIFACTS_ROOT",
+        default=str((MEDIA_ROOT / "automation_artifacts").resolve()),
+    )
+)
+AUTOMATION_DEFAULT_BROWSER = config(
+    "AUTOMATION_DEFAULT_BROWSER",
+    default="chromium",
+)
+AUTOMATION_DEFAULT_PLATFORM = config(
+    "AUTOMATION_DEFAULT_PLATFORM",
+    default="desktop",
+)
+AUTOMATION_PLAYWRIGHT_PYTHON_BIN = config(
+    "AUTOMATION_PLAYWRIGHT_PYTHON_BIN",
+    default="python",
+)
+AUTOMATION_PLAYWRIGHT_WORKDIR = config(
+    "AUTOMATION_PLAYWRIGHT_WORKDIR",
+    default=str(BASE_DIR),
 )
 

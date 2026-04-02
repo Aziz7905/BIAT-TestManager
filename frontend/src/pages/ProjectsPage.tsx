@@ -1,5 +1,7 @@
+/** Project workspace list and membership management restyled with branded surfaces. */
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { getAdminUsers } from "../api/accounts/users";
 import { getTeams } from "../api/accounts/teams";
 import {
@@ -18,6 +20,7 @@ import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
+import { Badge, EmptyState } from "../components/ui";
 import { useAuthStore } from "../store/authStore";
 import type { AdminUser, Team } from "../types/accounts";
 import type {
@@ -93,14 +96,33 @@ const initialProjectForm: ProjectCreatePayload = {
   status: "active",
 };
 
+function ProjectStackIcon() {
+  return (
+    <svg className="h-10 w-10" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <rect x="8" y="10" width="32" height="10" rx="4" className="stroke-primary" strokeWidth="2.5" />
+      <rect x="12" y="21" width="24" height="8" rx="4" className="stroke-primary-light" strokeWidth="2.5" />
+      <rect x="16" y="31" width="16" height="7" rx="3.5" className="stroke-warm" strokeWidth="2.5" />
+    </svg>
+  );
+}
+
+function getProjectStatusVariant(status: ProjectStatus) {
+  return status === "active" ? "verified" : "warm";
+}
+
 export default function ProjectsPage() {
   const { user } = useAuthStore();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const role = user?.profile?.role;
   const isPlatformOwner = role === "platform_owner";
   const isOrgAdmin = role === "org_admin";
   const isTeamManager = role === "team_manager";
   const canManageProjects = isPlatformOwner || isOrgAdmin || isTeamManager;
+  const projectWorkspaceBasePath = location.pathname.startsWith("/admin/")
+    ? "/admin/projects"
+    : "/projects";
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -433,68 +455,94 @@ export default function ProjectsPage() {
     );
   } else if (projects.length === 0) {
     projectsContent = (
-      <div className="p-6 text-sm text-gray-500">No projects found.</div>
+      <div className="p-6">
+        <EmptyState
+          icon={<ProjectStackIcon />}
+          title="No projects yet"
+          description="Create a project to connect teams, specifications, and the QA work that will feed the next testing layers."
+          primaryAction={
+            canManageProjects ? (
+              <Button onClick={openCreateModal}>New Project</Button>
+            ) : undefined
+          }
+        />
+      </div>
     );
   } else {
     projectsContent = (
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-border">
+        <thead className="bg-bg">
           <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Project
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Team
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Organisation
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Status
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Members
             </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Created By
             </th>
-            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Actions
             </th>
           </tr>
         </thead>
 
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-border">
           {projects.map((project) => {
             const isDeletingThisProject = deletingProjectId === project.id;
 
             return (
-              <tr key={project.id}>
-                <td className="px-6 py-4 text-sm text-gray-900">
-                  <div className="font-medium">{project.name}</div>
-                  <div className="mt-1 text-xs text-gray-500">
+              <tr key={project.id} className="transition hover:bg-bg">
+                <td className="px-6 py-4 text-sm text-text">
+                  <Link
+                    to={`${projectWorkspaceBasePath}/${project.id}`}
+                    className="font-semibold tracking-tight text-text transition hover:text-primary"
+                  >
+                    {project.name}
+                  </Link>
+                  <div className="mt-1 text-xs text-muted">
                     {project.description || "No description"}
                   </div>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {project.team_name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {project.organization_name}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {project.status}
+                <td className="px-6 py-4 text-sm text-muted">
+                  <Badge variant={getProjectStatusVariant(project.status)}>
+                    {project.status}
+                  </Badge>
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {project.member_count > 0
                     ? project.member_names.join(", ")
                     : "-"}
                 </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
+                <td className="px-6 py-4 text-sm text-muted">
                   {project.created_by_name ?? "-"}
                 </td>
                 <td className="px-6 py-4 text-right text-sm">
                   <div className="flex justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      onClick={() => navigate(`${projectWorkspaceBasePath}/${project.id}`)}
+                    >
+                      Open
+                    </Button>
+
                     <Button
                       variant="secondary"
                       size="md"
@@ -534,14 +582,15 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Projects</h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <Badge variant="tag">Project workspace</Badge>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">Projects</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             {canManageProjects
-              ? "Manage projects and the users assigned to each project."
-              : "Review the projects you are assigned to and the people working on them."}
+              ? "Manage the project directory, then open each project as its own QA workspace with linked specifications, members, and test suites."
+              : "Open the projects you are assigned to and work from the project-level QA workspace."}
           </p>
         </div>
 
@@ -549,7 +598,7 @@ export default function ProjectsPage() {
       </div>
 
       {successMessage ? (
-        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
           {successMessage}
         </div>
       ) : null}
@@ -562,7 +611,7 @@ export default function ProjectsPage() {
         />
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel">
         {projectsContent}
       </div>
 
@@ -611,7 +660,7 @@ export default function ProjectsPage() {
           <div>
             <label
               htmlFor="project-description"
-              className="mb-1.5 block text-sm font-medium text-gray-700"
+              className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
             >
               Description
             </label>
@@ -625,7 +674,7 @@ export default function ProjectsPage() {
                 }))
               }
               rows={4}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-gray-900"
+              className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 focus-visible:ring-primary-light/20"
             />
           </div>
 
@@ -664,7 +713,7 @@ export default function ProjectsPage() {
           {canManageProjects && selectedProject ? (
             <form
               onSubmit={handleAddProjectMember}
-              className="rounded-2xl border border-gray-200 bg-gray-50 p-4"
+              className="rounded-[28px] border border-border bg-bg p-5"
             >
               <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
                 <FormSelect
@@ -709,7 +758,7 @@ export default function ProjectsPage() {
               </div>
 
               {projectMemberOptions.length === 0 ? (
-                <p className="mt-3 text-sm text-gray-500">
+                <p className="mt-3 text-sm text-muted">
                   No more team members are available to add to this project.
                 </p>
               ) : null}
@@ -721,50 +770,50 @@ export default function ProjectsPage() {
               <LoadingSpinner size="lg" />
             </div>
           ) : projectMembers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-6 text-sm text-gray-500">
+            <div className="rounded-[28px] border border-dashed border-border bg-surface p-6 text-sm text-muted">
               No project members found.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+            <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-sm">
+              <table className="min-w-full divide-y divide-border">
+                <thead className="bg-bg">
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Name
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Email
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       User Role
                     </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Project Role
                     </th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
                       Actions
                     </th>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-border">
                   {projectMembers.map((member) => {
                     const isUpdatingThisMember = updatingMemberId === member.id;
                     const isDeletingThisMember = deletingMemberId === member.id;
                     const isBusy = isUpdatingThisMember || isDeletingThisMember;
 
                     return (
-                      <tr key={member.id}>
-                        <td className="px-6 py-4 text-sm text-gray-900">
+                      <tr key={member.id} className="transition hover:bg-bg">
+                        <td className="px-6 py-4 text-sm font-medium text-text">
                           {member.full_name}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {member.email}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {member.user_role}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className="px-6 py-4 text-sm text-muted">
                           {canManageProjects ? (
                             <select
                               value={member.role}
@@ -775,7 +824,7 @@ export default function ProjectsPage() {
                                 )
                               }
                               disabled={isBusy}
-                              className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-gray-900"
+                              className="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none transition focus-visible:ring-4 focus-visible:ring-primary-light/20"
                             >
                               {PROJECT_MEMBER_ROLE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -799,7 +848,7 @@ export default function ProjectsPage() {
                               Remove
                             </Button>
                           ) : (
-                            <span className="text-gray-400">View only</span>
+                            <span className="text-muted">View only</span>
                           )}
                         </td>
                       </tr>
