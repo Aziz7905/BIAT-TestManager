@@ -9,6 +9,10 @@ import type {
   TestExecutionCreatePayload,
 } from "../../types/automation";
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+const MEDIA_BASE_URL = new URL("/media/", API_BASE_URL).toString();
+
 interface GetAutomationScriptsParams {
   test_case?: string;
 }
@@ -113,6 +117,37 @@ export const getExecutionSteps = async (
     `/test-executions/${executionId}/steps/`
   );
   return response.data;
+};
+
+export const getExecutionArtifactText = async (
+  executionId: string,
+  fileName: "stdout.log" | "stderr.log"
+): Promise<string> => {
+  try {
+    const response = await fetch(
+      `${MEDIA_BASE_URL}automation_artifacts/${executionId}/${fileName}?t=${Date.now()}`
+    );
+    if (!response.ok) {
+      return "";
+    }
+    return await response.text();
+  } catch {
+    return "";
+  }
+};
+
+export const resolveExecutionArtifactUrl = (
+  artifactPath: string | null | undefined
+): string | null => {
+  if (!artifactPath) {
+    return null;
+  }
+
+  if (artifactPath.startsWith("http://") || artifactPath.startsWith("https://")) {
+    return artifactPath;
+  }
+
+  return new URL(artifactPath, MEDIA_BASE_URL).toString();
 };
 
 export const pauseTestExecution = async (

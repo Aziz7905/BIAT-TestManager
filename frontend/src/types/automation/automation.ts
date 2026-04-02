@@ -95,6 +95,9 @@ export interface TestResult {
   artifacts: {
     video_url: string | null;
     artifacts_path: string | null;
+    stdout_log_url: string | null;
+    stderr_log_url: string | null;
+    latest_screenshot_url: string | null;
   };
   ai_failure_analysis: string | null;
   issues_count: number;

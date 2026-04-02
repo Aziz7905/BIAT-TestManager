@@ -10,7 +10,10 @@ from django.utils import timezone
 
 from apps.automation.models import AutomationFramework, AutomationLanguage, ExecutionStep
 from apps.automation.models.choices import ExecutionStepStatus
-from apps.automation.services.artifacts import write_execution_text_artifact
+from apps.automation.services.artifacts import (
+    ensure_execution_artifact_directory,
+    write_execution_text_artifact,
+)
 from apps.testing.models.utils import normalize_step_lines
 
 
@@ -126,8 +129,10 @@ def _ensure_execution_steps(execution):
 
 def _build_execution_environment(execution) -> dict[str, str]:
     env = os.environ.copy()
+    artifact_directory = ensure_execution_artifact_directory(execution)
     env["BIAT_EXECUTION_ID"] = str(execution.id)
     env["BIAT_TEST_CASE_ID"] = str(execution.test_case_id)
+    env["BIAT_ARTIFACT_DIR"] = str(artifact_directory)
     return env
 
 

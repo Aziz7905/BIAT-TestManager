@@ -17,6 +17,7 @@ from apps.automation.services import (
     can_manage_execution_schedule_record,
     can_manage_test_execution_record,
     can_trigger_test_execution,
+    get_result_artifacts,
     validate_script_content,
 )
 from apps.testing.models import TestCase
@@ -186,7 +187,7 @@ class TestResultSerializer(serializers.ModelSerializer):
         ]
 
     def get_artifacts(self, obj):
-        return obj.get_artifacts()
+        return get_result_artifacts(obj)
 
 
 class TestExecutionSerializer(serializers.ModelSerializer):

@@ -17,9 +17,12 @@ import {
   deactivateAutomationScript,
   deleteAutomationScript,
   deleteTestExecution,
+  getExecutionArtifactText,
+  getExecutionSteps,
   getAutomationScripts,
   getTestExecutions,
   pauseTestExecution,
+  resolveExecutionArtifactUrl,
   resumeTestExecution,
   stopTestExecution,
   updateAutomationScript,
@@ -58,7 +61,11 @@ import { FormInput } from "../components/FormInput";
 import { FormSelect } from "../components/FormSelect";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { Modal } from "../components/Modal";
-import { AutomationScriptEditorModal } from "../components/automation";
+import {
+  AutomationScriptEditorModal,
+  ExecutionDetailPanel,
+  RunExecutionModal,
+} from "../components/automation";
 import { RequirementDetailPanel } from "../components/project/RequirementDetailPanel";
 import {
   RequirementsTreePanel,
@@ -71,6 +78,9 @@ import { useAuthStore } from "../store/authStore";
 import type { AdminUser } from "../types/accounts";
 import type {
   AutomationScript,
+  ExecutionBrowser,
+  ExecutionPlatform,
+  ExecutionStep,
   AutomationScriptWritePayload,
   TestExecution,
 } from "../types/automation";
@@ -739,6 +749,9 @@ export default function ProjectWorkspacePage() {
   const [cases, setCases] = useState<TestCase[]>([]);
   const [automationScripts, setAutomationScripts] = useState<AutomationScript[]>([]);
   const [testExecutions, setTestExecutions] = useState<TestExecution[]>([]);
+  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
+  const [stdoutLog, setStdoutLog] = useState("");
+  const [stderrLog, setStderrLog] = useState("");
 
   const [selectedFolder, setSelectedFolder] = useState<string>("");
   const [selectedSpecificationTreeGroupKey, setSelectedSpecificationTreeGroupKey] =
@@ -747,6 +760,7 @@ export default function ProjectWorkspacePage() {
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string>("");
   const [selectedCaseId, setSelectedCaseId] = useState<string>("");
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string>("");
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSpecificationSourceLoading, setIsSpecificationSourceLoading] =
@@ -754,6 +768,7 @@ export default function ProjectWorkspacePage() {
   const [isScenarioLoading, setIsScenarioLoading] = useState(false);
   const [isCaseLoading, setIsCaseLoading] = useState(false);
   const [isAutomationLoading, setIsAutomationLoading] = useState(false);
+  const [isExecutionDetailLoading, setIsExecutionDetailLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -762,6 +777,7 @@ export default function ProjectWorkspacePage() {
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
   const [isScriptModalOpen, setIsScriptModalOpen] = useState(false);
+  const [isRunExecutionModalOpen, setIsRunExecutionModalOpen] = useState(false);
   const [editingSuite, setEditingSuite] = useState<TestSuite | null>(null);
   const [editingScenario, setEditingScenario] = useState<TestScenario | null>(null);
   const [editingCase, setEditingCase] = useState<TestCase | null>(null);
@@ -790,6 +806,13 @@ export default function ProjectWorkspacePage() {
   const [validatingScriptId, setValidatingScriptId] = useState<string | null>(null);
   const [runningExecutionId, setRunningExecutionId] = useState<string | null>(null);
   const [deletingExecutionId, setDeletingExecutionId] = useState<string | null>(null);
+  const [runExecutionForm, setRunExecutionForm] = useState<{
+    browser: ExecutionBrowser;
+    platform: ExecutionPlatform;
+  }>({
+    browser: "chromium",
+    platform: "desktop",
+  });
 
   const folderGroups = useMemo(() => buildFolderGroups(suites), [suites]);
   const specificationTreeGroups = useMemo(
@@ -869,6 +892,21 @@ export default function ProjectWorkspacePage() {
     cases.find((testCase) => testCase.id === selectedCaseId) ?? cases[0] ?? null;
   const activeAutomationScript =
     automationScripts.find((script) => script.is_active) ?? automationScripts[0] ?? null;
+  const selectedExecution =
+    testExecutions.find((execution) => execution.id === selectedExecutionId) ??
+    testExecutions[0] ??
+    null;
+  const isSelectedExecutionLive =
+    selectedExecution?.status === "queued" || selectedExecution?.status === "running";
+  const latestExecutionScreenshotUrl =
+    resolveExecutionArtifactUrl(
+      selectedExecution?.result?.artifacts.latest_screenshot_url
+    ) ??
+    executionSteps
+      .map((step) => resolveExecutionArtifactUrl(step.screenshot_url))
+      .filter((value): value is string => Boolean(value))
+      .at(-1) ??
+    null;
 
   const availableProjectMembers = useMemo(() => {
     if (!project) {
@@ -1029,6 +1067,32 @@ export default function ProjectWorkspacePage() {
     }
   };
 
+  const loadExecutionSteps = async (executionId: string): Promise<void> => {
+    try {
+      setIsExecutionDetailLoading(true);
+      const stepData = await getExecutionSteps(executionId);
+      const orderedStepData = [...stepData].sort(
+        (left, right) => left.step_index - right.step_index
+      );
+      setExecutionSteps(orderedStepData);
+    } catch (error: unknown) {
+      setErrorMessage(
+        getErrorMessage(error, "Failed to load execution details.")
+      );
+    } finally {
+      setIsExecutionDetailLoading(false);
+    }
+  };
+
+  const loadExecutionLogs = async (executionId: string): Promise<void> => {
+    const [nextStdout, nextStderr] = await Promise.all([
+      getExecutionArtifactText(executionId, "stdout.log"),
+      getExecutionArtifactText(executionId, "stderr.log"),
+    ]);
+    setStdoutLog(nextStdout);
+    setStderrLog(nextStderr);
+  };
+
   useEffect(() => {
     void loadWorkspace();
   }, [projectId, canManageProject]);
@@ -1154,6 +1218,10 @@ export default function ProjectWorkspacePage() {
     if (!selectedCase?.id) {
       setAutomationScripts([]);
       setTestExecutions([]);
+      setExecutionSteps([]);
+      setStdoutLog("");
+      setStderrLog("");
+      setSelectedExecutionId("");
       return;
     }
 
@@ -1174,17 +1242,56 @@ export default function ProjectWorkspacePage() {
       return;
     }
 
+    // Temporary polling loop for near-live execution monitoring. This should be
+    // replaced by websocket/server-push updates when real live execution arrives.
     const timeoutId = window.setTimeout(() => {
-      void Promise.all([
+      const refreshOperations: Array<Promise<void>> = [
         loadCases(selectedScenario.id),
         loadAutomationData(selectedCase.id),
-      ]);
+      ];
+
+      if (selectedExecutionId) {
+        refreshOperations.push(loadExecutionSteps(selectedExecutionId));
+        refreshOperations.push(loadExecutionLogs(selectedExecutionId));
+      }
+
+      void Promise.all(refreshOperations);
     }, 2500);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [selectedCase?.id, selectedScenario?.id, testExecutions]);
+  }, [selectedCase?.id, selectedExecutionId, selectedScenario?.id, testExecutions]);
+
+  useEffect(() => {
+    if (!testExecutions.length) {
+      setSelectedExecutionId("");
+      return;
+    }
+
+    const activeExecution = testExecutions.find(
+      (execution) => execution.id === selectedExecutionId
+    );
+    if (activeExecution) {
+      return;
+    }
+
+    setSelectedExecutionId(testExecutions[0].id);
+  }, [selectedExecutionId, testExecutions]);
+
+  useEffect(() => {
+    if (!selectedExecutionId) {
+      setExecutionSteps([]);
+      setStdoutLog("");
+      setStderrLog("");
+      return;
+    }
+
+    void Promise.all([
+      loadExecutionSteps(selectedExecutionId),
+      loadExecutionLogs(selectedExecutionId),
+    ]);
+  }, [selectedExecutionId]);
 
   const openSuiteCreateModal = () => {
     setEditingSuite(null);
@@ -1454,10 +1561,17 @@ export default function ProjectWorkspacePage() {
       return;
     }
 
-    await Promise.all([
+    const refreshOperations: Array<Promise<void>> = [
       loadCases(selectedScenario.id),
       loadAutomationData(selectedCase.id),
-    ]);
+    ];
+
+    if (selectedExecutionId) {
+      refreshOperations.push(loadExecutionSteps(selectedExecutionId));
+      refreshOperations.push(loadExecutionLogs(selectedExecutionId));
+    }
+
+    await Promise.all(refreshOperations);
   };
 
   const handleScriptSubmit = async (payload: AutomationScriptWritePayload) => {
@@ -1552,21 +1666,28 @@ export default function ProjectWorkspacePage() {
     }
   };
 
-  const handleRunExecution = async () => {
+  const handleRunExecution = async (payload?: {
+    browser: ExecutionBrowser;
+    platform: ExecutionPlatform;
+  }) => {
     if (!selectedCase) {
       return;
     }
+
+    const targetExecutionConfig = payload ?? runExecutionForm;
 
     try {
       setRunningExecutionId(selectedCase.id);
       setErrorMessage("");
       setSuccessMessage("");
-      await createTestExecution({
+      const execution = await createTestExecution({
         test_case: selectedCase.id,
         script: activeAutomationScript?.id ?? null,
-        browser: "chromium",
-        platform: "desktop",
+        browser: targetExecutionConfig.browser,
+        platform: targetExecutionConfig.platform,
       });
+      setSelectedExecutionId(execution.id);
+      setIsRunExecutionModalOpen(false);
       setSuccessMessage("Execution queued successfully.");
       await refreshSelectedCaseData();
     } catch (error: unknown) {
@@ -2072,9 +2193,8 @@ export default function ProjectWorkspacePage() {
                               </Button>
                               <Button
                                 size="sm"
-                                onClick={() => void handleRunExecution()}
+                                onClick={() => setIsRunExecutionModalOpen(true)}
                                 isLoading={runningExecutionId === selectedCase.id}
-                                loadingText="Queueing..."
                                 disabled={automationScripts.length === 0}
                               >
                                 Run Test Case
@@ -2200,10 +2320,18 @@ export default function ProjectWorkspacePage() {
                                   {testExecutions.map((execution) => (
                                     <div
                                       key={execution.id}
-                                      className="rounded-2xl border border-border bg-surface p-4"
+                                      className={`rounded-2xl border bg-surface p-4 transition ${
+                                        selectedExecution?.id === execution.id
+                                          ? "border-primary shadow-sm"
+                                          : "border-border"
+                                      }`}
                                     >
                                       <div className="flex flex-wrap items-start justify-between gap-3">
-                                        <div>
+                                        <button
+                                          type="button"
+                                          className="min-w-0 flex-1 text-left"
+                                          onClick={() => setSelectedExecutionId(execution.id)}
+                                        >
                                           <div className="flex flex-wrap items-center gap-2">
                                             <Badge variant={getExecutionStatusVariant(execution.status)}>
                                               {execution.status}
@@ -2214,6 +2342,9 @@ export default function ProjectWorkspacePage() {
                                             <Badge variant="tag">
                                               {execution.trigger_type.replaceAll("_", " ")}
                                             </Badge>
+                                            {selectedExecution?.id === execution.id ? (
+                                              <Badge variant="automated">Viewing details</Badge>
+                                            ) : null}
                                           </div>
                                           <p className="mt-2 text-sm font-semibold text-text">
                                             Started {formatDate(execution.started_at)}
@@ -2221,7 +2352,7 @@ export default function ProjectWorkspacePage() {
                                           <p className="mt-1 text-xs text-muted">
                                             Finished {formatDate(execution.ended_at)} • {execution.duration_ms ?? 0} ms
                                           </p>
-                                        </div>
+                                        </button>
 
                                         {canManageProject ? (
                                           <div className="flex flex-wrap gap-2">
@@ -2273,6 +2404,15 @@ export default function ProjectWorkspacePage() {
                                                 Delete
                                               </Button>
                                             ) : null}
+                                            {selectedExecution?.id !== execution.id ? (
+                                              <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                onClick={() => setSelectedExecutionId(execution.id)}
+                                              >
+                                                Details
+                                              </Button>
+                                            ) : null}
                                           </div>
                                         ) : null}
                                       </div>
@@ -2315,6 +2455,30 @@ export default function ProjectWorkspacePage() {
                                   ))}
                                 </div>
                               )}
+
+                              <div className="mt-4">
+                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+                                    Execution details
+                                  </p>
+                                  {/* Temporary live-monitoring indicator. It reflects the
+                                      polling-based detail refresh, not true browser streaming. */}
+                                  {isSelectedExecutionLive ? (
+                                    <span className="text-xs font-semibold text-muted">
+                                      Auto-refreshing every 2.5s
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <ExecutionDetailPanel
+                                  execution={selectedExecution}
+                                  steps={executionSteps}
+                                  stdoutLog={stdoutLog}
+                                  stderrLog={stderrLog}
+                                  latestScreenshotUrl={latestExecutionScreenshotUrl}
+                                  isLoading={isExecutionDetailLoading}
+                                  isLive={isSelectedExecutionLive}
+                                />
+                              </div>
                             </div>
                           </div>
                         )}
@@ -2742,6 +2906,18 @@ export default function ProjectWorkspacePage() {
         testCaseId={selectedCase?.id ?? null}
         initialScript={editingScript}
         isSaving={isSaving}
+      />
+
+      <RunExecutionModal
+        isOpen={isRunExecutionModalOpen}
+        onClose={() => setIsRunExecutionModalOpen(false)}
+        onSubmit={async (payload) => {
+          setRunExecutionForm(payload);
+          await handleRunExecution(payload);
+        }}
+        isSubmitting={runningExecutionId === selectedCase?.id}
+        defaultBrowser={runExecutionForm.browser}
+        defaultPlatform={runExecutionForm.platform}
       />
 
       <TestCaseEditorModal

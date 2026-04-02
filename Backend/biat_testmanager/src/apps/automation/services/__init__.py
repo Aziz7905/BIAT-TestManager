@@ -23,6 +23,7 @@ from .execution_runner import (
     run_execution,
     select_execution_script,
 )
+from .artifacts import get_result_artifacts
 from .results import finalize_execution_result
 from .scheduling import compute_next_run_for_schedule, trigger_execution_schedule
 from .script_validation import validate_script_content
@@ -41,6 +42,7 @@ __all__ = [
     "create_execution_record",
     "finalize_execution_result",
     "get_automation_script_queryset_for_actor",
+    "get_result_artifacts",
     "get_execution_schedule_queryset_for_actor",
     "get_execution_step_queryset_for_actor",
     "get_test_execution_queryset_for_actor",
