@@ -18,7 +18,12 @@ from .indexing import (
     retrieve_similar_chunks,
     synchronize_specification_index,
 )
-from .ingestion import import_selected_records, infer_source_name, parse_specification_source
+from .ingestion import (
+    delete_selected_records,
+    import_selected_records,
+    infer_source_name,
+    parse_specification_source,
+)
 
 __all__ = [
     "build_chunks_from_content",
@@ -35,6 +40,7 @@ __all__ = [
     "get_specification_source_queryset_for_actor",
     "index_specification",
     "infer_embedding_provider",
+    "delete_selected_records",
     "import_selected_records",
     "infer_source_name",
     "keyword_retrieve_chunks",

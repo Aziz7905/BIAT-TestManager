@@ -15,6 +15,7 @@ from apps.specs.serializers import (
     SpecificationSourceUpdateSerializer,
 )
 from apps.specs.services import (
+    delete_selected_records,
     can_manage_specification_record,
     can_manage_specification_source,
     can_manage_specification_source_record,
@@ -216,6 +217,18 @@ class SpecificationSourceRecordDetailView(generics.RetrieveUpdateAPIView):
             context={"request": request},
         )
         return Response(detail_serializer.data)
+
+
+class SpecificationSourceRecordSelectedDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, source_pk):
+        source = get_object_or_404(get_specification_source_queryset_for_actor(request.user), pk=source_pk)
+        if not can_manage_specification_source(request.user, source):
+            raise PermissionDenied("You do not have permission to delete these source records.")
+
+        deleted_count = delete_selected_records(source)
+        return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
 
 
 class SpecificationSourceImportView(APIView):

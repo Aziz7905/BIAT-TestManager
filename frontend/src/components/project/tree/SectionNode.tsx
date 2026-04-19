@@ -4,7 +4,7 @@ import NodeActionMenu from "./NodeActionMenu";
 import RenameInlineInput from "./RenameInlineInput";
 import ScenarioNode from "./ScenarioNode";
 import { ChevronIcon, CountChip, PencilIcon, SectionIcon, TrashIcon } from "./TreeIcons";
-import { buildSectionDeleteImpact, selectionBelongsToSection } from "./utils";
+import { buildSectionDeleteImpact, getSectionTreeCaseCount, selectionBelongsToSection } from "./utils";
 import type { DeleteTarget, SectionNodeProps } from "../../../types/tree";
 
 export default function SectionNode({
@@ -100,7 +100,7 @@ export default function SectionNode({
 
         {!renaming && (
           <div className="flex shrink-0 items-center gap-1">
-            <CountChip value={section.counts.scenario_count ?? section.counts.case_count ?? 0} />
+            <CountChip value={getSectionTreeCaseCount(section)} />
             <div className="opacity-0 transition-opacity group-hover:opacity-100">
               <NodeActionMenu
                 title="Add section content"

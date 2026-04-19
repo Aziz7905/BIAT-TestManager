@@ -17,7 +17,12 @@ from apps.automation.models.choices import (
 )
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.specs.models import Specification, SpecificationSourceType
-from apps.testing.models import TestCaseAutomationStatus, TestCaseDesignStatus, TestPriority
+from apps.testing.models import (
+    TestCaseAutomationStatus,
+    TestCaseDesignStatus,
+    TestPriority,
+    TestSection,
+)
 from apps.testing.serializers.repository import ProjectRepositoryTreeSerializer
 from apps.testing.services import (
     build_project_repository_tree_summary,
@@ -328,6 +333,28 @@ class RepositoryWorkspaceApiTests(TestCase):
         self.assertIn("history", responses["case"].data)
         self.assertIn("on_failure", responses["case"].data["design"])
         self.assertIn("timeout_ms", responses["case"].data["design"])
+
+    def test_suite_overview_section_count_only_includes_top_level_sections(self):
+        child_section = TestSection.objects.create(
+            suite=self.suite,
+            parent=self.section,
+            name="Nested checkout flows",
+        )
+        create_test_scenario(
+            child_section,
+            title="Nested child scenario",
+            description="Nested coverage should not inflate top-level section count.",
+            priority=TestPriority.MEDIUM,
+        )
+
+        response = self.client.get(
+            reverse("test-suite-overview", kwargs={"suite_pk": self.suite.pk})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["counts"]["section_count"], 1)
+        self.assertEqual(len(response.data["sections"]), 1)
+        self.assertEqual(response.data["sections"][0]["id"], str(self.section.id))
 
     def test_case_clone_endpoint_returns_compact_summary_and_copies_links(self):
         response = self.client.post(

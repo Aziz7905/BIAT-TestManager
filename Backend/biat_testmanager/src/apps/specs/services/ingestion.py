@@ -303,3 +303,12 @@ def import_selected_records(source: SpecificationSource, actor):
     source.save(update_fields=["parser_status", "updated_at"])
 
     return imported_specifications
+
+
+@transaction.atomic
+def delete_selected_records(source: SpecificationSource) -> int:
+    selected_records = source.records.select_for_update().filter(is_selected=True)
+    deleted_count = selected_records.count()
+    if deleted_count:
+        selected_records.delete()
+    return deleted_count

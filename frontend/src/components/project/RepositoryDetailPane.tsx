@@ -33,6 +33,7 @@ interface RepositoryDetailPaneProps {
   selection: TreeSelection | null;
   refreshKey?: number;
   onSelect?: (selection: TreeSelection) => void;
+  onClearSelection?: () => void;
   onEditCase?: (caseId: string) => void;
   onScenarioSaved?: () => void;
 }
@@ -42,6 +43,7 @@ export default function RepositoryDetailPane({
   selection,
   refreshKey = 0,
   onSelect,
+  onClearSelection,
   onEditCase,
   onScenarioSaved,
 }: RepositoryDetailPaneProps) {
@@ -109,6 +111,17 @@ export default function RepositoryDetailPane({
 
   return (
     <div className="h-full overflow-y-auto bg-white">
+      {detail.kind === "suite" && onClearSelection && (
+        <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-3">
+          <button
+            type="button"
+            onClick={onClearSelection}
+            className="rounded-md border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            Repository overview
+          </button>
+        </div>
+      )}
       {detail.kind === "project" && <ProjectOverviewPanel overview={detail.data} onSelect={onSelect} />}
       {detail.kind === "suite" && <SuiteOverviewPanel overview={detail.data} onSelect={onSelect} />}
       {detail.kind === "section" && <SectionOverviewPanel overview={detail.data} onSelect={onSelect} />}

@@ -155,6 +155,7 @@ export default function CaseEditorModal({
         on_failure: draft.on_failure,
         timeout_ms: Number(draft.timeout_ms) || 120000,
         test_data: parsedTestData,
+        linked_specification_ids: draft.linked_specifications.map((specification) => specification.id),
         steps: draft.steps
           .filter((row) => row.step.trim() || row.outcome.trim())
           .map((row) => ({
@@ -233,6 +234,7 @@ export default function CaseEditorModal({
 
           {tab === "details" ? (
             <CaseDetailsForm
+              projectId={workspace.context.project_id}
               draft={draft}
               testDataError={testDataError}
               onFieldChange={handleFieldChange}

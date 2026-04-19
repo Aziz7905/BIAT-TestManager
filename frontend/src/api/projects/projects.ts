@@ -47,6 +47,10 @@ export async function restoreProject(id: string): Promise<Project> {
   return data;
 }
 
+export async function deleteProject(id: string): Promise<void> {
+  await apiClient.delete(`/projects/${id}/`);
+}
+
 export async function getProjectTree(id: string): Promise<ProjectTree> {
   const { data } = await apiClient.get<ProjectTree>(`/projects/${id}/tree/`);
   return data;

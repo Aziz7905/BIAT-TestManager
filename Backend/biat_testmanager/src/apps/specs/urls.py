@@ -9,6 +9,7 @@ from apps.specs.views import (
     SpecificationSourceParseView,
     SpecificationSourceRecordDetailView,
     SpecificationSourceRecordListView,
+    SpecificationSourceRecordSelectedDeleteView,
 )
 
 urlpatterns = [
@@ -41,6 +42,11 @@ urlpatterns = [
         "specification-sources/<uuid:source_pk>/records/<uuid:record_pk>/",
         SpecificationSourceRecordDetailView.as_view(),
         name="specification-source-record-detail",
+    ),
+    path(
+        "specification-sources/<uuid:source_pk>/records/selected/",
+        SpecificationSourceRecordSelectedDeleteView.as_view(),
+        name="specification-source-record-selected-delete",
     ),
     path(
         "specifications/",

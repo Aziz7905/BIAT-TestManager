@@ -69,6 +69,17 @@ export function priorityTone(priority: Priority) {
   return "bg-slate-300";
 }
 
+export function getSectionTreeCaseCount(section: TreeSection): number {
+  const directCaseCount =
+    section.counts.case_count ??
+    section.scenarios.reduce((total, scenario) => total + scenario.case_count, 0);
+
+  return (
+    directCaseCount +
+    section.children.reduce((total, child) => total + getSectionTreeCaseCount(child), 0)
+  );
+}
+
 function summarizeSection(section: TreeSection): Required<DeleteImpactSummary> {
   const directScenarioCount = section.scenarios.length;
   const directCaseCount =

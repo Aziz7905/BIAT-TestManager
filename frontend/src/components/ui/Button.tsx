@@ -5,11 +5,11 @@ type Size = "sm" | "md" | "lg";
 
 const variantClasses: Record<Variant, string> = {
   primary:
-    "bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white focus:ring-blue-600",
+    "bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white border border-slate-900 focus:ring-slate-900 shadow-sm",
   secondary:
-    "bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-700 border border-slate-300 focus:ring-slate-400",
+    "bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-900 border border-slate-300 focus:ring-slate-900",
   ghost:
-    "bg-transparent hover:bg-slate-100 disabled:opacity-50 text-slate-600 focus:ring-slate-400",
+    "bg-transparent hover:bg-slate-100 disabled:opacity-50 text-slate-700 focus:ring-slate-900",
   danger:
     "bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white focus:ring-red-600",
 };
@@ -41,7 +41,7 @@ export default function Button({
     <button
       disabled={disabled || isLoading}
       className={[
-        "inline-flex items-center justify-center gap-2 font-semibold rounded-lg transition",
+        "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg font-semibold transition",
         "focus:outline-none focus:ring-2 focus:ring-offset-2",
         variantClasses[variant],
         sizeClasses[size],

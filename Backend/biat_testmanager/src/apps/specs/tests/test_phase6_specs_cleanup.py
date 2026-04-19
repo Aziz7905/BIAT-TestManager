@@ -105,3 +105,45 @@ class SpecificationNonAICleanupRegressionTests(APITestCase):
             "REQ-LOGIN",
         )
         index_mock.assert_called_once()
+
+    def test_delete_selected_source_records_removes_only_checked_rows(self):
+        source = SpecificationSource.objects.create(
+            project=self.project,
+            name="Login source",
+            source_type=SpecificationSourceType.PLAIN_TEXT,
+            raw_text="REQ-LOGIN\nUsers can sign in.",
+            parser_status=SpecificationSourceParserStatus.READY,
+            uploaded_by=self.user,
+        )
+        selected_record = SpecificationSourceRecord.objects.create(
+            source=source,
+            record_index=0,
+            title="REQ-LOGIN",
+            content="Users can sign in.",
+            external_reference="REQ-LOGIN",
+            is_selected=True,
+        )
+        SpecificationSourceRecord.objects.create(
+            source=source,
+            record_index=1,
+            title="REQ-RESET",
+            content="Users can reset password.",
+            external_reference="REQ-RESET",
+            is_selected=False,
+        )
+
+        response = self.client.delete(
+            reverse("specification-source-record-selected-delete", kwargs={"source_pk": source.id})
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["deleted_count"], 1)
+        self.assertFalse(
+            SpecificationSourceRecord.objects.filter(id=selected_record.id).exists()
+        )
+        self.assertTrue(
+            SpecificationSourceRecord.objects.filter(
+                source=source,
+                external_reference="REQ-RESET",
+            ).exists()
+        )

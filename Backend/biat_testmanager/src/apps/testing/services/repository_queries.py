@@ -195,7 +195,7 @@ def build_test_suite_overview(suite: TestSuite) -> dict:
         "created_by_name": _display_user_name(suite.created_by),
         "created_at": suite.created_at,
         "counts": {
-            "section_count": suite.sections.count(),
+            "section_count": suite.sections.filter(parent__isnull=True).count(),
             "scenario_count": TestScenario.objects.filter(section__suite=suite).count(),
             **counts,
         },

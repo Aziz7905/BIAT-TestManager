@@ -154,6 +154,9 @@ export default function CreateNodeModal({
           on_failure: caseDraft.on_failure,
           timeout_ms: Number(caseDraft.timeout_ms) || 120000,
           test_data: parsedTestData,
+          linked_specification_ids: caseDraft.linked_specifications.map(
+            (specification) => specification.id
+          ),
           steps: caseDraft.steps
             .filter((row) => row.step.trim() || row.outcome.trim())
             .map((row) => ({ step: row.step, outcome: row.outcome })),
@@ -340,6 +343,7 @@ export default function CreateNodeModal({
 
             {caseTab === "details" ? (
               <CaseDetailsForm
+                projectId={projectId}
                 draft={caseDraft}
                 testDataError={testDataError}
                 onFieldChange={handleCaseField}

@@ -1,12 +1,15 @@
 import type { EditableCaseDraft } from "../../../types/case-editor";
+import SpecificationLinkPicker from "./SpecificationLinkPicker";
 
 interface CaseDetailsFormProps {
+  projectId: string;
   draft: EditableCaseDraft;
   testDataError: string | null;
   onFieldChange: <K extends keyof EditableCaseDraft>(field: K, value: EditableCaseDraft[K]) => void;
 }
 
 export default function CaseDetailsForm({
+  projectId,
   draft,
   testDataError,
   onFieldChange,
@@ -135,24 +138,11 @@ export default function CaseDetailsForm({
             </div>
           </div>
         </div>
-
-        <div className="rounded-md border border-slate-200 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Linked specifications</h3>
-          {draft.linked_specifications.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No linked specifications yet.</p>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {draft.linked_specifications.map((specification) => (
-                <div key={specification.id} className="rounded-md border border-slate-200 px-3 py-2">
-                  <div className="text-sm font-medium text-slate-900">{specification.title}</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {specification.external_reference || specification.source_type}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <SpecificationLinkPicker
+          projectId={projectId}
+          selectedSpecifications={draft.linked_specifications}
+          onChange={(items) => onFieldChange("linked_specifications", items)}
+        />
       </aside>
     </div>
   );

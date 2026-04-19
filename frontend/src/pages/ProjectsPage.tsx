@@ -5,6 +5,7 @@ import {
   createProject,
   updateProject,
   archiveProject,
+  deleteProject,
   restoreProject,
 } from "../api/projects/projects";
 import { getTeams } from "../api/accounts/teams";
@@ -42,6 +43,7 @@ function ProjectCard({
   onOpen,
   onEdit,
   onArchive,
+  onDelete,
   onRestore,
 }: {
   project: Project;
@@ -49,6 +51,7 @@ function ProjectCard({
   onOpen: () => void;
   onEdit: () => void;
   onArchive: () => void;
+  onDelete: () => void;
   onRestore: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -143,6 +146,15 @@ function ProjectCard({
                   Archive
                 </button>
               )}
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onDelete();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-red-600"
+              >
+                Delete
+              </button>
             </div>
           )}
         </div>
@@ -169,6 +181,9 @@ export default function ProjectsPage() {
   const [editForm, setEditForm] = useState({ name: "", description: "" });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -246,6 +261,21 @@ export default function ProjectsPage() {
       setProjects((prev) => prev.filter((p) => p.id !== project.id));
     } catch {
       window.alert("Failed to restore project.");
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteProject(deleteTarget.id);
+      setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch {
+      setDeleteError("Failed to delete project.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -328,6 +358,10 @@ export default function ProjectsPage() {
                 onOpen={() => navigate(`/projects/${p.id}`)}
                 onEdit={() => openEdit(p)}
                 onArchive={() => handleArchive(p)}
+                onDelete={() => {
+                  setDeleteTarget(p);
+                  setDeleteError(null);
+                }}
                 onRestore={() => handleRestore(p)}
               />
             ))}
@@ -435,6 +469,43 @@ export default function ProjectsPage() {
           </div>
           {editError && <p className="text-sm text-red-600">{editError}</p>}
         </form>
+      </Modal>
+
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => {
+          if (deleting) return;
+          setDeleteTarget(null);
+          setDeleteError(null);
+        }}
+        title="Delete Project"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteError(null);
+              }}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void handleDelete()} isLoading={deleting}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Delete <span className="font-semibold text-slate-900">{deleteTarget?.name}</span> permanently?
+          </p>
+          <p className="text-sm text-slate-500">
+            This removes the project from the workspace. Use archive when you only want to hide it from active work.
+          </p>
+          {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+        </div>
       </Modal>
     </AppLayout>
   );
