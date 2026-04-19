@@ -33,3 +33,10 @@ class SpecificationSourceRecordStatus(models.TextChoices):
     IMPORTED = "imported", "Imported"
     SKIPPED = "skipped", "Skipped"
     FAILED = "failed", "Failed"
+
+
+class SpecificationIndexStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    INDEXED = "indexed", "Indexed"
+    FAILED = "failed", "Failed"
+    STALE = "stale", "Stale"

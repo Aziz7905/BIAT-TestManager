@@ -2,24 +2,29 @@
 
 from apps.projects.access import can_manage_project_record, get_project_queryset_for_actor
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
-from apps.specs.models import Specification, SpecificationSource, SpecificationSourceRecord
+from apps.specs.models import SpecChunk, Specification, SpecificationSource, SpecificationSourceRecord
 from apps.testing.models import TestCase
 
 
 LINKED_TEST_CASE_PREVIEW_QUERYSET = TestCase.objects.select_related(
     "scenario",
-    "scenario__suite",
+    "scenario__section",
+    "scenario__section__suite",
 ).only(
     "id",
     "title",
-    "status",
+    "design_status",
     "automation_status",
     "version",
     "scenario__id",
     "scenario__title",
-    "scenario__suite__id",
-    "scenario__suite__name",
-).order_by("scenario__suite__name", "scenario__title", "title")
+    "scenario__section__suite__id",
+    "scenario__section__suite__name",
+).order_by("scenario__section__suite__name", "scenario__title", "title")
+
+SPEC_CHUNK_QUERYSET = SpecChunk.objects.select_related("embedding_model_config").order_by(
+    "chunk_index"
+)
 
 
 def can_view_specifications(user) -> bool:
@@ -64,7 +69,7 @@ def get_specification_queryset_for_actor(actor):
             "source",
         )
         .prefetch_related(
-            "chunks",
+            Prefetch("chunks", queryset=SPEC_CHUNK_QUERYSET),
             Prefetch("linked_test_cases", queryset=LINKED_TEST_CASE_PREVIEW_QUERYSET),
         )
         .annotate(
@@ -75,7 +80,7 @@ def get_specification_queryset_for_actor(actor):
                 distinct=True,
             ),
             linked_suite_count=Count(
-                "linked_test_cases__scenario__suite",
+                "linked_test_cases__scenario__section__suite",
                 distinct=True,
             ),
         )

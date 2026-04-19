@@ -48,10 +48,18 @@ def get_latest_execution_screenshot_url(execution) -> str | None:
 
 
 def get_result_artifacts(result) -> dict:
+    from apps.automation.models import TestArtifact
+
+    structured = list(
+        TestArtifact.objects.filter(execution=result.execution).values(
+            "id", "artifact_type", "storage_path", "metadata_json", "created_at"
+        ).order_by("artifact_type", "created_at")
+    )
     return {
         "video_url": result.video_url,
         "artifacts_path": result.artifacts_path.url if result.artifacts_path else None,
         "stdout_log_url": get_execution_artifact_url(result.execution, "stdout.log"),
         "stderr_log_url": get_execution_artifact_url(result.execution, "stderr.log"),
         "latest_screenshot_url": get_latest_execution_screenshot_url(result.execution),
+        "structured": structured,
     }

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+import logging
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.utils import timezone
 
 from apps.automation.models.choices import ExecutionTriggerType
-from apps.automation.services.execution_runner import create_and_queue_execution
+from apps.testing.models import TestRunTriggerType
+
+logger = logging.getLogger(__name__)
 
 
 def compute_next_run_for_schedule(
@@ -16,7 +19,7 @@ def compute_next_run_for_schedule(
     from_datetime: datetime | None = None,
 ):
     try:
-        from croniter import croniter
+        from croniter import CroniterBadCronError, CroniterBadDateError, croniter
     except ModuleNotFoundError:
         return _compute_basic_next_run(
             cron_expression=cron_expression,
@@ -30,7 +33,18 @@ def compute_next_run_for_schedule(
         localized_datetime = base_datetime.astimezone(zone)
         iterator = croniter(cron_expression, localized_datetime)
         next_run = iterator.get_next(datetime)
-    except Exception:
+    except (
+        CroniterBadCronError,
+        CroniterBadDateError,
+        ValueError,
+        ZoneInfoNotFoundError,
+    ) as exc:
+        logger.warning(
+            "Invalid execution schedule: cron=%s timezone=%s error=%s",
+            cron_expression,
+            timezone_name,
+            exc,
+        )
         return None
 
     if timezone.is_naive(next_run):
@@ -46,6 +60,7 @@ def _compute_basic_next_run(
 ):
     parts = cron_expression.split()
     if len(parts) != 5:
+        logger.warning("Invalid basic cron expression: %s", cron_expression)
         return None
 
     minute_part, hour_part, day_part, month_part, weekday_part = parts
@@ -56,7 +71,13 @@ def _compute_basic_next_run(
         minute = int(minute_part)
         hour = int(hour_part)
         zone = ZoneInfo(timezone_name)
-    except Exception:
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        logger.warning(
+            "Invalid basic execution schedule: cron=%s timezone=%s error=%s",
+            cron_expression,
+            timezone_name,
+            exc,
+        )
         return None
 
     base_datetime = (from_datetime or timezone.now()).astimezone(zone)
@@ -73,51 +94,28 @@ def _compute_basic_next_run(
 
 
 def trigger_execution_schedule(schedule):
-    test_cases = _get_schedule_test_cases(schedule)
-    executions = []
-    for test_case in test_cases:
-        executions.append(
-            create_and_queue_execution(
-                test_case=test_case,
-                triggered_by=schedule.created_by,
-                trigger_type=ExecutionTriggerType.SCHEDULED,
-                browser=schedule.browser,
-                platform=schedule.platform,
-            )
-        )
-    return executions
+    """
+    Create a TestRun + TestRunCase records for the schedule's scope, then
+    return the run. Execution dispatch happens downstream (Celery task or
+    manual trigger). The scheduler no longer bypasses the run layer.
+    """
+    from apps.testing.services.runs import (
+        create_test_run,
+        expand_run_from_suite,
+    )
+    from apps.testing.models import TestSuite
 
-
-def _get_schedule_test_cases(schedule):
-    from apps.testing.models import TestCase
+    run = create_test_run(
+        schedule.project,
+        name=f"Scheduled - {schedule.name}",
+        created_by=schedule.created_by,
+        trigger_type=TestRunTriggerType.SCHEDULED,
+    )
 
     if schedule.suite_id:
-        return list(
-            TestCase.objects.select_related(
-                "scenario",
-                "scenario__suite",
-            ).filter(
-                scenario__suite=schedule.suite,
-            ).order_by(
-                "scenario__order_index",
-                "scenario__title",
-                "order_index",
-                "title",
-            )
-        )
+        expand_run_from_suite(run, schedule.suite)
+    else:
+        for suite in TestSuite.objects.filter(project=schedule.project):
+            expand_run_from_suite(run, suite)
 
-    return list(
-        TestCase.objects.select_related(
-            "scenario",
-            "scenario__suite",
-        ).filter(
-            scenario__suite__project=schedule.project,
-        ).order_by(
-            "scenario__suite__folder_path",
-            "scenario__suite__name",
-            "scenario__order_index",
-            "scenario__title",
-            "order_index",
-            "title",
-        )
-    )
+    return run

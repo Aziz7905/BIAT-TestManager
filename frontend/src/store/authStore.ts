@@ -1,117 +1,136 @@
-// src/store/authStore.ts
 import { create } from "zustand";
-import { getCurrentUser, login as loginRequest, logout as logoutRequest } from "../api/auth";
-import type { CurrentUser } from "../types/accounts";
+import { tokenStorage } from "../api/client";
+import { getMe, login as apiLogin, logout as apiLogout } from "../api/accounts/auth";
+import type { User } from "../types/auth";
 
 interface AuthState {
-  user: CurrentUser | null;
+  user: User | null;
+  accessToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  hasHydrated: boolean;
+  isHydrating: boolean;
+  sessionExpired: boolean;
 
+  bootstrap: () => Promise<void>;
+  clearSession: (sessionExpired?: boolean) => void;
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  initializeAuth: () => Promise<void>;
-  clearAuth: () => void;
 }
 
-const ACCESS_TOKEN_KEY = "access";
-const REFRESH_TOKEN_KEY = "refresh";
+let bootstrapPromise: Promise<void> | null = null;
+let hasBootstrapped = false;
 
-const clearStoredTokens = (): void => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-};
-
-const hasStoredSession = (): boolean =>
-  Boolean(
-    localStorage.getItem(ACCESS_TOKEN_KEY) ||
-      localStorage.getItem(REFRESH_TOKEN_KEY)
-  );
-
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
-  isAuthenticated: hasStoredSession(),
+  accessToken: tokenStorage.getAccess(),
+  isAuthenticated: !!tokenStorage.getAccess(),
   isLoading: false,
+  hasHydrated: false,
+  isHydrating: false,
+  sessionExpired: false,
 
-  async login(identifier: string, password: string) {
-    set({ isLoading: true });
+  bootstrap: async () => {
+    if (hasBootstrapped) {
+      return bootstrapPromise ?? Promise.resolve();
+    }
 
+    if (bootstrapPromise) {
+      return bootstrapPromise;
+    }
+
+    const accessToken = tokenStorage.getAccess();
+    if (!accessToken) {
+      hasBootstrapped = true;
+      set({
+        user: null,
+        accessToken: null,
+        isAuthenticated: false,
+        hasHydrated: true,
+        isHydrating: false,
+        sessionExpired: false,
+      });
+      return Promise.resolve();
+    }
+
+    set({
+      accessToken,
+      isAuthenticated: true,
+      isHydrating: true,
+      sessionExpired: false,
+    });
+
+    bootstrapPromise = (async () => {
+      try {
+        const user = await getMe();
+        set({
+          user,
+          accessToken: tokenStorage.getAccess(),
+          isAuthenticated: true,
+          hasHydrated: true,
+          isHydrating: false,
+          sessionExpired: false,
+        });
+      } catch {
+        tokenStorage.clear();
+        set({
+          user: null,
+          accessToken: null,
+          isAuthenticated: false,
+          hasHydrated: true,
+          isHydrating: false,
+          sessionExpired: true,
+        });
+      } finally {
+        hasBootstrapped = true;
+        bootstrapPromise = null;
+      }
+    })();
+
+    return bootstrapPromise;
+  },
+
+  clearSession: (sessionExpired = false) => {
+    tokenStorage.clear();
+    set({
+      user: null,
+      accessToken: null,
+      isAuthenticated: false,
+      isLoading: false,
+      hasHydrated: true,
+      isHydrating: false,
+      sessionExpired,
+    });
+  },
+
+  login: async (identifier, password) => {
+    set({ isLoading: true, sessionExpired: false });
     try {
-      const data = await loginRequest({ identifier, password });
-
+      const data = await apiLogin(identifier, password);
+      tokenStorage.setTokens(data.access, data.refresh);
+      hasBootstrapped = true;
       set({
         user: data.user,
+        accessToken: data.access,
         isAuthenticated: true,
         isLoading: false,
+        hasHydrated: true,
+        isHydrating: false,
+        sessionExpired: false,
       });
-    } catch (error) {
-      clearStoredTokens();
-      set({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
-      throw error;
+    } catch (err) {
+      set({ isLoading: false });
+      throw err; // component handles the error message
     }
   },
 
-  async logout() {
+  logout: async () => {
+    const refresh = tokenStorage.getRefresh();
     try {
-      await logoutRequest();
-    } catch {
-      // Ignore logout API failures and clear local session anyway.
+      if (refresh) await apiLogout(refresh);
+    } finally {
+      hasBootstrapped = true;
+      get().clearSession(false);
     }
-
-    clearStoredTokens();
-
-    set({
-      user: null,
-      isAuthenticated: false,
-      isLoading: false,
-    });
-  },
-
-  async initializeAuth() {
-    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-
-    if (!accessToken && !refreshToken) {
-      set({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
-      return;
-    }
-
-    set({ isLoading: true });
-
-    try {
-      const user = await getCurrentUser();
-
-      set({
-        user,
-        isAuthenticated: true,
-        isLoading: false,
-      });
-    } catch {
-      clearStoredTokens();
-
-      set({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-      });
-    }
-  },
-
-  clearAuth() {
-    clearStoredTokens();
-
-    set({
-      user: null,
-      isAuthenticated: false,
-      isLoading: false,
-    });
   },
 }));

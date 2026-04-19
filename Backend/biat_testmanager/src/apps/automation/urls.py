@@ -6,6 +6,7 @@ from apps.automation.views import (
     AutomationScriptDetailView,
     AutomationScriptListCreateView,
     AutomationScriptValidateView,
+    ExecutionCheckpointResumeView,
     ExecutionScheduleDetailView,
     ExecutionScheduleListCreateView,
     ExecutionScheduleTriggerView,
@@ -15,6 +16,7 @@ from apps.automation.views import (
     TestExecutionListCreateView,
     TestExecutionPauseView,
     TestExecutionResumeView,
+    TestExecutionStreamTicketView,
     TestExecutionStopView,
     TestResultDetailView,
     TestResultExportJunitView,
@@ -62,6 +64,11 @@ urlpatterns = [
         name="test-execution-pause",
     ),
     path(
+        "test-executions/<uuid:pk>/stream-ticket/",
+        TestExecutionStreamTicketView.as_view(),
+        name="test-execution-stream-ticket",
+    ),
+    path(
         "test-executions/<uuid:pk>/resume/",
         TestExecutionResumeView.as_view(),
         name="test-execution-resume",
@@ -70,6 +77,11 @@ urlpatterns = [
         "test-executions/<uuid:pk>/stop/",
         TestExecutionStopView.as_view(),
         name="test-execution-stop",
+    ),
+    path(
+        "test-executions/<uuid:execution_pk>/checkpoints/<uuid:checkpoint_pk>/resume/",
+        ExecutionCheckpointResumeView.as_view(),
+        name="execution-checkpoint-resume",
     ),
     path(
         "test-executions/<uuid:execution_pk>/steps/",

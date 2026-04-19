@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from apps.specs.models import (
+    EmbeddingModel,
     SpecChunk,
     Specification,
     SpecificationSource,
@@ -15,12 +16,18 @@ class SpecChunkInline(admin.TabularInline):
         "chunk_index",
         "chunk_type",
         "component_tag",
+        "embedding_model_config",
         "embedding_model",
         "embedded_at",
         "token_count",
         "content",
     )
-    readonly_fields = ("embedding_model", "embedded_at", "token_count")
+    readonly_fields = (
+        "embedding_model_config",
+        "embedding_model",
+        "embedded_at",
+        "token_count",
+    )
 
 
 class SpecificationSourceRecordInline(admin.TabularInline):
@@ -46,6 +53,8 @@ class SpecificationAdmin(admin.ModelAdmin):
         "project",
         "source_type",
         "version",
+        "index_status",
+        "indexed_at",
         "uploaded_by",
         "created_at",
         "updated_at",
@@ -60,6 +69,7 @@ class SpecificationAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "source_type",
+        "index_status",
         "project__team__organization",
         "project__team",
         "project",
@@ -103,6 +113,7 @@ class SpecChunkAdmin(admin.ModelAdmin):
         "chunk_index",
         "chunk_type",
         "component_tag",
+        "embedding_model_config",
         "embedding_model",
         "embedded_at",
         "token_count",
@@ -115,11 +126,26 @@ class SpecChunkAdmin(admin.ModelAdmin):
     )
     list_filter = (
         "chunk_type",
+        "embedding_model_config",
         "embedding_model",
         "specification__project__team__organization",
         "specification__project__team",
         "specification__project",
     )
+
+
+@admin.register(EmbeddingModel)
+class EmbeddingModelAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "provider",
+        "dimensions",
+        "normalize",
+        "is_active",
+        "updated_at",
+    )
+    search_fields = ("name", "provider")
+    list_filter = ("provider", "normalize", "is_active")
 
 
 @admin.register(SpecificationSourceRecord)

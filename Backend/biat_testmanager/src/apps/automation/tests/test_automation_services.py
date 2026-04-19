@@ -3,8 +3,8 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from apps.accounts.models import Organization, Team, UserProfile
-from apps.accounts.models.choices import UserProfileRole
+from apps.accounts.models import Organization, Team, TeamMembership, UserProfile
+from apps.accounts.models.choices import OrganizationRole, TeamMembershipRole
 from apps.automation.models import (
     AutomationScript,
     ExecutionSchedule,
@@ -25,7 +25,7 @@ from apps.automation.services.scheduling import compute_next_run_for_schedule
 from apps.automation.services.script_validation import validate_script_content
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.testing.models import TestCase as QaTestCase
-from apps.testing.models import TestScenario, TestSuite
+from apps.testing.models import TestScenario, TestSection, TestSuite
 
 
 class AutomationServiceTests(TestCase):
@@ -33,7 +33,7 @@ class AutomationServiceTests(TestCase):
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
             username="service.owner",
-            password="Pass1234!",
+            password="Pass1234!",  # NOSONAR
             email="service.owner@biat-it.tn",
         )
         self.organization = Organization.objects.create(
@@ -43,12 +43,18 @@ class AutomationServiceTests(TestCase):
         UserProfile.objects.create(
             user=self.user,
             organization=self.organization,
-            role=UserProfileRole.TESTER,
+            organization_role=OrganizationRole.MEMBER,
         )
         self.team = Team.objects.create(
             organization=self.organization,
             name="Execution Team",
             manager=self.user,
+        )
+        TeamMembership.objects.create(
+            team=self.team,
+            user=self.user,
+            role=TeamMembershipRole.TESTER,
+            is_active=True,
         )
         self.project = Project.objects.create(
             team=self.team,
@@ -66,8 +72,13 @@ class AutomationServiceTests(TestCase):
             folder_path="Smoke",
             created_by=self.user,
         )
-        self.scenario = TestScenario.objects.create(
+        self.section = TestSection.objects.create(
             suite=self.suite,
+            name="General",
+            order_index=0,
+        )
+        self.scenario = TestScenario.objects.create(
+            section=self.section,
             title="Open app",
             description="Check that the app can be opened.",
         )
@@ -87,6 +98,16 @@ class AutomationServiceTests(TestCase):
 
         self.assertFalse(validation["is_valid"])
         self.assertTrue(validation["errors"])
+
+    def test_validate_script_content_accepts_selenium_python(self):
+        validation = validate_script_content(
+            framework=AutomationFramework.SELENIUM,
+            language=AutomationLanguage.PYTHON,
+            script_content="print('selenium smoke')",
+        )
+
+        self.assertTrue(validation["is_valid"])
+        self.assertEqual(validation["errors"], [])
 
     def test_select_execution_script_prefers_latest_active_version(self):
         AutomationScript.objects.create(
@@ -171,14 +192,15 @@ class AutomationServiceTests(TestCase):
         self.assertIsNotNone(schedule.next_run_at)
 
     def test_compute_next_run_for_schedule_handles_invalid_values(self):
-        invalid_timezone_result = compute_next_run_for_schedule(
-            cron_expression="0 2 * * *",
-            timezone_name="Invalid/Zone",
-        )
-        invalid_cron_result = compute_next_run_for_schedule(
-            cron_expression="invalid cron",
-            timezone_name="UTC",
-        )
+        with self.assertLogs("apps.automation.services.scheduling", level="WARNING"):
+            invalid_timezone_result = compute_next_run_for_schedule(
+                cron_expression="0 2 * * *",
+                timezone_name="Invalid/Zone",
+            )
+            invalid_cron_result = compute_next_run_for_schedule(
+                cron_expression="invalid cron",
+                timezone_name="UTC",
+            )
 
         self.assertIsNone(invalid_timezone_result)
         self.assertIsNone(invalid_cron_result)

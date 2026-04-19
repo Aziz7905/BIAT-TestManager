@@ -1,548 +1,418 @@
-/** Profile workspace updated to use the shared brand surfaces and spacing system. */
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import {
-  changeMyPassword,
-  getMyProfile,
-  updateMyProfile,
-} from "../api/accounts/profile";
-import { Button } from "../components/Button";
-import { ErrorMessage } from "../components/ErrorMessage";
-import { FormInput } from "../components/FormInput";
-import { FormSelect } from "../components/FormSelect";
-import { LoadingSpinner } from "../components/LoadingSpinner";
-import { Badge } from "../components/ui";
+import AppLayout from "../components/layout/AppLayout";
+import { Badge, Button, ErrorMessage, Input, PageHeader, Spinner } from "../components/ui";
+import { getMyProfile, updateMyProfile, changeMyPassword } from "../api/accounts/profile";
 import { useAuthStore } from "../store/authStore";
-import type {
-  ChangePasswordPayload,
-  MyProfile,
-  NotificationProvider,
-  UpdateMyProfilePayload,
-} from "../types/accounts";
+import type { MyProfile, NotificationProvider, UpdateProfilePayload } from "../types/accounts";
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "response" in error &&
-    typeof (error as { response?: unknown }).response === "object"
-  ) {
-    const response = (error as {
-      response?: { data?: { detail?: string; error?: string } };
-    }).response;
+function roleBadge(role: MyProfile["organization_role"]) {
+  const colorMap = {
+    platform_owner: "purple",
+    org_admin: "blue",
+    member: "slate",
+  } as const;
 
-    return response?.data?.detail || response?.data?.error || fallback;
-  }
+  const labelMap = {
+    platform_owner: "Platform Owner",
+    org_admin: "Org Admin",
+    member: "Member",
+  } as const;
 
-  return fallback;
+  return <Badge label={labelMap[role]} color={colorMap[role]} />;
 }
 
-const initialProfileForm: UpdateMyProfilePayload = {
-  first_name: "",
-  last_name: "",
-  jira_token: "",
-  github_token: "",
-  notification_provider: "none",
-  slack_user_id: "",
-  slack_username: "",
-  teams_user_id: "",
-  notifications_enabled: true,
-};
+function formatMembershipRole(role: string) {
+  return role.replaceAll("_", " ");
+}
 
-const initialPasswordForm: ChangePasswordPayload = {
-  current_password: "",
-  new_password: "",
-  confirm_new_password: "",
-};
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-5">
+        <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+        {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
 
-const notificationProviderOptions = [
-  { value: "none", label: "None" },
-  { value: "slack", label: "Slack" },
-  { value: "teams", label: "Microsoft Teams" },
-];
+function syncCurrentUserProfile(profile: MyProfile) {
+  const currentUser = useAuthStore.getState().user;
+  if (!currentUser) {
+    return;
+  }
+
+  useAuthStore.setState({
+    user: {
+      ...currentUser,
+      first_name: profile.first_name,
+      last_name: profile.last_name,
+      email: profile.email,
+      profile: {
+        ...currentUser.profile,
+        id: profile.id,
+        organization: profile.organization,
+        organization_name: profile.organization_name,
+        organization_role: profile.organization_role,
+        team: profile.team,
+        team_name: profile.team_name,
+        team_memberships: profile.team_memberships,
+        notification_provider: profile.notification_provider,
+        notifications_enabled: profile.notifications_enabled,
+        created_at: profile.created_at,
+      },
+    },
+  });
+}
 
 export default function ProfilePage() {
-  const { initializeAuth } = useAuthStore();
-
   const [profile, setProfile] = useState<MyProfile | null>(null);
-  const [profileForm, setProfileForm] =
-    useState<UpdateMyProfilePayload>(initialProfileForm);
-  const [passwordForm, setPasswordForm] =
-    useState<ChangePasswordPayload>(initialPasswordForm);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [savingInfo, setSavingInfo] = useState(false);
 
-  const [profileErrorMessage, setProfileErrorMessage] = useState("");
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState("");
-  const [passwordErrorMessage, setPasswordErrorMessage] = useState("");
-  const [passwordSuccessMessage, setPasswordSuccessMessage] = useState("");
+  const [jiraToken, setJiraToken] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [savingIntegrations, setSavingIntegrations] = useState(false);
 
-  const loadProfile = async (): Promise<void> => {
-    try {
-      setIsLoading(true);
-      setProfileErrorMessage("");
+  const [provider, setProvider] = useState<NotificationProvider>("none");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [slackUserId, setSlackUserId] = useState("");
+  const [slackUsername, setSlackUsername] = useState("");
+  const [teamsUserId, setTeamsUserId] = useState("");
+  const [savingNotifications, setSavingNotifications] = useState(false);
 
-      const profileData = await getMyProfile();
-
-      setProfile(profileData);
-      setProfileForm({
-        first_name: profileData.first_name,
-        last_name: profileData.last_name,
-        jira_token: "",
-        github_token: "",
-        notification_provider: profileData.notification_provider,
-        slack_user_id: profileData.slack_user_id ?? "",
-        slack_username: profileData.slack_username ?? "",
-        teams_user_id: profileData.teams_user_id ?? "",
-        notifications_enabled: profileData.notifications_enabled,
-      });
-    } catch (error: unknown) {
-      setProfileErrorMessage(
-        getErrorMessage(error, "Failed to load profile.")
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   useEffect(() => {
-    void loadProfile();
+    getMyProfile()
+      .then((loadedProfile) => {
+        setProfile(loadedProfile);
+        setFirstName(loadedProfile.first_name);
+        setLastName(loadedProfile.last_name);
+        setProvider(loadedProfile.notification_provider);
+        setNotificationsEnabled(loadedProfile.notifications_enabled);
+        setSlackUserId(loadedProfile.slack_user_id ?? "");
+        setSlackUsername(loadedProfile.slack_username ?? "");
+        setTeamsUserId(loadedProfile.teams_user_id ?? "");
+        syncCurrentUserProfile(loadedProfile);
+      })
+      .catch(() => setError("Failed to load profile."))
+      .finally(() => setLoading(false));
   }, []);
 
-  const handleProfileSubmit = async (
-    event: FormEvent<HTMLFormElement>
-  ): Promise<void> => {
-    event.preventDefault();
+  async function savePersonalInfo() {
+    setSavingInfo(true);
+    setError("");
 
     try {
-      setIsSavingProfile(true);
-      setProfileErrorMessage("");
-      setProfileSuccessMessage("");
-
       const updatedProfile = await updateMyProfile({
-        first_name: profileForm.first_name?.trim() || undefined,
-        last_name: profileForm.last_name?.trim() || undefined,
-        jira_token: profileForm.jira_token?.trim()
-          ? profileForm.jira_token.trim()
-          : null,
-        github_token: profileForm.github_token?.trim()
-          ? profileForm.github_token.trim()
-          : null,
-        notification_provider: profileForm.notification_provider,
-        slack_user_id: profileForm.slack_user_id?.trim()
-          ? profileForm.slack_user_id.trim()
-          : null,
-        slack_username: profileForm.slack_username?.trim()
-          ? profileForm.slack_username.trim()
-          : null,
-        teams_user_id: profileForm.teams_user_id?.trim()
-          ? profileForm.teams_user_id.trim()
-          : null,
-        notifications_enabled: profileForm.notifications_enabled,
+        first_name: firstName,
+        last_name: lastName,
       });
-
       setProfile(updatedProfile);
-      setProfileSuccessMessage("Profile updated successfully.");
-      await initializeAuth();
-
-      setProfileForm((previousForm) => ({
-        ...previousForm,
-        jira_token: "",
-        github_token: "",
-      }));
-    } catch (error: unknown) {
-      setProfileErrorMessage(
-        getErrorMessage(error, "Failed to update profile.")
-      );
+      syncCurrentUserProfile(updatedProfile);
+    } catch {
+      setError("Failed to save personal information.");
     } finally {
-      setIsSavingProfile(false);
+      setSavingInfo(false);
     }
-  };
+  }
 
-  const handlePasswordSubmit = async (
-    event: FormEvent<HTMLFormElement>
-  ): Promise<void> => {
-    event.preventDefault();
+  async function saveIntegrations() {
+    setSavingIntegrations(true);
+    setError("");
+
+    const payload: UpdateProfilePayload = {};
+    if (jiraToken) {
+      payload.jira_token = jiraToken;
+    }
+    if (githubToken) {
+      payload.github_token = githubToken;
+    }
 
     try {
-      setIsSavingPassword(true);
-      setPasswordErrorMessage("");
-      setPasswordSuccessMessage("");
-
-      await changeMyPassword(passwordForm);
-
-      setPasswordSuccessMessage("Password updated successfully.");
-      setPasswordForm(initialPasswordForm);
-    } catch (error: unknown) {
-      setPasswordErrorMessage(
-        getErrorMessage(error, "Failed to update password.")
-      );
+      const updatedProfile = await updateMyProfile(payload);
+      setProfile(updatedProfile);
+      syncCurrentUserProfile(updatedProfile);
+      setJiraToken("");
+      setGithubToken("");
+    } catch {
+      setError("Failed to save integration credentials.");
     } finally {
-      setIsSavingPassword(false);
+      setSavingIntegrations(false);
     }
-  };
+  }
 
-  const handleNotificationProviderChange = (
-    provider: NotificationProvider
-  ): void => {
-    setProfileForm((previousForm) => {
-      if (provider === "none") {
-        return {
-          ...previousForm,
-          notification_provider: provider,
-          slack_user_id: "",
-          slack_username: "",
-          teams_user_id: "",
-        };
-      }
+  async function saveNotifications() {
+    setSavingNotifications(true);
+    setError("");
 
-      if (provider === "slack") {
-        return {
-          ...previousForm,
-          notification_provider: provider,
-          teams_user_id: "",
-        };
-      }
-
-      return {
-        ...previousForm,
+    try {
+      const updatedProfile = await updateMyProfile({
         notification_provider: provider,
-        slack_user_id: "",
-        slack_username: "",
-      };
-    });
-  };
+        notifications_enabled: notificationsEnabled,
+        slack_user_id: slackUserId || undefined,
+        slack_username: slackUsername || undefined,
+        teams_user_id: teamsUserId || undefined,
+      });
+      setProfile(updatedProfile);
+      syncCurrentUserProfile(updatedProfile);
+    } catch {
+      setError("Failed to save notification settings.");
+    } finally {
+      setSavingNotifications(false);
+    }
+  }
 
-  const jiraTokenPlaceholder = profile?.has_jira_token
-    ? "Enter a new Jira token to replace the current one"
-    : "Enter Jira token";
+  async function handleChangePassword() {
+    setError("");
+    setPasswordSuccess(false);
 
-  const githubTokenPlaceholder = profile?.has_github_token
-    ? "Enter a new GitHub token to replace the current one"
-    : "Enter GitHub token";
+    if (newPassword !== confirmPassword) {
+      setError("New passwords do not match.");
+      return;
+    }
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[220px] items-center justify-center rounded-[28px] border border-border bg-surface shadow-sm">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    setSavingPassword(true);
+    try {
+      await changeMyPassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordSuccess(true);
+    } catch {
+      setError("Failed to change password. Check your current password.");
+    } finally {
+      setSavingPassword(false);
+    }
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Badge variant="tag">Account workspace</Badge>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">My Profile</h1>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          Update your account details, integrations, and notification settings.
-        </p>
-      </div>
+    <AppLayout>
+      <div className="h-full overflow-y-auto px-6 py-8">
+        <div className="mx-auto max-w-4xl space-y-6">
+          <PageHeader
+            title="My Profile"
+            subtitle="Manage your identity, notifications, and personal credentials."
+          />
 
-      <div className="space-y-6">
-        <section className="rounded-[28px] border border-border bg-surface p-6 shadow-panel">
-          <h2 className="mb-4 text-lg font-semibold tracking-tight text-text">Account</h2>
+          {error && <ErrorMessage message={error} onDismiss={() => setError("")} />}
 
-          {profileSuccessMessage ? (
-            <div className="mb-4 rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
-              {profileSuccessMessage}
+          {loading ? (
+            <div className="flex min-h-[50vh] items-center justify-center rounded-lg border border-slate-200 bg-white">
+              <Spinner size="lg" />
             </div>
-          ) : null}
+          ) : (
+            <>
+              <Section title="Personal Information" description="Your account identity inside the workspace.">
+                <div className="mb-6 flex flex-wrap items-center gap-4">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-lg font-bold text-blue-700">
+                    {profile?.first_name?.[0]}
+                    {profile?.last_name?.[0]}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900">{profile?.email}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {profile?.organization_name && (
+                        <span className="text-sm text-slate-500">{profile.organization_name}</span>
+                      )}
+                      {profile?.organization_role && roleBadge(profile.organization_role)}
+                    </div>
+                  </div>
+                </div>
 
-          {profileErrorMessage ? (
-            <ErrorMessage
-              message={profileErrorMessage}
-              onDismiss={() => setProfileErrorMessage("")}
-              className="mb-4"
-            />
-          ) : null}
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    id="profile-first-name"
+                    label="First name"
+                    value={firstName}
+                    onChange={(event) => setFirstName(event.target.value)}
+                  />
+                  <Input
+                    id="profile-last-name"
+                    label="Last name"
+                    value={lastName}
+                    onChange={(event) => setLastName(event.target.value)}
+                  />
+                </div>
 
-          <form onSubmit={handleProfileSubmit} className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormInput
-                id="profile-first-name"
-                label="First name"
-                type="text"
-                value={profileForm.first_name ?? ""}
-                onChange={(event) =>
-                  setProfileForm((previousForm) => ({
-                    ...previousForm,
-                    first_name: event.target.value,
-                  }))
-                }
-                required
-              />
+                <div className="mt-4 space-y-2 text-sm text-slate-600">
+                  <p>
+                    Primary team:{" "}
+                    <span className="font-medium text-slate-800">{profile?.team_name ?? "Not assigned"}</span>
+                  </p>
+                  {(profile?.team_memberships.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {profile?.team_memberships.map((membership) => (
+                        <span
+                          key={membership.id}
+                          className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600"
+                        >
+                          {membership.team_name} - {formatMembershipRole(membership.role)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-              <FormInput
-                id="profile-last-name"
-                label="Last name"
-                type="text"
-                value={profileForm.last_name ?? ""}
-                onChange={(event) =>
-                  setProfileForm((previousForm) => ({
-                    ...previousForm,
-                    last_name: event.target.value,
-                  }))
-                }
-                required
-              />
-            </div>
+                <div className="mt-5">
+                  <Button isLoading={savingInfo} loadingText="Saving..." onClick={savePersonalInfo}>
+                    Save changes
+                  </Button>
+                </div>
+              </Section>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormInput
-                id="profile-email"
-                label="Email"
-                type="text"
-                value={profile?.email ?? ""}
-                disabled
-              />
+              <Section title="Personal Credentials" description="These secrets are write-only and never returned by the API.">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    id="profile-jira-token"
+                    label={`Jira token${profile?.has_jira_token ? " (set)" : ""}`}
+                    type="password"
+                    value={jiraToken}
+                    onChange={(event) => setJiraToken(event.target.value)}
+                    placeholder={profile?.has_jira_token ? "Leave blank to keep current token" : "Enter token"}
+                  />
+                  <Input
+                    id="profile-github-token"
+                    label={`GitHub token${profile?.has_github_token ? " (set)" : ""}`}
+                    type="password"
+                    value={githubToken}
+                    onChange={(event) => setGithubToken(event.target.value)}
+                    placeholder={profile?.has_github_token ? "Leave blank to keep current token" : "Enter token"}
+                  />
+                </div>
 
-              <FormInput
-                id="profile-role"
-                label="Role"
-                type="text"
-                value={profile?.role ?? ""}
-                disabled
-              />
-            </div>
+                <div className="mt-5">
+                  <Button isLoading={savingIntegrations} loadingText="Saving..." onClick={saveIntegrations}>
+                    Save credentials
+                  </Button>
+                </div>
+              </Section>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormInput
-                id="profile-organization"
-                label="Organization"
-                type="text"
-                value={profile?.organization_name ?? ""}
-                disabled
-              />
+              <Section title="Notifications" description="Choose how this account should be notified.">
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700">Provider</label>
+                    <select
+                      value={provider}
+                      onChange={(event) => setProvider(event.target.value as NotificationProvider)}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400"
+                    >
+                      <option value="none">None</option>
+                      <option value="slack">Slack</option>
+                      <option value="teams">Microsoft Teams</option>
+                    </select>
+                  </div>
 
-              <FormInput
-                id="profile-team"
-                label="Teams"
-                type="text"
-                value={
-                  profile?.team_memberships?.length
-                    ? profile.team_memberships
-                        .map((membership) => membership.team_name)
-                        .join(", ")
-                    : profile?.team_name ?? "No team assigned"
-                }
-                disabled
-              />
-            </div>
-
-            <div>
-              <h3 className="mb-4 text-base font-semibold tracking-tight text-text">
-                Integrations
-              </h3>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <FormInput
-                  id="profile-jira-token"
-                  label="Jira token"
-                  type="password"
-                  value={profileForm.jira_token ?? ""}
-                  onChange={(event) =>
-                    setProfileForm((previousForm) => ({
-                      ...previousForm,
-                      jira_token: event.target.value,
-                    }))
-                  }
-                  placeholder={jiraTokenPlaceholder}
-                />
-
-                <FormInput
-                  id="profile-github-token"
-                  label="GitHub token"
-                  type="password"
-                  value={profileForm.github_token ?? ""}
-                  onChange={(event) =>
-                    setProfileForm((previousForm) => ({
-                      ...previousForm,
-                      github_token: event.target.value,
-                    }))
-                  }
-                  placeholder={githubTokenPlaceholder}
-                />
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-4 text-base font-semibold tracking-tight text-text">
-                Notifications
-              </h3>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <FormSelect
-                  id="profile-notification-provider"
-                  label="Notification provider"
-                  value={profileForm.notification_provider ?? "none"}
-                  onChange={(event) =>
-                    handleNotificationProviderChange(
-                      event.target.value as NotificationProvider
-                    )
-                  }
-                  options={notificationProviderOptions}
-                />
-
-                <div className="flex items-end">
-                  <label className="flex items-center gap-2 text-sm text-text">
+                  <label className="flex cursor-pointer items-center gap-3">
                     <input
                       type="checkbox"
-                      checked={Boolean(profileForm.notifications_enabled)}
-                      onChange={(event) =>
-                        setProfileForm((previousForm) => ({
-                          ...previousForm,
-                          notifications_enabled: event.target.checked,
-                        }))
-                      }
-                      className="h-4 w-4"
+                      checked={notificationsEnabled}
+                      onChange={(event) => setNotificationsEnabled(event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 accent-blue-600"
                     />
-                    Notifications enabled
+                    <span className="text-sm text-slate-700">Enable notifications</span>
                   </label>
+
+                  {provider === "slack" && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Input
+                        id="profile-slack-user-id"
+                        label="Slack user ID"
+                        value={slackUserId}
+                        onChange={(event) => setSlackUserId(event.target.value)}
+                        placeholder="U0123456789"
+                      />
+                      <Input
+                        id="profile-slack-username"
+                        label="Slack username"
+                        value={slackUsername}
+                        onChange={(event) => setSlackUsername(event.target.value)}
+                        placeholder="john.doe"
+                      />
+                    </div>
+                  )}
+
+                  {provider === "teams" && (
+                    <Input
+                      id="profile-teams-user-id"
+                      label="Teams user ID"
+                      value={teamsUserId}
+                      onChange={(event) => setTeamsUserId(event.target.value)}
+                      placeholder="user@org.onmicrosoft.com"
+                    />
+                  )}
                 </div>
-              </div>
 
-              {profileForm.notification_provider === "slack" ? (
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <FormInput
-                    id="profile-slack-user-id"
-                    label="Slack user ID"
-                    type="text"
-                    value={profileForm.slack_user_id ?? ""}
-                    onChange={(event) =>
-                      setProfileForm((previousForm) => ({
-                        ...previousForm,
-                        slack_user_id: event.target.value,
-                      }))
-                    }
-                    placeholder="U12345678"
+                <div className="mt-5">
+                  <Button isLoading={savingNotifications} loadingText="Saving..." onClick={saveNotifications}>
+                    Save notification settings
+                  </Button>
+                </div>
+              </Section>
+
+              <Section title="Change Password" description="Update your password for this account.">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <Input
+                    id="profile-current-password"
+                    label="Current password"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
                   />
-
-                  <FormInput
-                    id="profile-slack-username"
-                    label="Slack username"
-                    type="text"
-                    value={profileForm.slack_username ?? ""}
-                    onChange={(event) =>
-                      setProfileForm((previousForm) => ({
-                        ...previousForm,
-                        slack_username: event.target.value,
-                      }))
-                    }
-                    placeholder="@name.surname"
+                  <Input
+                    id="profile-new-password"
+                    label="New password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                  />
+                  <Input
+                    id="profile-confirm-password"
+                    label="Confirm new password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
                   />
                 </div>
-              ) : null}
 
-              {profileForm.notification_provider === "teams" ? (
-                <div className="mt-4">
-                  <FormInput
-                    id="profile-teams-user-id"
-                    label="Microsoft Teams user ID"
-                    type="text"
-                    value={profileForm.teams_user_id ?? ""}
-                    onChange={(event) =>
-                      setProfileForm((previousForm) => ({
-                        ...previousForm,
-                        teams_user_id: event.target.value,
-                      }))
-                    }
-                    placeholder="Teams user ID"
-                  />
+                {passwordSuccess && (
+                  <p className="mt-4 text-sm font-medium text-green-600">
+                    Password updated successfully.
+                  </p>
+                )}
+
+                <div className="mt-5">
+                  <Button isLoading={savingPassword} loadingText="Updating..." onClick={handleChangePassword}>
+                    Update password
+                  </Button>
                 </div>
-              ) : null}
-            </div>
-
-            <div className="flex justify-end">
-              <Button
-                type="submit"
-                isLoading={isSavingProfile}
-                loadingText="Saving..."
-              >
-                Save changes
-              </Button>
-            </div>
-          </form>
-        </section>
-
-        <section className="rounded-[28px] border border-border bg-surface p-6 shadow-panel">
-          <h2 className="mb-4 text-lg font-semibold tracking-tight text-text">
-            Change Password
-          </h2>
-
-          {passwordSuccessMessage ? (
-            <div className="mb-4 rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
-              {passwordSuccessMessage}
-            </div>
-          ) : null}
-
-          {passwordErrorMessage ? (
-            <ErrorMessage
-              message={passwordErrorMessage}
-              onDismiss={() => setPasswordErrorMessage("")}
-              className="mb-4"
-            />
-          ) : null}
-
-          <form onSubmit={handlePasswordSubmit}>
-            <div className="grid gap-4">
-              <FormInput
-                id="current-password"
-                label="Current password"
-                type="password"
-                value={passwordForm.current_password}
-                onChange={(event) =>
-                  setPasswordForm((previousForm) => ({
-                    ...previousForm,
-                    current_password: event.target.value,
-                  }))
-                }
-                required
-              />
-
-              <FormInput
-                id="new-password"
-                label="New password"
-                type="password"
-                value={passwordForm.new_password}
-                onChange={(event) =>
-                  setPasswordForm((previousForm) => ({
-                    ...previousForm,
-                    new_password: event.target.value,
-                  }))
-                }
-                required
-              />
-
-              <FormInput
-                id="confirm-new-password"
-                label="Confirm new password"
-                type="password"
-                value={passwordForm.confirm_new_password}
-                onChange={(event) =>
-                  setPasswordForm((previousForm) => ({
-                    ...previousForm,
-                    confirm_new_password: event.target.value,
-                  }))
-                }
-                required
-              />
-            </div>
-
-            <div className="mt-6 flex justify-end">
-              <Button
-                type="submit"
-                isLoading={isSavingPassword}
-                loadingText="Updating..."
-              >
-                Update password
-              </Button>
-            </div>
-          </form>
-        </section>
+              </Section>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </AppLayout>
   );
 }

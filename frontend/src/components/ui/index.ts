@@ -1,8 +1,10 @@
-/** Shared branded UI primitives for the BIAT Test Manager redesign. */
-export { Badge } from "./Badge";
-export { EmptyState } from "./EmptyState";
-export { IconButton } from "./IconButton";
-export { Modal } from "./Modal";
-export { SidebarItem } from "./SidebarItem";
-export { StepRow } from "./StepRow";
-
+export { default as Badge } from "./Badge";
+export { default as Button } from "./Button";
+export { default as EmptyState } from "./EmptyState";
+export { default as ErrorMessage } from "./ErrorMessage";
+export { default as Input } from "./Input";
+export { default as Modal } from "./Modal";
+export { default as PageHeader } from "./PageHeader";
+export { default as PaginationControls } from "./PaginationControls";
+export { default as Spinner } from "./Spinner";
+export { default as UserPicker } from "./UserPicker";

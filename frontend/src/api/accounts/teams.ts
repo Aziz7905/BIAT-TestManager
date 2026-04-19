@@ -1,73 +1,100 @@
-import { apiClient } from "../client";
+import apiClient from "../client";
 import type {
+  AddMemberPayload,
+  PaginatedResponse,
   Team,
-  TeamCreatePayload,
   TeamMember,
-  TeamMemberCreatePayload,
-  TeamMemberUpdatePayload,
-  TeamUpdatePayload,
+  CreateTeamPayload,
+  UpdateMemberPayload,
+  UpdateTeamPayload,
 } from "../../types/accounts";
 
-export const getTeams = async (): Promise<Team[]> => {
-  const response = await apiClient.get<Team[]>("/teams/");
-  return response.data;
-};
+function toPaginatedResponse<T>(data: PaginatedResponse<T> | T[]): PaginatedResponse<T> {
+  if (Array.isArray(data)) {
+    return {
+      count: data.length,
+      next: null,
+      previous: null,
+      results: data,
+    };
+  }
 
-export const getTeamById = async (teamId: string): Promise<Team> => {
-  const response = await apiClient.get<Team>(`/teams/${teamId}/`);
-  return response.data;
-};
+  return data;
+}
 
-export const createTeam = async (
-  payload: TeamCreatePayload
-): Promise<Team> => {
-  const response = await apiClient.post<Team>("/teams/", payload);
-  return response.data;
-};
+export async function getTeamsPage(page = 1): Promise<PaginatedResponse<Team>> {
+  const { data } = await apiClient.get<PaginatedResponse<Team> | Team[]>("/teams/", {
+    params: { page },
+  });
+  return toPaginatedResponse(data);
+}
 
-export const updateTeam = async (
+export async function getTeams(): Promise<Team[]> {
+  return (await getTeamsPage()).results;
+}
+
+export async function getAllTeams(): Promise<Team[]> {
+  const teams: Team[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await getTeamsPage(page);
+    teams.push(...response.results);
+    if (!response.next) {
+      break;
+    }
+    page += 1;
+  }
+
+  return teams;
+}
+
+export async function createTeam(payload: CreateTeamPayload): Promise<Team> {
+  const { data } = await apiClient.post<Team>("/teams/", payload);
+  return data;
+}
+
+export async function updateTeam(id: string, payload: UpdateTeamPayload): Promise<Team> {
+  const { data } = await apiClient.patch<Team>(`/teams/${id}/`, payload);
+  return data;
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  await apiClient.delete(`/teams/${id}/`);
+}
+
+export async function getTeamMembersPage(
   teamId: string,
-  payload: TeamUpdatePayload
-): Promise<Team> => {
-  const response = await apiClient.patch<Team>(`/teams/${teamId}/`, payload);
-  return response.data;
-};
-
-export const deleteTeam = async (teamId: string): Promise<void> => {
-  await apiClient.delete(`/teams/${teamId}/`);
-};
-
-export const getTeamMembers = async (teamId: string): Promise<TeamMember[]> => {
-  const response = await apiClient.get<TeamMember[]>(`/teams/${teamId}/members/`);
-  return response.data;
-};
-
-export const addTeamMember = async (
-  teamId: string,
-  payload: TeamMemberCreatePayload
-): Promise<TeamMember> => {
-  const response = await apiClient.post<TeamMember>(
+  page = 1
+): Promise<PaginatedResponse<TeamMember>> {
+  const { data } = await apiClient.get<PaginatedResponse<TeamMember> | TeamMember[]>(
     `/teams/${teamId}/members/`,
-    payload
+    { params: { page } }
   );
-  return response.data;
-};
+  return toPaginatedResponse(data);
+}
 
-export const updateTeamMember = async (
+export async function getTeamMembers(teamId: string): Promise<TeamMember[]> {
+  return (await getTeamMembersPage(teamId)).results;
+}
+
+export async function addTeamMember(teamId: string, payload: AddMemberPayload): Promise<TeamMember> {
+  const { data } = await apiClient.post<TeamMember>(`/teams/${teamId}/members/`, payload);
+  return data;
+}
+
+export async function updateTeamMember(
   teamId: string,
   membershipId: string,
-  payload: TeamMemberUpdatePayload
-): Promise<TeamMember> => {
-  const response = await apiClient.patch<TeamMember>(
+  payload: UpdateMemberPayload
+): Promise<TeamMember> {
+  const { data } = await apiClient.patch<TeamMember>(
     `/teams/${teamId}/members/${membershipId}/`,
     payload
   );
-  return response.data;
-};
+  return data;
+}
 
-export const removeTeamMember = async (
-  teamId: string,
-  membershipId: string
-): Promise<void> => {
+export async function removeTeamMember(teamId: string, membershipId: string): Promise<void> {
   await apiClient.delete(`/teams/${teamId}/members/${membershipId}/`);
-};
+}

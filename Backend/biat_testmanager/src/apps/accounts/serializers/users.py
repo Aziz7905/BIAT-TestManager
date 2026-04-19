@@ -1,20 +1,21 @@
 # apps/accounts/serializers/users.py
+from __future__ import annotations
+
 import uuid
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.accounts.models import (
+    OrganizationRole,
     Team,
     TeamMembership,
     TeamMembershipRole,
     UserProfile,
-    UserProfileRole,
 )
 from apps.accounts.serializers.profiles import UserProfileSerializer
 from apps.accounts.services.access import get_managed_team_ids_for_user
 from apps.accounts.services.memberships import (
-    map_profile_role_to_membership_role,
     sync_user_profile_team_from_memberships,
     upsert_team_membership,
 )
@@ -27,6 +28,7 @@ from apps.accounts.services.validation import validate_generated_email_is_availa
 
 User = get_user_model()
 PASSWORD_MIN_LENGTH = 8
+
 
 
 class CurrentUserSerializer(serializers.ModelSerializer):
@@ -69,19 +71,26 @@ class AdminCreateUserSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True, min_length=PASSWORD_MIN_LENGTH)
     team = serializers.CharField(required=False, allow_blank=True)
-    role = serializers.ChoiceField(choices=UserProfileRole.choices, required=False)
+    team_membership_role = serializers.ChoiceField(choices=TeamMembershipRole.choices, required=False)
+    organization_role = serializers.ChoiceField(
+        choices=OrganizationRole.choices,
+        required=False,
+    )
     is_staff = serializers.BooleanField(default=False)
 
     def validate(self, attrs):
         request = self.context["request"]
         requester = request.user
         requester_profile = getattr(requester, "profile", None)
-        requester_role = getattr(requester_profile, "role", None)
+        requester_organization_role = getattr(
+            requester_profile,
+            "organization_role",
+            None,
+        )
         team = None
         organization = None
 
         team_id = attrs.get("team")
-
         if team_id:
             try:
                 parsed_team_id = uuid.UUID(str(team_id))
@@ -96,7 +105,7 @@ class AdminCreateUserSerializer(serializers.Serializer):
                 ) from exc
 
             if (
-                requester_role == UserProfileRole.ORG_ADMIN
+                requester_organization_role == OrganizationRole.ORG_ADMIN
                 and requester_profile.organization_id != team.organization_id
             ):
                 raise serializers.ValidationError(
@@ -111,11 +120,20 @@ class AdminCreateUserSerializer(serializers.Serializer):
                 {"team": "Team is required when the organization cannot be inferred."}
             )
 
-        role = attrs.get("role", UserProfileRole.TESTER)
+        membership_role = attrs.get("team_membership_role")
+        if membership_role is None and "organization_role" not in attrs and team:
+            membership_role = TeamMembershipRole.TESTER
 
-        if role == UserProfileRole.PLATFORM_OWNER:
+        resolved_organization_role = attrs.get("organization_role") or OrganizationRole.MEMBER
+
+        if resolved_organization_role == OrganizationRole.PLATFORM_OWNER:
             raise serializers.ValidationError(
-                {"role": "Platform owner cannot be created from this endpoint."}
+                {"organization_role": "Platform owner cannot be created from this endpoint."}
+            )
+
+        if membership_role and not team:
+            raise serializers.ValidationError(
+                {"team": "A team is required for team-level roles."}
             )
 
         first_name = attrs["first_name"].strip()
@@ -131,13 +149,15 @@ class AdminCreateUserSerializer(serializers.Serializer):
         attrs["clean_last_name"] = last_name
         attrs["team_obj"] = team
         attrs["target_organization"] = organization
-        attrs["role"] = role
+        attrs["resolved_organization_role"] = resolved_organization_role
+        attrs["membership_role"] = membership_role
         return attrs
 
     def create(self, validated_data):
         team = validated_data.get("team_obj")
         organization = validated_data["target_organization"]
-        role = validated_data["role"]
+        organization_role = validated_data["resolved_organization_role"]
+        membership_role = validated_data["membership_role"]
         password = validated_data["password"]
         is_staff = validated_data.get("is_staff", False)
 
@@ -157,14 +177,13 @@ class AdminCreateUserSerializer(serializers.Serializer):
             is_staff=is_staff,
         )
 
-        profile = UserProfile.objects.create(
+        UserProfile.objects.create(
             user=user,
             organization=organization,
-            team=team,
-            role=role,
+            primary_team=team,
+            organization_role=organization_role,
         )
 
-        membership_role = map_profile_role_to_membership_role(role)
         if team and membership_role:
             upsert_team_membership(
                 user,
@@ -172,7 +191,7 @@ class AdminCreateUserSerializer(serializers.Serializer):
                 membership_role,
                 is_primary=True,
             )
-        else:
+        elif team is None:
             sync_user_profile_team_from_memberships(user)
 
         return user
@@ -181,8 +200,12 @@ class AdminCreateUserSerializer(serializers.Serializer):
 class AdminUpdateUserSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=150, required=False)
     last_name = serializers.CharField(max_length=150, required=False)
-    team = serializers.UUIDField(required=False)
-    role = serializers.ChoiceField(choices=UserProfileRole.choices, required=False)
+    team = serializers.UUIDField(required=False, allow_null=True)
+    team_membership_role = serializers.ChoiceField(choices=TeamMembershipRole.choices, required=False)
+    organization_role = serializers.ChoiceField(
+        choices=OrganizationRole.choices,
+        required=False,
+    )
     is_staff = serializers.BooleanField(required=False)
     password = serializers.CharField(
         write_only=True,
@@ -194,7 +217,11 @@ class AdminUpdateUserSerializer(serializers.Serializer):
         request = self.context["request"]
         requester = request.user
         requester_profile = getattr(requester, "profile", None)
-        requester_role = getattr(requester_profile, "role", None)
+        requester_organization_role = getattr(
+            requester_profile,
+            "organization_role",
+            None,
+        )
 
         instance = self.instance
         profile = getattr(instance, "profile", None)
@@ -202,31 +229,60 @@ class AdminUpdateUserSerializer(serializers.Serializer):
         first_name = attrs.get("first_name", instance.first_name).strip()
         last_name = attrs.get("last_name", instance.last_name).strip()
 
-        if profile and profile.organization:
-            current_organization = profile.organization
-        else:
-            current_organization = None
-
-        team_obj = None
+        current_organization = profile.organization if profile else None
+        team_obj = serializers.empty
         if "team" in attrs:
-            try:
-                team_obj = Team.objects.select_related("organization").get(id=attrs["team"])
-            except Team.DoesNotExist as exc:
-                raise serializers.ValidationError(
-                    {"team": "Selected team does not exist."}
-                ) from exc
+            if attrs["team"] is None:
+                team_obj = None
+            else:
+                try:
+                    team_obj = Team.objects.select_related("organization").get(
+                        id=attrs["team"]
+                    )
+                except Team.DoesNotExist as exc:
+                    raise serializers.ValidationError(
+                        {"team": "Selected team does not exist."}
+                    ) from exc
 
-            if (
-                requester_role == UserProfileRole.ORG_ADMIN
-                and requester_profile.organization_id != team_obj.organization_id
-            ):
-                raise serializers.ValidationError(
-                    {"team": "You can only assign users to teams in your organization."}
-                )
+                if (
+                    requester_organization_role == OrganizationRole.ORG_ADMIN
+                    and requester_profile.organization_id != team_obj.organization_id
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "team": "You can only assign users to teams in your organization."
+                        }
+                    )
 
-            current_organization = team_obj.organization
+                current_organization = team_obj.organization
 
-        if requester_role == UserProfileRole.TEAM_MANAGER:
+        membership_role = attrs.get("team_membership_role")
+        resolved_organization_role = attrs.get("organization_role") or getattr(
+            profile,
+            "organization_role",
+            OrganizationRole.MEMBER,
+        )
+
+        if resolved_organization_role == OrganizationRole.PLATFORM_OWNER:
+            raise serializers.ValidationError(
+                {"organization_role": "Platform owner cannot be assigned from this endpoint."}
+            )
+
+        target_team = None
+        if team_obj is serializers.empty:
+            target_team = getattr(profile, "primary_team", None)
+        else:
+            target_team = team_obj
+
+        if membership_role and target_team is None:
+            raise serializers.ValidationError(
+                {"team": "A team is required for team-level roles."}
+            )
+
+        if (
+            requester_organization_role == OrganizationRole.MEMBER
+            and get_managed_team_ids_for_user(requester)
+        ):
             managed_team_ids = get_managed_team_ids_for_user(requester)
 
             if (
@@ -242,36 +298,34 @@ class AdminUpdateUserSerializer(serializers.Serializer):
                     {"detail": "You can only manage users in your managed teams."}
                 )
 
-            if profile.role not in {
-                UserProfileRole.TESTER,
-                UserProfileRole.VIEWER,
-            }:
+            if profile.organization_role != OrganizationRole.MEMBER:
                 raise serializers.ValidationError(
-                    {"detail": "You can only manage tester and viewer accounts."}
+                    {"detail": "You can only manage organization members."}
                 )
 
-            if team_obj is not None and team_obj.id not in managed_team_ids:
+            if (
+                team_obj not in {serializers.empty, None}
+                and team_obj.id not in managed_team_ids
+            ):
                 raise serializers.ValidationError(
                     {"team": "You can only assign users inside your managed teams."}
                 )
 
-            if (
-                "role" in attrs
-                and attrs["role"] not in {
-                    UserProfileRole.TESTER,
-                    UserProfileRole.VIEWER,
-                }
-            ):
+            if membership_role not in {
+                None,
+                TeamMembershipRole.TESTER,
+                TeamMembershipRole.VIEWER,
+            }:
                 raise serializers.ValidationError(
                     {"role": "You can only assign tester or viewer roles."}
                 )
 
-            attrs["managed_team_ids"] = managed_team_ids
+            if resolved_organization_role != OrganizationRole.MEMBER:
+                raise serializers.ValidationError(
+                    {"organization_role": "You can only manage organization members."}
+                )
 
-        if attrs.get("role") == UserProfileRole.PLATFORM_OWNER:
-            raise serializers.ValidationError(
-                {"role": "Platform owner cannot be assigned from this endpoint."}
-            )
+            attrs["managed_team_ids"] = managed_team_ids
 
         if current_organization:
             validate_generated_email_is_available(
@@ -285,17 +339,26 @@ class AdminUpdateUserSerializer(serializers.Serializer):
         attrs["clean_last_name"] = last_name
         attrs["team_obj"] = team_obj
         attrs["target_organization"] = current_organization
+        attrs["resolved_organization_role"] = resolved_organization_role
+        attrs["membership_role"] = membership_role
         return attrs
 
     def update(self, instance, validated_data):
         profile = getattr(instance, "profile", None)
         requester = self.context["request"].user
-        requester_role = getattr(getattr(requester, "profile", None), "role", None)
+        requester_profile = getattr(requester, "profile", None)
+        requester_organization_role = getattr(
+            requester_profile,
+            "organization_role",
+            None,
+        )
 
         first_name = validated_data["clean_first_name"]
         last_name = validated_data["clean_last_name"]
-        team_obj = validated_data.get("team_obj")
+        team_obj = validated_data.get("team_obj", serializers.empty)
         target_organization = validated_data.get("target_organization")
+        resolved_organization_role = validated_data["resolved_organization_role"]
+        membership_role = validated_data["membership_role"]
 
         if target_organization:
             update_user_identity_from_name(
@@ -310,23 +373,25 @@ class AdminUpdateUserSerializer(serializers.Serializer):
             instance.save(update_fields=["first_name", "last_name"])
 
         if profile:
-            update_fields = []
+            update_fields: list[str] = []
 
-            if team_obj is not None:
-                profile.team = team_obj
-                profile.organization = team_obj.organization
-                update_fields.extend(["team", "organization"])
+            if team_obj is not serializers.empty:
+                profile.primary_team = team_obj
+                if team_obj is not None:
+                    profile.organization = team_obj.organization
+                update_fields.extend(["primary_team", "organization"])
 
-            if "role" in validated_data:
-                profile.role = validated_data["role"]
-                update_fields.append("role")
+            if profile.organization_role != resolved_organization_role:
+                profile.organization_role = resolved_organization_role
+                update_fields.append("organization_role")
 
             if update_fields:
                 profile.save(update_fields=update_fields)
 
-            membership_role = map_profile_role_to_membership_role(profile.role)
-
-            if requester_role == UserProfileRole.TEAM_MANAGER:
+            if (
+                requester_organization_role == OrganizationRole.MEMBER
+                and get_managed_team_ids_for_user(requester)
+            ):
                 managed_team_ids = validated_data.get("managed_team_ids", [])
                 if membership_role in {
                     TeamMembershipRole.TESTER,
@@ -338,21 +403,18 @@ class AdminUpdateUserSerializer(serializers.Serializer):
                         is_active=True,
                     ).update(role=membership_role)
 
-                    if team_obj is not None and team_obj.id in managed_team_ids:
+                    if team_obj not in {serializers.empty, None} and team_obj.id in managed_team_ids:
                         upsert_team_membership(
                             instance,
                             team_obj,
                             membership_role,
                             is_primary=False,
                         )
-
             elif membership_role:
-                if (
-                    membership_role in {
-                        TeamMembershipRole.TESTER,
-                        TeamMembershipRole.VIEWER,
-                    }
-                ):
+                if membership_role in {
+                    TeamMembershipRole.TESTER,
+                    TeamMembershipRole.VIEWER,
+                }:
                     TeamMembership.objects.filter(
                         user=instance,
                         is_active=True,
@@ -360,7 +422,11 @@ class AdminUpdateUserSerializer(serializers.Serializer):
                         role=membership_role
                     )
 
-                target_team = team_obj or profile.team
+                target_team = (
+                    team_obj
+                    if team_obj is not serializers.empty
+                    else profile.primary_team
+                )
                 if target_team is not None:
                     upsert_team_membership(
                         instance,
@@ -368,7 +434,7 @@ class AdminUpdateUserSerializer(serializers.Serializer):
                         membership_role,
                         is_primary=True,
                     )
-            else:
+            elif team_obj is serializers.empty:
                 sync_user_profile_team_from_memberships(instance)
 
         if "is_staff" in validated_data:

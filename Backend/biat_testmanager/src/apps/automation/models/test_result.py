@@ -74,10 +74,6 @@ class TestResult(models.Model):
         return self.junit_xml
 
     def get_artifacts(self) -> dict:
-        return {
-            "video_url": self.video_url,
-            "artifacts_path": self.artifacts_path.url if self.artifacts_path else None,
-        }
+        from apps.automation.services.artifacts import get_result_artifacts
 
-    def analyze_failure(self):
-        return self.ai_failure_analysis or self.error_message
+        return get_result_artifacts(self)

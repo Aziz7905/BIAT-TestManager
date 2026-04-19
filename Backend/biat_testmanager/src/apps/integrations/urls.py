@@ -1,0 +1,67 @@
+from django.urls import path
+
+from apps.integrations.views import (
+    ExternalIssueLinkListCreateView,
+    IntegrationActionLogListView,
+    MyIntegrationCredentialView,
+    ProjectIntegrationConfigView,
+    RepositoryBindingDetailView,
+    RepositoryBindingListCreateView,
+    TeamIntegrationConfigView,
+    WebhookEventDetailView,
+    WebhookEventListView,
+    WebhookIngestView,
+)
+
+urlpatterns = [
+    path(
+        "integrations/teams/<uuid:team_pk>/<str:provider_slug>/config/",
+        TeamIntegrationConfigView.as_view(),
+        name="team-integration-config",
+    ),
+    path(
+        "integrations/projects/<uuid:project_pk>/<str:provider_slug>/config/",
+        ProjectIntegrationConfigView.as_view(),
+        name="project-integration-config",
+    ),
+    path(
+        "integrations/me/credentials/<str:provider_slug>/",
+        MyIntegrationCredentialView.as_view(),
+        name="my-integration-credential",
+    ),
+    path(
+        "integrations/projects/<uuid:project_pk>/repository-bindings/",
+        RepositoryBindingListCreateView.as_view(),
+        name="repository-binding-list-create",
+    ),
+    path(
+        "integrations/repository-bindings/<uuid:pk>/",
+        RepositoryBindingDetailView.as_view(),
+        name="repository-binding-detail",
+    ),
+    path(
+        "integrations/webhooks/<str:provider_slug>/",
+        WebhookIngestView.as_view(),
+        name="webhook-ingest",
+    ),
+    path(
+        "integrations/webhook-events/",
+        WebhookEventListView.as_view(),
+        name="webhook-event-list",
+    ),
+    path(
+        "integrations/webhook-events/<uuid:pk>/",
+        WebhookEventDetailView.as_view(),
+        name="webhook-event-detail",
+    ),
+    path(
+        "integrations/projects/<uuid:project_pk>/external-issue-links/",
+        ExternalIssueLinkListCreateView.as_view(),
+        name="external-issue-link-list-create",
+    ),
+    path(
+        "integrations/action-logs/",
+        IntegrationActionLogListView.as_view(),
+        name="integration-action-log-list",
+    ),
+]

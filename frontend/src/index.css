@@ -1,43 +1,26 @@
-/** Global brand tokens and base typography for the BIAT Test Manager redesign. */
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
-:root {
-  --color-primary: 30 58 95;
-  --color-primary-light: 74 144 196;
-  --color-surface: 255 255 255;
-  --color-bg: 244 246 248;
-  --color-warm: 139 111 92;
-  --color-text: 26 26 26;
-  --color-muted: 107 114 128;
-  --color-border: 226 232 240;
-}
+@layer base {
+  :root {
+    --color-primary: 37 99 235;
+    --color-primary-light: 219 234 254;
+    --color-surface: 255 255 255;
+    --color-bg: 248 250 252;
+    --color-warm: 234 88 12;
+    --color-text: 15 23 42;
+    --color-muted: 100 116 139;
+    --color-border: 226 232 240;
+  }
 
-html,
-body,
-#root {
-  min-height: 100%;
-}
+  * {
+    box-sizing: border-box;
+  }
 
-body {
-  margin: 0;
-  background: rgb(var(--color-bg));
-  color: rgb(var(--color-text));
-  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
-  text-rendering: optimizeLegibility;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-::selection {
-  background: rgb(var(--color-primary-light) / 0.18);
-  color: rgb(var(--color-primary));
-}
-
-:focus-visible {
-  outline: 2px solid rgb(var(--color-primary-light));
-  outline-offset: 2px;
+  body {
+    background-color: rgb(var(--color-bg));
+    color: rgb(var(--color-text));
+    font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
 }

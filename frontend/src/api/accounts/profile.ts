@@ -1,32 +1,19 @@
-import { apiClient } from "../client";
-import type {
-  ChangePasswordPayload,
-  MyProfile,
-  UpdateMyProfilePayload,
-} from "../../types/accounts";
+import apiClient from "../client";
+import type { MyProfile, UpdateProfilePayload } from "../../types/accounts";
 
-interface ChangePasswordResponse {
-  detail: string;
+export async function getMyProfile(): Promise<MyProfile> {
+  const { data } = await apiClient.get<MyProfile>("/profile/");
+  return data;
 }
 
-export const getMyProfile = async (): Promise<MyProfile> => {
-  const response = await apiClient.get<MyProfile>("/profile/");
-  return response.data;
-};
+export async function updateMyProfile(payload: UpdateProfilePayload): Promise<MyProfile> {
+  const { data } = await apiClient.patch<MyProfile>("/profile/", payload);
+  return data;
+}
 
-export const updateMyProfile = async (
-  payload: UpdateMyProfilePayload
-): Promise<MyProfile> => {
-  const response = await apiClient.patch<MyProfile>("/profile/", payload);
-  return response.data;
-};
-
-export const changeMyPassword = async (
-  payload: ChangePasswordPayload
-): Promise<ChangePasswordResponse> => {
-  const response = await apiClient.post<ChangePasswordResponse>(
-    "/profile/change-password/",
-    payload
-  );
-  return response.data;
-};
+export async function changeMyPassword(payload: {
+  current_password: string;
+  new_password: string;
+}): Promise<void> {
+  await apiClient.post("/profile/change-password/", payload);
+}

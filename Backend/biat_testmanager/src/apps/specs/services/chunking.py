@@ -15,6 +15,24 @@ class ChunkDraft:
     token_count: int
 
 
+@dataclass
+class ChunkSyncResult:
+    chunks: list[ChunkDraft]
+    created_count: int
+    updated_count: int
+    deleted_count: int
+
+    @property
+    def changed(self) -> bool:
+        return any(
+            (
+                self.created_count,
+                self.updated_count,
+                self.deleted_count,
+            )
+        )
+
+
 def get_chunking_configuration() -> dict[str, int | str]:
     return {
         "strategy": settings.SPEC_CHUNK_STRATEGY,
@@ -130,23 +148,82 @@ def build_chunks_from_content(content: str) -> list[ChunkDraft]:
     return drafts
 
 
-def sync_specification_chunks(specification):
-    drafts = build_chunks_from_content(specification.content)
-
-    specification.chunks.all().delete()
-
-    SpecChunk.objects.bulk_create(
-        [
-            SpecChunk(
-                specification=specification,
-                chunk_index=draft.chunk_index,
-                chunk_type=draft.chunk_type,
-                component_tag=draft.component_tag,
-                content=draft.content,
-                token_count=draft.token_count,
-            )
-            for draft in drafts
-        ]
+def _chunk_draft_differs(existing_chunk: SpecChunk, draft: ChunkDraft) -> bool:
+    return any(
+        (
+            existing_chunk.chunk_type != draft.chunk_type,
+            existing_chunk.component_tag != draft.component_tag,
+            existing_chunk.content != draft.content,
+            existing_chunk.token_count != draft.token_count,
+        )
     )
 
-    return drafts
+
+def sync_specification_chunks(specification) -> ChunkSyncResult:
+    drafts = build_chunks_from_content(specification.content)
+    existing_chunks = {
+        chunk.chunk_index: chunk
+        for chunk in specification.chunks.order_by("chunk_index")
+    }
+    chunks_to_create: list[SpecChunk] = []
+    chunks_to_update: list[SpecChunk] = []
+
+    for draft in drafts:
+        existing_chunk = existing_chunks.pop(draft.chunk_index, None)
+        if existing_chunk is None:
+            chunks_to_create.append(
+                SpecChunk(
+                    specification=specification,
+                    chunk_index=draft.chunk_index,
+                    chunk_type=draft.chunk_type,
+                    component_tag=draft.component_tag,
+                    content=draft.content,
+                    token_count=draft.token_count,
+                )
+            )
+            continue
+
+        if not _chunk_draft_differs(existing_chunk, draft):
+            continue
+
+        existing_chunk.chunk_type = draft.chunk_type
+        existing_chunk.component_tag = draft.component_tag
+        existing_chunk.content = draft.content
+        existing_chunk.token_count = draft.token_count
+        existing_chunk.embedding_vector = None
+        existing_chunk.embedding_model_config = None
+        existing_chunk.embedding_model = ""
+        existing_chunk.embedded_at = None
+        chunks_to_update.append(existing_chunk)
+
+    stale_chunk_ids = [chunk.id for chunk in existing_chunks.values()]
+    deleted_count = 0
+    if stale_chunk_ids:
+        deleted_count = (
+            SpecChunk.objects.filter(pk__in=stale_chunk_ids).delete()[0]
+        )
+
+    if chunks_to_create:
+        SpecChunk.objects.bulk_create(chunks_to_create)
+
+    if chunks_to_update:
+        SpecChunk.objects.bulk_update(
+            chunks_to_update,
+            [
+                "chunk_type",
+                "component_tag",
+                "content",
+                "token_count",
+                "embedding_vector",
+                "embedding_model_config",
+                "embedding_model",
+                "embedded_at",
+            ],
+        )
+
+    return ChunkSyncResult(
+        chunks=drafts,
+        created_count=len(chunks_to_create),
+        updated_count=len(chunks_to_update),
+        deleted_count=deleted_count,
+    )

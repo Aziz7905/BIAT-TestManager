@@ -1,865 +1,441 @@
-/** Project workspace list and membership management restyled with branded surfaces. */
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getAdminUsers } from "../api/accounts/users";
-import { getTeams } from "../api/accounts/teams";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  addProjectMember,
-  createProject,
-  deleteProject,
-  getProjectMembers,
   getProjects,
-  removeProjectMember,
+  createProject,
   updateProject,
-  updateProjectMember,
-} from "../api/projects";
-import { Button } from "../components/Button";
-import { ErrorMessage } from "../components/ErrorMessage";
-import { FormInput } from "../components/FormInput";
-import { FormSelect } from "../components/FormSelect";
-import { LoadingSpinner } from "../components/LoadingSpinner";
-import { Modal } from "../components/Modal";
-import { Badge, EmptyState } from "../components/ui";
+  archiveProject,
+  restoreProject,
+} from "../api/projects/projects";
+import { getTeams } from "../api/accounts/teams";
 import { useAuthStore } from "../store/authStore";
-import type { AdminUser, Team } from "../types/accounts";
-import type {
-  Project,
-  ProjectCreatePayload,
-  ProjectMember,
-  ProjectMemberRole,
-  ProjectStatus,
-  ProjectUpdatePayload,
-} from "../types/projects";
+import AppLayout from "../components/layout/AppLayout";
+import { Button, EmptyState, Modal, Badge } from "../components/ui";
+import type { Project, ProjectStatus } from "../types/project";
+import type { Team } from "../types/accounts";
 
-function extractErrorMessage(data: unknown): string | null {
-  if (typeof data === "string" && data.trim()) {
-    return data;
-  }
-
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      const message = extractErrorMessage(item);
-      if (message) {
-        return message;
-      }
-    }
-  }
-
-  if (typeof data === "object" && data !== null) {
-    for (const value of Object.values(data)) {
-      const message = extractErrorMessage(value);
-      if (message) {
-        return message;
-      }
-    }
-  }
-
-  return null;
+function canCreateProject(user: ReturnType<typeof useAuthStore.getState>["user"]) {
+  if (!user) return false;
+  const role = user.profile?.organization_role;
+  if (user.is_staff || role === "platform_owner" || role === "org_admin") return true;
+  return user.profile?.team_memberships?.some((m) => m.role === "manager") ?? false;
 }
 
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "response" in error &&
-    typeof (error as { response?: unknown }).response === "object"
-  ) {
-    const response = (error as {
-      response?: { data?: unknown };
-    }).response;
-
-    return extractErrorMessage(response?.data) || fallback;
-  }
-
-  return fallback;
-}
-
-const PROJECT_STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string }> = [
-  { value: "active", label: "active" },
-  { value: "archived", label: "archived" },
-];
-
-const PROJECT_MEMBER_ROLE_OPTIONS: Array<{
-  value: ProjectMemberRole;
-  label: string;
-}> = [
-  { value: "owner", label: "owner" },
-  { value: "editor", label: "editor" },
-  { value: "viewer", label: "viewer" },
-];
-
-const initialProjectForm: ProjectCreatePayload = {
-  team: "",
-  name: "",
-  description: "",
-  status: "active",
-};
-
-function ProjectStackIcon() {
+function canManageProject(user: ReturnType<typeof useAuthStore.getState>["user"], project: Project) {
+  if (!user) return false;
+  const role = user.profile?.organization_role;
+  if (user.is_staff || role === "platform_owner" || role === "org_admin") return true;
   return (
-    <svg className="h-10 w-10" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <rect x="8" y="10" width="32" height="10" rx="4" className="stroke-primary" strokeWidth="2.5" />
-      <rect x="12" y="21" width="24" height="8" rx="4" className="stroke-primary-light" strokeWidth="2.5" />
-      <rect x="16" y="31" width="16" height="7" rx="3.5" className="stroke-warm" strokeWidth="2.5" />
-    </svg>
+    user.profile?.team_memberships?.some(
+      (m) => m.team === project.team && m.role === "manager",
+    ) ?? false
   );
 }
 
-function getProjectStatusVariant(status: ProjectStatus) {
-  return status === "active" ? "verified" : "warm";
+function statusColor(status: ProjectStatus) {
+  return status === "active" ? "green" : "slate";
 }
 
-export default function ProjectsPage() {
-  const { user } = useAuthStore();
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  const role = user?.profile?.role;
-  const isPlatformOwner = role === "platform_owner";
-  const isOrgAdmin = role === "org_admin";
-  const isTeamManager = role === "team_manager";
-  const canManageProjects = isPlatformOwner || isOrgAdmin || isTeamManager;
-  const projectWorkspaceBasePath = location.pathname.startsWith("/admin/")
-    ? "/admin/projects"
-    : "/projects";
-
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-
-  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
-
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
-  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
-  const [isMembersLoading, setIsMembersLoading] = useState(false);
-  const [isMemberSaving, setIsMemberSaving] = useState(false);
-  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
-  const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
-
-  const [projectForm, setProjectForm] =
-    useState<ProjectCreatePayload>(initialProjectForm);
-  const [memberForm, setMemberForm] = useState<{
-    userId: string;
-    role: ProjectMemberRole;
-  }>({
-    userId: "",
-    role: "viewer",
-  });
-
-  const teamOptions = useMemo(
-    () =>
-      teams.map((team) => ({
-        value: team.id,
-        label: `${team.name} - ${team.organization_name}`,
-      })),
-    [teams]
-  );
-
-  const availableProjectMembers = useMemo(() => {
-    if (!selectedProject) {
-      return [];
-    }
-
-    const existingUserIds = new Set(projectMembers.map((member) => member.user_id));
-
-    return users.filter((appUser) => {
-      const userRole = appUser.profile?.role;
-      const isOnProjectTeam =
-        appUser.profile?.team_memberships?.some(
-          (membership) =>
-            membership.team === selectedProject.team && membership.is_active
-        ) ?? false;
-
-      return (
-        !existingUserIds.has(appUser.id) &&
-        isOnProjectTeam &&
-        (userRole === "team_manager" ||
-          userRole === "tester" ||
-          userRole === "viewer")
-      );
-    });
-  }, [users, selectedProject, projectMembers]);
-
-  const projectMemberOptions = availableProjectMembers.map((appUser) => ({
-    value: String(appUser.id),
-    label: `${appUser.first_name} ${appUser.last_name} - ${appUser.email}`,
-  }));
-
-  const loadProjectMembers = async (projectId: string): Promise<void> => {
-    try {
-      setIsMembersLoading(true);
-      const members = await getProjectMembers(projectId);
-      setProjectMembers(members);
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to load project members."));
-    } finally {
-      setIsMembersLoading(false);
-    }
-  };
-
-  const loadData = async (): Promise<void> => {
-    try {
-      setIsLoading(true);
-      setErrorMessage("");
-
-      const projectsData = await getProjects();
-      setProjects(projectsData);
-
-      if (canManageProjects) {
-        const [teamsData, usersData] = await Promise.all([
-          getTeams(),
-          getAdminUsers(),
-        ]);
-        setTeams(teamsData);
-        setUsers(usersData);
-        return;
-      }
-
-      setTeams([]);
-      setUsers([]);
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to load projects."));
-    } finally {
-      setIsLoading(false);
-    }
-  };
+function ProjectCard({
+  project,
+  canManage,
+  onOpen,
+  onEdit,
+  onArchive,
+  onRestore,
+}: {
+  project: Project;
+  canManage: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const isArchived = project.status === "archived";
 
   useEffect(() => {
-    void loadData();
-  }, [role]);
-
-  const openCreateModal = (): void => {
-    const defaultTeam = teams.length === 1 ? teams[0].id : "";
-
-    setEditingProject(null);
-    setProjectForm({
-      ...initialProjectForm,
-      team: defaultTeam,
-    });
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsProjectModalOpen(true);
-  };
-
-  const openEditModal = (project: Project): void => {
-    setEditingProject(project);
-    setProjectForm({
-      team: project.team,
-      name: project.name,
-      description: project.description ?? "",
-      status: project.status,
-    });
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsProjectModalOpen(true);
-  };
-
-  const closeProjectModal = (): void => {
-    setIsProjectModalOpen(false);
-    setEditingProject(null);
-    setProjectForm(initialProjectForm);
-  };
-
-  const openMembersModal = async (project: Project): Promise<void> => {
-    setSelectedProject(project);
-    setProjectMembers([]);
-    setMemberForm({
-      userId: "",
-      role: "viewer",
-    });
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsMembersModalOpen(true);
-    await loadProjectMembers(project.id);
-  };
-
-  const closeMembersModal = (): void => {
-    setIsMembersModalOpen(false);
-    setSelectedProject(null);
-    setProjectMembers([]);
-    setMemberForm({
-      userId: "",
-      role: "viewer",
-    });
-  };
-
-  const handleProjectSubmit = async (
-    event: FormEvent<HTMLFormElement>
-  ): Promise<void> => {
-    event.preventDefault();
-
-    try {
-      setIsSaving(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      if (editingProject) {
-        const payload: ProjectUpdatePayload = {
-          team: projectForm.team,
-          name: projectForm.name.trim(),
-          description: projectForm.description?.trim() || "",
-          status: projectForm.status ?? "active",
-        };
-
-        await updateProject(editingProject.id, payload);
-        setSuccessMessage("Project updated successfully.");
-      } else {
-        const payload: ProjectCreatePayload = {
-          team: projectForm.team,
-          name: projectForm.name.trim(),
-          description: projectForm.description?.trim() || "",
-          status: projectForm.status ?? "active",
-        };
-
-        await createProject(payload);
-        setSuccessMessage("Project created successfully.");
-      }
-
-      await loadData();
-      closeProjectModal();
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to save project."));
-    } finally {
-      setIsSaving(false);
+    if (!menuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
-  };
-
-  const handleDeleteProject = async (projectId: string): Promise<void> => {
-    const confirmed = globalThis.confirm(
-      "Are you sure you want to delete this project?"
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setDeletingProjectId(projectId);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      await deleteProject(projectId);
-      setSuccessMessage("Project deleted successfully.");
-      await loadData();
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to delete project."));
-    } finally {
-      setDeletingProjectId(null);
-    }
-  };
-
-  const handleAddProjectMember = async (
-    event: FormEvent<HTMLFormElement>
-  ): Promise<void> => {
-    event.preventDefault();
-
-    if (!selectedProject || !memberForm.userId) {
-      return;
-    }
-
-    try {
-      setIsMemberSaving(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      await addProjectMember(selectedProject.id, {
-        user: Number(memberForm.userId),
-        role: memberForm.role,
-      });
-
-      setSuccessMessage("Project member added successfully.");
-      setMemberForm({
-        userId: "",
-        role: "viewer",
-      });
-      await Promise.all([loadData(), loadProjectMembers(selectedProject.id)]);
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to add project member."));
-    } finally {
-      setIsMemberSaving(false);
-    }
-  };
-
-  const handleProjectMemberRoleChange = async (
-    member: ProjectMember,
-    nextRole: ProjectMemberRole
-  ): Promise<void> => {
-    if (!selectedProject || member.role === nextRole) {
-      return;
-    }
-
-    try {
-      setUpdatingMemberId(member.id);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      await updateProjectMember(selectedProject.id, member.id, {
-        role: nextRole,
-      });
-
-      setSuccessMessage("Project member updated successfully.");
-      await Promise.all([loadData(), loadProjectMembers(selectedProject.id)]);
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to update project member."));
-    } finally {
-      setUpdatingMemberId(null);
-    }
-  };
-
-  const handleRemoveProjectMember = async (
-    member: ProjectMember
-  ): Promise<void> => {
-    if (!selectedProject) {
-      return;
-    }
-
-    const confirmed = globalThis.confirm(
-      `Remove ${member.full_name} from ${selectedProject.name}?`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      setDeletingMemberId(member.id);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      await removeProjectMember(selectedProject.id, member.id);
-      setSuccessMessage("Project member removed successfully.");
-      await Promise.all([loadData(), loadProjectMembers(selectedProject.id)]);
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error, "Failed to remove project member."));
-    } finally {
-      setDeletingMemberId(null);
-    }
-  };
-
-  let projectsContent: ReactNode;
-
-  if (isLoading) {
-    projectsContent = (
-      <div className="flex min-h-[220px] items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  } else if (projects.length === 0) {
-    projectsContent = (
-      <div className="p-6">
-        <EmptyState
-          icon={<ProjectStackIcon />}
-          title="No projects yet"
-          description="Create a project to connect teams, specifications, and the QA work that will feed the next testing layers."
-          primaryAction={
-            canManageProjects ? (
-              <Button onClick={openCreateModal}>New Project</Button>
-            ) : undefined
-          }
-        />
-      </div>
-    );
-  } else {
-    projectsContent = (
-      <table className="min-w-full divide-y divide-border">
-        <thead className="bg-bg">
-          <tr>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Project
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Team
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Organisation
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Status
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Members
-            </th>
-            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Created By
-            </th>
-            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-              Actions
-            </th>
-          </tr>
-        </thead>
-
-        <tbody className="divide-y divide-border">
-          {projects.map((project) => {
-            const isDeletingThisProject = deletingProjectId === project.id;
-
-            return (
-              <tr key={project.id} className="transition hover:bg-bg">
-                <td className="px-6 py-4 text-sm text-text">
-                  <Link
-                    to={`${projectWorkspaceBasePath}/${project.id}`}
-                    className="font-semibold tracking-tight text-text transition hover:text-primary"
-                  >
-                    {project.name}
-                  </Link>
-                  <div className="mt-1 text-xs text-muted">
-                    {project.description || "No description"}
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-muted">
-                  {project.team_name}
-                </td>
-                <td className="px-6 py-4 text-sm text-muted">
-                  {project.organization_name}
-                </td>
-                <td className="px-6 py-4 text-sm text-muted">
-                  <Badge variant={getProjectStatusVariant(project.status)}>
-                    {project.status}
-                  </Badge>
-                </td>
-                <td className="px-6 py-4 text-sm text-muted">
-                  {project.member_count > 0
-                    ? project.member_names.join(", ")
-                    : "-"}
-                </td>
-                <td className="px-6 py-4 text-sm text-muted">
-                  {project.created_by_name ?? "-"}
-                </td>
-                <td className="px-6 py-4 text-right text-sm">
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      onClick={() => navigate(`${projectWorkspaceBasePath}/${project.id}`)}
-                    >
-                      Open
-                    </Button>
-
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      onClick={() => void openMembersModal(project)}
-                    >
-                      Members
-                    </Button>
-
-                    {canManageProjects ? (
-                      <>
-                        <Button
-                          variant="secondary"
-                          size="md"
-                          onClick={() => openEditModal(project)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="md"
-                          onClick={() => void handleDeleteProject(project.id)}
-                          isLoading={isDeletingThisProject}
-                          loadingText="Deleting..."
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    );
-  }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Badge variant="tag">Project workspace</Badge>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text">Projects</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-            {canManageProjects
-              ? "Manage the project directory, then open each project as its own QA workspace with linked specifications, members, and test suites."
-              : "Open the projects you are assigned to and work from the project-level QA workspace."}
-          </p>
-        </div>
-
-        {canManageProjects ? <Button onClick={openCreateModal}>New Project</Button> : null}
-      </div>
-
-      {successMessage ? (
-        <div className="rounded-2xl border border-status-verified-text/15 bg-status-verified-bg px-4 py-3 text-sm text-status-verified-text shadow-sm">
-          {successMessage}
-        </div>
-      ) : null}
-
-      {errorMessage ? (
-        <ErrorMessage
-          message={errorMessage}
-          onDismiss={() => setErrorMessage("")}
-          className="mb-4"
-        />
-      ) : null}
-
-      <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel">
-        {projectsContent}
-      </div>
-
-      <Modal
-        isOpen={isProjectModalOpen}
-        onClose={closeProjectModal}
-        title={editingProject ? "Edit Project" : "Create Project"}
-        size="lg"
-      >
-        <form onSubmit={handleProjectSubmit} className="space-y-4">
-          <FormSelect
-            id="project-team"
-            label="Team"
-            value={projectForm.team}
-            onChange={(event) =>
-              setProjectForm((previousForm) => ({
-                ...previousForm,
-                team: event.target.value,
-              }))
-            }
-            options={teamOptions}
-            placeholder="Select team"
-            required
-            disabled={Boolean(editingProject && editingProject.member_count > 0)}
-            helperText={
-              editingProject && editingProject.member_count > 0
-                ? "Move or remove current project members before changing the team."
-                : undefined
-            }
-          />
-
-          <FormInput
-            id="project-name"
-            label="Project name"
-            type="text"
-            value={projectForm.name}
-            onChange={(event) =>
-              setProjectForm((previousForm) => ({
-                ...previousForm,
-                name: event.target.value,
-              }))
-            }
-            required
-          />
-
-          <div>
-            <label
-              htmlFor="project-description"
-              className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted"
-            >
-              Description
-            </label>
-            <textarea
-              id="project-description"
-              value={projectForm.description ?? ""}
-              onChange={(event) =>
-                setProjectForm((previousForm) => ({
-                  ...previousForm,
-                  description: event.target.value,
-                }))
-              }
-              rows={4}
-              className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-text outline-none transition placeholder:text-muted focus-visible:ring-4 focus-visible:ring-primary-light/20"
-            />
+    <div
+      className={`relative bg-white rounded-xl border border-slate-200 p-5 hover:border-blue-300 hover:shadow-md transition-all group ${
+        isArchived ? "opacity-70" : ""
+      }`}
+    >
+      <button onClick={onOpen} className="text-left w-full">
+        <div className="flex items-start justify-between mb-3">
+          <div
+            className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm transition ${
+              isArchived
+                ? "bg-slate-100 text-slate-400"
+                : "bg-blue-50 text-blue-600 group-hover:bg-blue-100"
+            }`}
+          >
+            {project.name[0].toUpperCase()}
           </div>
+          <Badge label={project.status} color={statusColor(project.status)} dot />
+        </div>
+        <h3 className="font-semibold text-slate-900 text-sm mb-0.5 truncate pr-6">
+          {project.name}
+        </h3>
+        <p className="text-xs text-slate-500 mb-3 line-clamp-2 min-h-[2rem]">
+          {project.description || "No description"}
+        </p>
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <span>{project.team_name}</span>
+          <span>
+            {project.member_count} member{project.member_count !== 1 ? "s" : ""}
+          </span>
+        </div>
+      </button>
 
-          <FormSelect
-            id="project-status"
-            label="Status"
-            value={projectForm.status ?? "active"}
-            onChange={(event) =>
-              setProjectForm((previousForm) => ({
-                ...previousForm,
-                status: event.target.value as ProjectStatus,
-              }))
-            }
-            options={PROJECT_STATUS_OPTIONS}
-            required
-          />
-
-          <div className="flex justify-end gap-3">
-            <Button type="button" variant="secondary" onClick={closeProjectModal}>
-              Cancel
-            </Button>
-            <Button type="submit" isLoading={isSaving} loadingText="Saving...">
-              {editingProject ? "Update" : "Create"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        isOpen={isMembersModalOpen}
-        onClose={closeMembersModal}
-        title={selectedProject ? `${selectedProject.name} Members` : "Project Members"}
-        size="xl"
-      >
-        <div className="space-y-6">
-          {canManageProjects && selectedProject ? (
-            <form
-              onSubmit={handleAddProjectMember}
-              className="rounded-[28px] border border-border bg-bg p-5"
-            >
-              <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
-                <FormSelect
-                  id="project-member-user"
-                  label="User"
-                  value={memberForm.userId}
-                  onChange={(event) =>
-                    setMemberForm((previousForm) => ({
-                      ...previousForm,
-                      userId: event.target.value,
-                    }))
-                  }
-                  options={projectMemberOptions}
-                  placeholder="Select user"
-                  required
-                />
-
-                <FormSelect
-                  id="project-member-role"
-                  label="Project role"
-                  value={memberForm.role}
-                  onChange={(event) =>
-                    setMemberForm((previousForm) => ({
-                      ...previousForm,
-                      role: event.target.value as ProjectMemberRole,
-                    }))
-                  }
-                  options={PROJECT_MEMBER_ROLE_OPTIONS}
-                  required
-                />
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <Button
-                  type="submit"
-                  isLoading={isMemberSaving}
-                  loadingText="Adding..."
-                  disabled={projectMemberOptions.length === 0}
+      {canManage && (
+        <div ref={menuRef} className="absolute top-3 right-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition"
+            aria-label="Project actions"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-8 w-40 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-10 text-sm">
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onEdit();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-slate-700"
+              >
+                Edit
+              </button>
+              {isArchived ? (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRestore();
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-slate-700"
                 >
-                  Add Member
-                </Button>
-              </div>
-
-              {projectMemberOptions.length === 0 ? (
-                <p className="mt-3 text-sm text-muted">
-                  No more team members are available to add to this project.
-                </p>
-              ) : null}
-            </form>
-          ) : null}
-
-          {isMembersLoading ? (
-            <div className="flex min-h-[180px] items-center justify-center">
-              <LoadingSpinner size="lg" />
-            </div>
-          ) : projectMembers.length === 0 ? (
-            <div className="rounded-[28px] border border-dashed border-border bg-surface p-6 text-sm text-muted">
-              No project members found.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-[28px] border border-border bg-surface shadow-sm">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-bg">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                      Name
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                      Email
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                      User Role
-                    </th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                      Project Role
-                    </th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-border">
-                  {projectMembers.map((member) => {
-                    const isUpdatingThisMember = updatingMemberId === member.id;
-                    const isDeletingThisMember = deletingMemberId === member.id;
-                    const isBusy = isUpdatingThisMember || isDeletingThisMember;
-
-                    return (
-                      <tr key={member.id} className="transition hover:bg-bg">
-                        <td className="px-6 py-4 text-sm font-medium text-text">
-                          {member.full_name}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-muted">
-                          {member.email}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-muted">
-                          {member.user_role}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-muted">
-                          {canManageProjects ? (
-                            <select
-                              value={member.role}
-                              onChange={(event) =>
-                                void handleProjectMemberRoleChange(
-                                  member,
-                                  event.target.value as ProjectMemberRole
-                                )
-                              }
-                              disabled={isBusy}
-                              className="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text outline-none transition focus-visible:ring-4 focus-visible:ring-primary-light/20"
-                            >
-                              {PROJECT_MEMBER_ROLE_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            member.role
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-right text-sm">
-                          {canManageProjects ? (
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              onClick={() => void handleRemoveProjectMember(member)}
-                              isLoading={isDeletingThisMember}
-                              loadingText="Removing..."
-                            >
-                              Remove
-                            </Button>
-                          ) : (
-                            <span className="text-muted">View only</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                  Restore
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onArchive();
+                  }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-red-600"
+                >
+                  Archive
+                </button>
+              )}
             </div>
           )}
         </div>
-      </Modal>
+      )}
     </div>
+  );
+}
+
+export default function ProjectsPage() {
+  const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus>("active");
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: "", description: "", team: "" });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const [editTarget, setEditTarget] = useState<Project | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", description: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([getProjects(statusFilter), getTeams()])
+      .then(([p, t]) => {
+        setProjects(p);
+        setTeams(t);
+      })
+      .finally(() => setLoading(false));
+  }, [statusFilter]);
+
+  const counts = useMemo(() => ({ active: 0, archived: 0 }), []);
+  counts.active = projects.filter((p) => p.status === "active").length;
+  counts.archived = projects.filter((p) => p.status === "archived").length;
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!createForm.name.trim() || !createForm.team.trim()) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const project = await createProject({
+        name: createForm.name.trim(),
+        description: createForm.description.trim(),
+        team: createForm.team.trim(),
+      });
+      if (statusFilter === "active") setProjects((prev) => [project, ...prev]);
+      setShowCreate(false);
+      setCreateForm({ name: "", description: "", team: "" });
+    } catch {
+      setCreateError("Failed to create project.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function openEdit(project: Project) {
+    setEditTarget(project);
+    setEditForm({ name: project.name, description: project.description });
+    setEditError(null);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTarget || !editForm.name.trim()) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const updated = await updateProject(editTarget.id, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim(),
+      });
+      setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setEditTarget(null);
+    } catch {
+      setEditError("Failed to update project.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleArchive(project: Project) {
+    if (!window.confirm(`Archive "${project.name}"? It will be hidden from active views.`)) return;
+    try {
+      await archiveProject(project.id);
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+    } catch {
+      window.alert("Failed to archive project.");
+    }
+  }
+
+  async function handleRestore(project: Project) {
+    try {
+      await restoreProject(project.id);
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+    } catch {
+      window.alert("Failed to restore project.");
+    }
+  }
+
+  return (
+    <AppLayout>
+      <div className="h-full overflow-y-auto px-8 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Projects</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {projects.length} {statusFilter} project{projects.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+          {canCreateProject(user) && (
+            <Button onClick={() => setShowCreate(true)}>+ New Project</Button>
+          )}
+        </div>
+
+        {/* Status tabs */}
+        <div className="flex items-center gap-1 border-b border-slate-200 mb-6">
+          {(["active", "archived"] as ProjectStatus[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+                statusFilter === s
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {s === "active" ? "Active" : "Archived"}
+            </button>
+          ))}
+        </div>
+
+        {/* Grid */}
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-xl border border-slate-200 p-5 animate-pulse">
+                <div className="w-9 h-9 rounded-lg bg-slate-100 mb-3" />
+                <div className="h-4 bg-slate-100 rounded mb-2 w-3/4" />
+                <div className="h-3 bg-slate-100 rounded w-full mb-1" />
+                <div className="h-3 bg-slate-100 rounded w-2/3" />
+              </div>
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          <EmptyState
+            title={statusFilter === "active" ? "No active projects" : "No archived projects"}
+            description={
+              statusFilter === "active"
+                ? "Create your first project to start organizing test suites and cases."
+                : "Projects you archive will appear here."
+            }
+            action={
+              statusFilter === "active" && canCreateProject(user) ? (
+                <Button onClick={() => setShowCreate(true)}>Create Project</Button>
+              ) : undefined
+            }
+            icon={
+              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
+                />
+              </svg>
+            }
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {projects.map((p) => (
+              <ProjectCard
+                key={p.id}
+                project={p}
+                canManage={canManageProject(user, p)}
+                onOpen={() => navigate(`/projects/${p.id}`)}
+                onEdit={() => openEdit(p)}
+                onArchive={() => handleArchive(p)}
+                onRestore={() => handleRestore(p)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create modal */}
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="New Project"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+            <Button form="create-project-form" type="submit" isLoading={creating}>
+              Create
+            </Button>
+          </>
+        }
+      >
+        <form id="create-project-form" onSubmit={handleCreate} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Project name <span className="text-red-500">*</span>
+            </label>
+            <input
+              required
+              value={createForm.name}
+              onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Banking App — Regression"
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Team <span className="text-red-500">*</span>
+            </label>
+            <select
+              required
+              value={createForm.team}
+              onChange={(e) => setCreateForm((f) => ({ ...f, team: e.target.value }))}
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent bg-white"
+            >
+              <option value="">Select a team…</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Description</label>
+            <textarea
+              rows={3}
+              value={createForm.description}
+              onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Optional description"
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
+            />
+          </div>
+          {createError && <p className="text-sm text-red-600">{createError}</p>}
+        </form>
+      </Modal>
+
+      {/* Edit modal */}
+      <Modal
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title="Edit Project"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditTarget(null)}>
+              Cancel
+            </Button>
+            <Button form="edit-project-form" type="submit" isLoading={editSaving}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <form id="edit-project-form" onSubmit={handleEdit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Project name <span className="text-red-500">*</span>
+            </label>
+            <input
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Description</label>
+            <textarea
+              rows={3}
+              value={editForm.description}
+              onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+              className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
+            />
+          </div>
+          {editError && <p className="text-sm text-red-600">{editError}</p>}
+        </form>
+      </Modal>
+    </AppLayout>
   );
 }

@@ -1,4 +1,5 @@
-﻿from django.db import models
+﻿#src/app/testing/models/choices.py
+from django.db import models
 
 
 class TestScenarioType(models.TextChoices):
@@ -29,13 +30,14 @@ class TestScenarioPolarity(models.TextChoices):
     NEGATIVE = "negative", "Negative"
 
 
-class TestCaseStatus(models.TextChoices):
+class TestCaseDesignStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
-    READY = "ready", "Ready"
-    RUNNING = "running", "Running"
-    PASSED = "passed", "Passed"
-    FAILED = "failed", "Failed"
-    SKIPPED = "skipped", "Skipped"
+    IN_REVIEW = "in_review", "In Review"
+    APPROVED = "approved", "Approved"
+    ARCHIVED = "archived", "Archived"
+
+
+TestCaseStatus = TestCaseDesignStatus
 
 
 class TestCaseAutomationStatus(models.TextChoices):
@@ -47,4 +49,56 @@ class TestCaseAutomationStatus(models.TextChoices):
 class TestCaseOnFailureBehavior(models.TextChoices):
     FAIL_AND_STOP = "fail_and_stop", "Fail And Stop"
     FAIL_BUT_CONTINUE = "fail_but_continue", "Fail But Continue"
+
+
+LEGACY_TEST_CASE_STATUS_TO_DESIGN_STATUS = {
+    "draft": TestCaseDesignStatus.DRAFT,
+    "ready": TestCaseDesignStatus.APPROVED,
+    "running": TestCaseDesignStatus.APPROVED,
+    "passed": TestCaseDesignStatus.APPROVED,
+    "failed": TestCaseDesignStatus.APPROVED,
+    "skipped": TestCaseDesignStatus.APPROVED,
+    TestCaseDesignStatus.DRAFT: TestCaseDesignStatus.DRAFT,
+    TestCaseDesignStatus.IN_REVIEW: TestCaseDesignStatus.IN_REVIEW,
+    TestCaseDesignStatus.APPROVED: TestCaseDesignStatus.APPROVED,
+    TestCaseDesignStatus.ARCHIVED: TestCaseDesignStatus.ARCHIVED,
+}
+
+
+def map_legacy_test_case_status_to_design_status(value: str | None) -> str:
+    return LEGACY_TEST_CASE_STATUS_TO_DESIGN_STATUS.get(
+        value or "",
+        TestCaseDesignStatus.DRAFT,
+    )
+
+
+class TestPlanStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    ACTIVE = "active", "Active"
+    ARCHIVED = "archived", "Archived"
+
+
+class TestRunTriggerType(models.TextChoices):
+    MANUAL = "manual", "Manual"
+    CI_CD = "ci_cd", "CI/CD"
+    SCHEDULED = "scheduled", "Scheduled"
+    WEBHOOK = "webhook", "Webhook"
+
+
+class TestRunStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    PASSED = "passed", "Passed"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class TestRunCaseStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    PASSED = "passed", "Passed"
+    FAILED = "failed", "Failed"
+    SKIPPED = "skipped", "Skipped"
+    ERROR = "error", "Error"
+    CANCELLED = "cancelled", "Cancelled"
 

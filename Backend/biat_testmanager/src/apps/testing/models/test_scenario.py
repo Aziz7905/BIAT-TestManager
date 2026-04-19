@@ -1,7 +1,7 @@
-﻿import copy
+#src/app/testing/models/test_scenario.py
 import uuid
 
-from django.db import models, transaction
+from django.db import models
 
 from .choices import (
     BusinessPriority,
@@ -14,8 +14,8 @@ from .utils import calculate_pass_rate
 
 class TestScenario(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    suite = models.ForeignKey(
-        "testing.TestSuite",
+    section = models.ForeignKey(
+        "testing.TestSection",
         on_delete=models.CASCADE,
         related_name="scenarios",
     )
@@ -49,47 +49,35 @@ class TestScenario(models.Model):
 
     class Meta:
         db_table = "testing_test_scenario"
-        ordering = ["suite__name", "order_index", "title"]
+        ordering = ["section__suite__name", "section__order_index", "order_index", "title"]
 
     def __str__(self) -> str:
-        return f"{self.suite.name} / {self.title}"
+        return f"{self.section.suite.name} / {self.title}"
+
+    @property
+    def suite(self):
+        return self.section.suite
+
+    @property
+    def suite_id(self):
+        return self.section.suite_id
 
     def get_cases(self):
         return self.cases.order_by("order_index", "title")
 
     def get_pass_rate(self) -> float:
+        # Batch 4 keeps this intentionally simple: a case counts as passed when it
+        # has at least one passing execution result linked to it.
         aggregates = self.cases.aggregate(
-            total=models.Count("id"),
-            passed=models.Count("id", filter=models.Q(status="passed")),
+            total=models.Count("id", distinct=True),
+            passed=models.Count(
+                "id",
+                filter=models.Q(executions__result__status="passed"),
+                distinct=True,
+            ),
         )
         return calculate_pass_rate(
             total_count=aggregates["total"] or 0,
             passed_count=aggregates["passed"] or 0,
         )
 
-    @transaction.atomic
-    def clone(self):
-        cloned_scenario = TestScenario.objects.create(
-            suite=self.suite,
-            title=f"{self.title} Copy",
-            description=self.description,
-            scenario_type=self.scenario_type,
-            priority=self.priority,
-            business_priority=self.business_priority,
-            polarity=self.polarity,
-            ai_generated=self.ai_generated,
-            ai_confidence=self.ai_confidence,
-            order_index=self.order_index,
-        )
-
-        for case in self.get_cases().prefetch_related("linked_specifications"):
-            linked_specifications = list(case.linked_specifications.all())
-            case.pk = None
-            case.scenario = cloned_scenario
-            case.steps = copy.deepcopy(case.steps)
-            case.test_data = copy.deepcopy(case.test_data)
-            case.version = 1
-            case.save()
-            case.linked_specifications.set(linked_specifications)
-
-        return cloned_scenario

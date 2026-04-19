@@ -5,7 +5,10 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from encrypted_model_fields.fields import EncryptedCharField
 
-from .choices import NotificationProvider, UserProfileRole
+from .choices import (
+    NotificationProvider,
+    OrganizationRole,
+)
 from .organization import Organization
 from .team import Team
 from .utils import build_org_email
@@ -26,7 +29,7 @@ class UserProfile(models.Model):
         related_name="user_profiles",
     )
 
-    team = models.ForeignKey(
+    primary_team = models.ForeignKey(
         Team,
         on_delete=models.SET_NULL,
         null=True,
@@ -34,10 +37,10 @@ class UserProfile(models.Model):
         related_name="user_profiles",
     )
 
-    role = models.CharField(
+    organization_role = models.CharField(
         max_length=30,
-        choices=UserProfileRole.choices,
-        default=UserProfileRole.TESTER,
+        choices=OrganizationRole.choices,
+        default=OrganizationRole.MEMBER,
     )
 
     jira_token = EncryptedCharField(max_length=512, null=True, blank=True)
@@ -65,7 +68,10 @@ class UserProfile(models.Model):
     def clean(self) -> None:
         super().clean()
 
-        if self.team and self.team.organization_id != self.organization_id:
+        if (
+            self.primary_team
+            and self.primary_team.organization_id != self.organization_id
+        ):
             raise ValidationError("Team must belong to the same organization.")
 
         if not self.user.first_name or not self.user.last_name:
@@ -86,3 +92,19 @@ class UserProfile(models.Model):
 
         if self.user.email and self.user.email.lower() != expected_email:
             raise ValidationError({"user": f"Email must be exactly: {expected_email}"})
+
+    @property
+    def team(self):
+        return self.primary_team
+
+    @team.setter
+    def team(self, value) -> None:
+        self.primary_team = value
+
+    @property
+    def team_id(self):
+        return self.primary_team_id
+
+    @team_id.setter
+    def team_id(self, value) -> None:
+        self.primary_team_id = value

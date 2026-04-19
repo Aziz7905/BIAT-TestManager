@@ -7,7 +7,7 @@ from django.db.models import Q
 
 from apps.projects.models import Project
 
-from .choices import SpecificationSourceType
+from .choices import SpecificationIndexStatus, SpecificationSourceType
 
 
 class Specification(models.Model):
@@ -37,6 +37,14 @@ class Specification(models.Model):
     source_metadata = models.JSONField(default=dict, blank=True)
     content_hash = models.CharField(max_length=64, blank=True, db_index=True)
     version = models.CharField(max_length=50, default="1.0")
+    index_status = models.CharField(
+        max_length=20,
+        choices=SpecificationIndexStatus.choices,
+        default=SpecificationIndexStatus.PENDING,
+        db_index=True,
+    )
+    index_error = models.TextField(blank=True)
+    indexed_at = models.DateTimeField(null=True, blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -72,5 +80,5 @@ class Specification(models.Model):
             return []
         return suite_model.objects.filter(
             Q(specification=self) |
-            Q(scenarios__cases__linked_specifications=self)
+            Q(sections__scenarios__cases__linked_specifications=self)
         ).distinct()

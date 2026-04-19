@@ -1,25 +1,24 @@
-﻿import uuid
+#src/app/testing/models/test_case.py
+import uuid
 
 from django.apps import apps as django_apps
 from django.db import models
 
 from .choices import (
     TestCaseAutomationStatus,
+    TestCaseDesignStatus,
     TestCaseOnFailureBehavior,
-    TestCaseStatus,
 )
 from .utils import normalize_step_lines
 
 
 class TestCase(models.Model):
-    VERSIONED_FIELDS = (
+    REVISION_FIELDS = (
         "title",
         "preconditions",
         "steps",
         "expected_result",
         "test_data",
-        "on_failure",
-        "timeout_ms",
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -38,10 +37,11 @@ class TestCase(models.Model):
     steps = models.JSONField(default=list, blank=True)
     expected_result = models.TextField()
     test_data = models.JSONField(default=dict, blank=True)
-    status = models.CharField(
+    design_status = models.CharField(
         max_length=20,
-        choices=TestCaseStatus.choices,
-        default=TestCaseStatus.DRAFT,
+        choices=TestCaseDesignStatus.choices,
+        default=TestCaseDesignStatus.DRAFT,
+        db_index=True,
     )
     automation_status = models.CharField(
         max_length=20,
@@ -68,31 +68,13 @@ class TestCase(models.Model):
     def __str__(self) -> str:
         return f"{self.scenario.title} / {self.title}"
 
-    def save(self, *args, **kwargs):
-        update_fields = kwargs.get("update_fields")
-        if self._should_increment_version(update_fields):
-            self.version += 1
-            if update_fields is not None:
-                updated_field_names = set(update_fields)
-                updated_field_names.update({"version", "updated_at"})
-                kwargs["update_fields"] = list(updated_field_names)
-        super().save(*args, **kwargs)
+    @property
+    def status(self) -> str:
+        return self.design_status
 
-    def _should_increment_version(self, update_fields) -> bool:
-        if not self.pk:
-            return False
-
-        if update_fields is not None and not (set(update_fields) & set(self.VERSIONED_FIELDS)):
-            return False
-
-        current = type(self).objects.filter(pk=self.pk).values(*self.VERSIONED_FIELDS).first()
-        if current is None:
-            return False
-
-        return any(
-            current[field_name] != getattr(self, field_name)
-            for field_name in self.VERSIONED_FIELDS
-        )
+    @status.setter
+    def status(self, value: str) -> None:
+        self.design_status = value
 
     def get_latest_result(self):
         try:
@@ -127,7 +109,13 @@ class TestCase(models.Model):
     def get_version_history(self):
         return [
             {
-                "version": self.version,
-                "updated_at": self.updated_at,
+                "id": str(revision.id),
+                "version": revision.version_number,
+                "created_at": revision.created_at,
+                "created_by": revision.created_by_id,
             }
+            for revision in self.revisions.select_related("created_by").order_by(
+                "-version_number",
+                "-created_at",
+            )
         ]

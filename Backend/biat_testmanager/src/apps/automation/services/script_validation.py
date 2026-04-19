@@ -20,16 +20,20 @@ def validate_script_content(
         errors.append("Script content cannot be empty.")
         return _build_validation_result(errors, warnings)
 
-    if framework == AutomationFramework.PLAYWRIGHT and language == AutomationLanguage.PYTHON:
-        _validate_python_script(script_content, errors, warnings)
-    elif framework == AutomationFramework.PLAYWRIGHT:
-        warnings.append(
-            "This script is stored successfully, but only Python Playwright scripts are executable in v1."
-        )
-    elif framework == AutomationFramework.SELENIUM:
-        warnings.append(
-            "Selenium scripts are stored for future compatibility and are not executable in v1."
-        )
+    if framework in {AutomationFramework.PLAYWRIGHT, AutomationFramework.SELENIUM}:
+        framework_label = "Playwright" if framework == AutomationFramework.PLAYWRIGHT else "Selenium"
+        if language == AutomationLanguage.PYTHON:
+            _validate_python_script(
+                script_content,
+                errors,
+                warnings,
+                framework_label=framework_label,
+                module_hint=framework,
+            )
+        else:
+            warnings.append(
+                f"This script is stored successfully, but only Python {framework_label} scripts are executable in v1."
+            )
 
     return _build_validation_result(errors, warnings)
 
@@ -38,6 +42,9 @@ def _validate_python_script(
     script_content: str,
     errors: list[str],
     warnings: list[str],
+    *,
+    framework_label: str,
+    module_hint: str,
 ):
     try:
         compile(script_content, "<automation_script>", "exec")
@@ -45,9 +52,9 @@ def _validate_python_script(
         errors.append(f"Python syntax error at line {exc.lineno}: {exc.msg}")
         return
 
-    if "playwright" not in script_content.lower():
+    if module_hint not in script_content.lower():
         warnings.append(
-            "The script compiled successfully, but it does not appear to reference Playwright explicitly."
+            f"The script compiled successfully, but it does not appear to reference {framework_label} explicitly."
         )
 
 

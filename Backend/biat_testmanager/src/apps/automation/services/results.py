@@ -4,6 +4,11 @@ from django.utils import timezone
 
 from apps.automation.models import TestResult
 from apps.automation.models.choices import TestResultStatus
+from apps.automation.services.checkpoints import cancel_pending_execution_checkpoints
+from apps.automation.services.streaming import (
+    publish_execution_result_ready,
+    publish_execution_status_changed,
+)
 
 
 EXECUTION_STATUS_TO_RESULT_STATUS = {
@@ -31,6 +36,8 @@ def finalize_execution_result(
     execution.status = status
     execution.ended_at = execution.ended_at or timezone.now()
     execution.save(update_fields=["status", "ended_at"])
+    cancel_pending_execution_checkpoints(execution)
+    publish_execution_status_changed(execution)
 
     result_status = EXECUTION_STATUS_TO_RESULT_STATUS.get(
         status,
@@ -52,4 +59,10 @@ def finalize_execution_result(
             "issues_count": issues_count,
         },
     )
+
+    if execution.run_case_id:
+        from apps.testing.services.runs import sync_run_case_status_from_execution
+        sync_run_case_status_from_execution(execution.run_case, status)
+
+    publish_execution_result_ready(result)
     return result

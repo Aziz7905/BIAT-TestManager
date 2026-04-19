@@ -1,9 +1,16 @@
+#src/app/projects/serializers.py
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.accounts.models import Team, TeamMembership, UserProfileRole
+from apps.accounts.models import OrganizationRole, Team, TeamMembership, TeamMembershipRole
 from apps.projects.access import can_manage_project_member_record
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
+from apps.projects.services import (
+    add_project_member,
+    create_project_for_team,
+    update_project_details,
+    update_project_member_role,
+)
 
 User = get_user_model()
 
@@ -57,37 +64,49 @@ class ProjectSerializer(serializers.ModelSerializer):
         return full_name or obj.created_by.email or obj.created_by.username
 
     def get_member_names(self, obj):
+        prefetched_members = getattr(obj, "_prefetched_objects_cache", {}).get("members")
+        members = prefetched_members if prefetched_members is not None else obj.members.select_related("user")
         return [
             member.user.get_full_name().strip()
             or member.user.email
             or member.user.username
-            for member in obj.members.select_related("user").all()
+            for member in members
         ]
 
     def get_member_count(self, obj):
+        annotated_count = getattr(obj, "member_count_value", None)
+        if annotated_count is not None:
+            return annotated_count
+        prefetched_members = getattr(obj, "_prefetched_objects_cache", {}).get("members")
+        if prefetched_members is not None:
+            return len(prefetched_members)
         return obj.members.count()
 
     def validate(self, attrs):
         request = self.context["request"]
         requester = request.user
         requester_profile = getattr(requester, "profile", None)
-        requester_role = getattr(requester_profile, "role", None)
+        requester_organization_role = getattr(
+            requester_profile,
+            "organization_role",
+            None,
+        )
         team = attrs.get("team") or getattr(self.instance, "team", None)
 
         if team is None:
             raise serializers.ValidationError({"team": "Team is required."})
 
-        if requester_role == UserProfileRole.ORG_ADMIN:
+        if requester_organization_role == OrganizationRole.ORG_ADMIN:
             if requester_profile.organization_id != team.organization_id:
                 raise serializers.ValidationError(
                     {"team": "You can only manage projects in your organization."}
                 )
 
-        if requester_role == UserProfileRole.TEAM_MANAGER:
+        if requester_organization_role == OrganizationRole.MEMBER:
             if not TeamMembership.objects.filter(
                 user=requester,
                 team=team,
-                role="manager",
+                role=TeamMembershipRole.MANAGER,
                 is_active=True,
             ).exists():
                 raise serializers.ValidationError(
@@ -110,27 +129,10 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
-        project = Project.objects.create(created_by=request.user, **validated_data)
-
-        if TeamMembership.objects.filter(
-            user=request.user,
-            team=project.team,
-            is_active=True,
-        ).exists():
-            ProjectMember.objects.get_or_create(
-                project=project,
-                user=request.user,
-                defaults={"role": ProjectMemberRole.OWNER},
-            )
-
-        return project
+        return create_project_for_team(created_by=request.user, **validated_data)
 
     def update(self, instance, validated_data):
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-
-        instance.save()
-        return instance
+        return update_project_details(instance, **validated_data)
 
 
 class ProjectMemberSerializer(serializers.ModelSerializer):
@@ -139,7 +141,7 @@ class ProjectMemberSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", read_only=True)
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source="user.email", read_only=True)
-    user_role = serializers.CharField(source="user.profile.role", read_only=True)
+    user_role = serializers.CharField(source="user.profile.organization_role", read_only=True)
 
     class Meta:
         model = ProjectMember
@@ -177,13 +179,9 @@ class ProjectMemberCreateSerializer(serializers.Serializer):
                 {"user": "Selected user must belong to the same organization as the project."}
             )
 
-        if target_profile.role not in {
-            UserProfileRole.TEAM_MANAGER,
-            UserProfileRole.TESTER,
-            UserProfileRole.VIEWER,
-        }:
+        if target_profile.organization_role != OrganizationRole.MEMBER:
             raise serializers.ValidationError(
-                {"user": "Only team members can be assigned to a project."}
+                {"user": "Only organization members can be assigned to a project."}
             )
 
         if not TeamMembership.objects.filter(
@@ -204,7 +202,7 @@ class ProjectMemberCreateSerializer(serializers.Serializer):
         return attrs
 
     def create(self, validated_data):
-        return ProjectMember.objects.create(
+        return add_project_member(
             project=validated_data["project"],
             user=validated_data["user"],
             role=validated_data["role"],
@@ -228,3 +226,9 @@ class ProjectMemberUpdateSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+    def update(self, instance, validated_data):
+        return update_project_member_role(
+            instance,
+            role=validated_data.get("role", instance.role),
+        )

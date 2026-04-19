@@ -2,7 +2,7 @@ from rest_framework import generics
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
-from apps.accounts.models import UserProfileRole
+from apps.accounts.models import OrganizationRole
 from apps.accounts.serializers import (
     AdminCreateUserSerializer,
     AdminUpdateUserSerializer,
@@ -68,7 +68,10 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise PermissionDenied("You do not have permission to delete this user.")
         target_profile = getattr(target, "profile", None)
 
-        if target_profile and target_profile.role == UserProfileRole.PLATFORM_OWNER:
+        if (
+            target_profile
+            and target_profile.organization_role == OrganizationRole.PLATFORM_OWNER
+        ):
             raise PermissionDenied("You cannot delete the platform owner.")
 
         return super().destroy(request, *args, **kwargs)

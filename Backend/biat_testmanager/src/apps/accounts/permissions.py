@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 
-from accounts.models import UserProfileRole
+from apps.accounts.models import OrganizationRole
 
 
 class IsPlatformAdmin(BasePermission):
@@ -16,7 +16,7 @@ class IsPlatformAdmin(BasePermission):
         if not profile:
             return False
 
-        return profile.role in {
-            UserProfileRole.PLATFORM_OWNER,
-            UserProfileRole.ORG_ADMIN,
+        return profile.organization_role in {
+            OrganizationRole.PLATFORM_OWNER,
+            OrganizationRole.ORG_ADMIN,
         }

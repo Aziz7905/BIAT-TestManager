@@ -42,6 +42,7 @@ class TestExecution(models.Model):
         max_length=20,
         choices=ExecutionStatus.choices,
         default=ExecutionStatus.QUEUED,
+        db_index=True,
     )
     browser = models.CharField(
         max_length=20,
@@ -53,11 +54,26 @@ class TestExecution(models.Model):
         choices=ExecutionPlatform.choices,
         default=ExecutionPlatform.DESKTOP,
     )
-    started_at = models.DateTimeField(null=True, blank=True)
+    run_case = models.ForeignKey(
+        "testing.TestRunCase",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="executions",
+    )
+    environment = models.ForeignKey(
+        "automation.ExecutionEnvironment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="executions",
+    )
+    # Attempt number within the run-case (1 = first attempt, 2 = first retry, …)
+    attempt_number = models.PositiveIntegerField(default=1)
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
     pause_requested = models.BooleanField(default=False)
-    agent_run = models.UUIDField(null=True, blank=True)
 
     class Meta:
         db_table = "automation_test_execution"
@@ -92,12 +108,6 @@ class TestExecution(models.Model):
                 self.ended_at = timezone.now()
             self.save(update_fields=["pause_requested", "status", "ended_at"])
         return self
-
-    def stream_logs(self):
-        result = getattr(self, "result", None)
-        if result is None:
-            return []
-        return result.get_artifacts()
 
     def get_duration_ms(self):
         if self.started_at is None:

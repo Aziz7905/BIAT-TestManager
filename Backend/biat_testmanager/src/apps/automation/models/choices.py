@@ -56,6 +56,13 @@ class ExecutionStepStatus(models.TextChoices):
     FAILED = "failed", "Failed"
 
 
+class ExecutionCheckpointStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    RESOLVED = "resolved", "Resolved"
+    CANCELLED = "cancelled", "Cancelled"
+    EXPIRED = "expired", "Expired"
+
+
 class TestResultStatus(models.TextChoices):
     PASSED = "passed", "Passed"
     FAILED = "failed", "Failed"
@@ -63,14 +70,9 @@ class TestResultStatus(models.TextChoices):
     ERROR = "error", "Error"
 
 
-class HealingDetectionMethod(models.TextChoices):
-    DOM = "dom", "DOM"
-    TEXT = "text", "Text"
-    VISION_LANGUAGE = "vision_language", "Vision Language"
-    HYBRID = "hybrid", "Hybrid"
-
-
-class HealingEventStatus(models.TextChoices):
-    APPLIED = "applied", "Applied"
-    ESCALATED = "escalated", "Escalated"
-    REJECTED = "rejected", "Rejected"
+class ArtifactType(models.TextChoices):
+    SCREENSHOT = "screenshot", "Screenshot"
+    VIDEO = "video", "Video"
+    LOG = "log", "Log"
+    JUNIT_XML = "junit_xml", "JUnit XML"
+    TRACE = "trace", "Trace"

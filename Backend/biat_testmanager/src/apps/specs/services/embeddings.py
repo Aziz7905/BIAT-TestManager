@@ -1,11 +1,15 @@
 from dataclasses import dataclass
 from time import perf_counter
 import importlib.util
+import logging
+from pathlib import Path
 from threading import Lock
 
 from django.conf import settings
 
 from apps.specs.services.telemetry import ResourceMonitor
+
+logger = logging.getLogger(__name__)
 
 
 def _module_available(module_name: str) -> bool:
@@ -42,6 +46,32 @@ class LocalEmbeddingService:
         self._models: dict[str, object] = {}
         self._lock = Lock()
 
+    def _resolve_model_source(self) -> str:
+        if not self.local_files_only:
+            return self.model_name
+
+        configured_path = Path(self.model_name)
+        if configured_path.exists():
+            return str(configured_path)
+
+        source_basename = configured_path.name or self.model_name.replace("/", "__")
+        normalized_basename = self.model_name.replace("/", "__").replace("\\", "__")
+        project_root = Path(settings.BASE_DIR).resolve().parent
+        candidate_roots = (
+            project_root / "HuggingFace_models",
+            project_root / "models",
+            Path(settings.BASE_DIR).resolve() / "HuggingFace_models",
+            Path(settings.BASE_DIR).resolve() / "models",
+        )
+
+        for root in candidate_roots:
+            for folder_name in (source_basename, normalized_basename):
+                candidate = root / folder_name
+                if candidate.exists():
+                    return str(candidate)
+
+        return self.model_name
+
     def _resolve_device(self) -> str:
         if self.device_preference == "cpu":
             return "cpu"
@@ -72,7 +102,7 @@ class LocalEmbeddingService:
             from sentence_transformers import SentenceTransformer
 
             model = SentenceTransformer(
-                self.model_name,
+                self._resolve_model_source(),
                 device=device,
                 local_files_only=self.local_files_only,
             )
@@ -81,8 +111,8 @@ class LocalEmbeddingService:
             if device == "cuda" and hasattr(model, "half"):
                 try:
                     model.half()
-                except Exception:
-                    pass
+                except Exception:  # pragma: no cover - hardware/library specific
+                    logger.debug("Could not switch embedding model to half precision.", exc_info=True)
 
             self._models[device] = model
             return model
@@ -97,8 +127,8 @@ class LocalEmbeddingService:
         if torch.cuda.is_available():
             try:
                 torch.cuda.empty_cache()
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - hardware/library specific
+                logger.warning("Failed to clear CUDA embedding cache.", exc_info=True)
 
     @staticmethod
     def _is_cuda_oom(error: Exception) -> bool:

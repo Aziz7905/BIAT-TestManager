@@ -1,7 +1,12 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.accounts.models import Team, TeamMembership, TeamMembershipRole, UserProfileRole
+from apps.accounts.models import (
+    OrganizationRole,
+    Team,
+    TeamMembership,
+    TeamMembershipRole,
+)
 from apps.accounts.services.access import (
     can_manage_team_membership_record,
     can_manage_team_api_key,
@@ -10,8 +15,18 @@ from apps.accounts.services.access import (
 from apps.accounts.services.memberships import (
     assign_user_to_team,
 )
+from apps.accounts.services.roles import has_team_manager_role
+from apps.accounts.services.team_ai import (
+    UNSET,
+    get_effective_ai_api_key,
+    get_effective_ai_model,
+    get_effective_ai_provider,
+    get_effective_monthly_budget,
+    update_team_ai_settings,
+)
 from apps.accounts.services.team_management import sync_manager_profile_with_team
 from apps.accounts.services.validation import validate_manager_for_organization
+from apps.integrations.services import get_team_integration_values, update_team_integrations
 
 User = get_user_model()
 
@@ -97,13 +112,33 @@ class TeamSerializer(serializers.ModelSerializer):
         return obj.memberships.filter(is_active=True).count()
 
     def get_has_ai_api_key(self, obj):
-        return bool(obj.ai_api_key)
+        return bool(get_effective_ai_api_key(obj))
+
+    def to_representation(self, instance):
+        payload = super().to_representation(instance)
+        provider = get_effective_ai_provider(instance)
+        payload["ai_provider"] = str(provider.id) if provider else None
+        payload["ai_provider_name"] = provider.name if provider else None
+        payload["ai_model"] = get_effective_ai_model(instance)
+        payload["monthly_token_budget"] = get_effective_monthly_budget(instance)
+
+        integration_values = get_team_integration_values(instance)
+        payload["jira_base_url"] = integration_values["jira_base_url"]
+        payload["jira_project_key"] = integration_values["jira_project_key"]
+        payload["github_org"] = integration_values["github_org"]
+        payload["github_repo"] = integration_values["github_repo"]
+        payload["jenkins_url"] = integration_values["jenkins_url"]
+        return payload
 
     def validate(self, attrs):
         request = self.context["request"]
         requester = request.user
         requester_profile = getattr(requester, "profile", None)
-        requester_role = getattr(requester_profile, "role", None)
+        requester_organization_role = getattr(
+            requester_profile,
+            "organization_role",
+            None,
+        )
 
         organization = attrs.get("organization") or getattr(self.instance, "organization", None)
         manager_user = attrs.get("manager")
@@ -114,7 +149,7 @@ class TeamSerializer(serializers.ModelSerializer):
                 attrs["organization"] = organization
 
         if (
-            requester_role == UserProfileRole.ORG_ADMIN
+            requester_organization_role == OrganizationRole.ORG_ADMIN
             and organization
             and requester_profile.organization_id != organization.id
         ):
@@ -122,7 +157,7 @@ class TeamSerializer(serializers.ModelSerializer):
                 {"organization": "You can only manage teams in your organization."}
             )
 
-        if requester_role == UserProfileRole.TEAM_MANAGER:
+        if requester_organization_role == OrganizationRole.MEMBER:
             if self.instance is None:
                 raise serializers.ValidationError(
                     {"detail": "Team managers cannot create teams."}
@@ -166,30 +201,42 @@ class TeamSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         manager_user = validated_data.pop("manager", None)
+        ai_provider = validated_data.pop("ai_provider", None)
         ai_api_key = validated_data.pop("ai_api_key", None)
-
-        if not validated_data.get("ai_model"):
-            validated_data.pop("ai_model", None)
-
-        for field_name in [
-            "jira_base_url",
-            "jira_project_key",
-            "github_org",
-            "github_repo",
-            "jenkins_url",
-        ]:
-            if not validated_data.get(field_name):
-                validated_data[field_name] = None
+        ai_model = validated_data.pop("ai_model", None)
+        monthly_token_budget = validated_data.pop("monthly_token_budget", None)
+        jira_base_url = validated_data.pop("jira_base_url", None)
+        jira_project_key = validated_data.pop("jira_project_key", None)
+        github_org = validated_data.pop("github_org", None)
+        github_repo = validated_data.pop("github_repo", None)
+        jenkins_url = validated_data.pop("jenkins_url", None)
 
         team = Team.objects.create(**validated_data)
-
+        update_fields: list[str] = []
         if manager_user:
             team.manager = manager_user
+            update_fields.append("manager")
+        if update_fields:
+            team.save(update_fields=update_fields)
 
-        if ai_api_key:
-            team.ai_api_key = ai_api_key
+        update_team_ai_settings(
+            team=team,
+            provider=ai_provider,
+            api_key=ai_api_key,
+            model_name=ai_model or "gpt-4o-mini",
+            monthly_budget=monthly_token_budget
+            if isinstance(monthly_token_budget, int)
+            else 100000,
+        )
+        update_team_integrations(
+            team=team,
+            jira_base_url=jira_base_url,
+            jira_project_key=jira_project_key,
+            github_org=github_org,
+            github_repo=github_repo,
+            jenkins_url=jenkins_url,
+        )
 
-        team.save()
         sync_manager_profile_with_team(manager_user, team)
         return team
 
@@ -197,32 +244,69 @@ class TeamSerializer(serializers.ModelSerializer):
         request = self.context["request"]
 
         manager_user = validated_data.pop("manager", serializers.empty)
+        ai_provider = validated_data.pop("ai_provider", serializers.empty)
         ai_api_key = validated_data.pop("ai_api_key", serializers.empty)
+        ai_model = validated_data.pop("ai_model", serializers.empty)
+        monthly_token_budget = validated_data.pop("monthly_token_budget", serializers.empty)
+        jira_base_url = validated_data.pop("jira_base_url", serializers.empty)
+        jira_project_key = validated_data.pop("jira_project_key", serializers.empty)
+        github_org = validated_data.pop("github_org", serializers.empty)
+        github_repo = validated_data.pop("github_repo", serializers.empty)
+        jenkins_url = validated_data.pop("jenkins_url", serializers.empty)
+
+        has_ai_updates = any(
+            value is not serializers.empty
+            for value in [
+                ai_provider,
+                ai_api_key,
+                ai_model,
+                monthly_token_budget,
+            ]
+        )
+        if has_ai_updates and not can_manage_team_api_key(request.user, instance):
+            raise serializers.ValidationError(
+                {"ai_api_key": "You do not have permission to update the AI API key."}
+            )
 
         for attr, value in validated_data.items():
-            if attr == "ai_model" and value == "":
-                continue
-            if attr in {
-                "jira_base_url",
-                "jira_project_key",
-                "github_org",
-                "github_repo",
-                "jenkins_url",
-            } and value == "":
-                value = None
             setattr(instance, attr, value)
 
         if manager_user is not serializers.empty:
             instance.manager = manager_user
 
-        if ai_api_key is not serializers.empty:
-            if not can_manage_team_api_key(request.user, instance):
-                raise serializers.ValidationError(
-                    {"ai_api_key": "You do not have permission to update the AI API key."}
-                )
-            instance.ai_api_key = ai_api_key or None
-
         instance.save()
+
+        if has_ai_updates:
+            update_team_ai_settings(
+                team=instance,
+                provider=UNSET if ai_provider is serializers.empty else ai_provider,
+                api_key=UNSET if ai_api_key is serializers.empty else ai_api_key,
+                model_name=UNSET if ai_model is serializers.empty else ai_model,
+                monthly_budget=(
+                    monthly_token_budget
+                    if monthly_token_budget is not serializers.empty
+                    else UNSET
+                ),
+            )
+
+        if any(
+            value is not serializers.empty
+            for value in [
+                jira_base_url,
+                jira_project_key,
+                github_org,
+                github_repo,
+                jenkins_url,
+            ]
+        ):
+            update_team_integrations(
+                team=instance,
+                jira_base_url=jira_base_url,
+                jira_project_key=jira_project_key,
+                github_org=github_org,
+                github_repo=github_repo,
+                jenkins_url=jenkins_url,
+            )
 
         sync_manager_profile_with_team(instance.manager, instance)
 
@@ -235,7 +319,7 @@ class TeamMemberSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", read_only=True)
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source="user.email", read_only=True)
-    user_role = serializers.CharField(source="user.profile.role", read_only=True)
+    user_role = serializers.SerializerMethodField()
 
     class Meta:
         model = TeamMembership
@@ -257,6 +341,9 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         full_name = obj.user.get_full_name().strip()
         return full_name or obj.user.email or obj.user.username
 
+    def get_user_role(self, obj):
+        return getattr(obj.user.profile, "organization_role", None)
+
 
 class TeamMembershipCreateSerializer(serializers.Serializer):
     user = serializers.PrimaryKeyRelatedField(queryset=User.objects.select_related("profile"))
@@ -264,9 +351,7 @@ class TeamMembershipCreateSerializer(serializers.Serializer):
     is_primary = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
-        request = self.context["request"]
         team = self.context["team"]
-        actor = request.user
         target_user = attrs["user"]
         target_profile = getattr(target_user, "profile", None)
 
@@ -278,25 +363,12 @@ class TeamMembershipCreateSerializer(serializers.Serializer):
                 {"user": "Selected user must belong to the same organization as the team."}
             )
 
-        if target_profile.role not in {
-            UserProfileRole.TEAM_MANAGER,
-            UserProfileRole.TESTER,
-            UserProfileRole.VIEWER,
-        }:
+        if target_profile.organization_role != OrganizationRole.MEMBER:
             raise serializers.ValidationError(
-                {"user": "Only team managers, testers, or viewers can be assigned to a team."}
+                {"user": "Only organization members can be assigned to a team."}
             )
 
-        desired_role = attrs.get("role") or {
-            UserProfileRole.TEAM_MANAGER: TeamMembershipRole.MANAGER,
-            UserProfileRole.TESTER: TeamMembershipRole.TESTER,
-            UserProfileRole.VIEWER: TeamMembershipRole.VIEWER,
-        }.get(target_profile.role)
-
-        if desired_role is None:
-            raise serializers.ValidationError(
-                {"role": "A valid team role could not be inferred for this user."}
-            )
+        desired_role = attrs.get("role") or TeamMembershipRole.VIEWER
 
         if TeamMembership.objects.filter(
             team=team,
@@ -305,12 +377,6 @@ class TeamMembershipCreateSerializer(serializers.Serializer):
         ).exists():
             raise serializers.ValidationError(
                 {"user": "This user is already assigned to the selected team."}
-            )
-
-        actor_role = getattr(getattr(actor, "profile", None), "role", None)
-        if actor_role == UserProfileRole.TEAM_MANAGER:
-            raise serializers.ValidationError(
-                {"detail": "Team managers cannot add members to teams."}
             )
 
         attrs["team"] = team
@@ -352,9 +418,16 @@ class TeamMembershipUpdateSerializer(serializers.ModelSerializer):
             )
 
         desired_role = attrs.get("role", membership.role)
-        actor_role = getattr(getattr(actor, "profile", None), "role", None)
-
-        if actor_role == UserProfileRole.TEAM_MANAGER and desired_role not in {
+        actor_organization_role = getattr(
+            getattr(actor, "profile", None),
+            "organization_role",
+            None,
+        )
+        team_manager_limited = (
+            actor_organization_role == OrganizationRole.MEMBER
+            and has_team_manager_role(actor, membership.team)
+        )
+        if team_manager_limited and desired_role not in {
             TeamMembershipRole.TESTER,
             TeamMembershipRole.VIEWER,
         }:
@@ -362,7 +435,10 @@ class TeamMembershipUpdateSerializer(serializers.ModelSerializer):
                 {"role": "Team managers can only assign tester or viewer roles."}
             )
 
-        if desired_role == TeamMembershipRole.MANAGER and target_profile.role == UserProfileRole.PLATFORM_OWNER:
+        if (
+            desired_role == TeamMembershipRole.MANAGER
+            and target_profile.organization_role == OrganizationRole.PLATFORM_OWNER
+        ):
             raise serializers.ValidationError(
                 {"role": "Platform owners cannot be assigned as team members."}
             )

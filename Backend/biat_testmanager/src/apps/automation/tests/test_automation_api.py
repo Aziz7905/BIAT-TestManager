@@ -8,32 +8,33 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import Organization, Team, UserProfile
-from apps.accounts.models.choices import UserProfileRole
+from apps.accounts.models import Organization, Team, TeamMembership, UserProfile
+from apps.accounts.models.choices import OrganizationRole, TeamMembershipRole
 from apps.automation.models import AutomationScript, ExecutionSchedule, TestExecution
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.testing.models import TestCase as QaTestCase
-from apps.testing.models import TestScenario, TestSuite
+from apps.testing.models import TestScenario, TestSection, TestSuite
 
 
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
     AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
+    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
 )
 class AutomationApiTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
             username="qa.owner",
-            password="Pass1234!",
+            password="Pass1234!",  # NOSONAR
             email="qa.owner@biat-it.tn",
             first_name="QA",
             last_name="Owner",
         )
         self.viewer = user_model.objects.create_user(
             username="qa.viewer",
-            password="Pass1234!",
+            password="Pass1234!",  # NOSONAR
             email="qa.viewer@biat-it.tn",
         )
 
@@ -44,18 +45,30 @@ class AutomationApiTests(APITestCase):
         UserProfile.objects.create(
             user=self.user,
             organization=self.organization,
-            role=UserProfileRole.TESTER,
+            organization_role=OrganizationRole.MEMBER,
         )
         UserProfile.objects.create(
             user=self.viewer,
             organization=self.organization,
-            role=UserProfileRole.VIEWER,
+            organization_role=OrganizationRole.MEMBER,
         )
 
         self.team = Team.objects.create(
             organization=self.organization,
             name="QA Team",
             manager=self.user,
+        )
+        TeamMembership.objects.create(
+            team=self.team,
+            user=self.user,
+            role=TeamMembershipRole.TESTER,
+            is_active=True,
+        )
+        TeamMembership.objects.create(
+            team=self.team,
+            user=self.viewer,
+            role=TeamMembershipRole.VIEWER,
+            is_active=True,
         )
         self.project = Project.objects.create(
             team=self.team,
@@ -79,8 +92,13 @@ class AutomationApiTests(APITestCase):
             folder_path="Core/Auth",
             created_by=self.user,
         )
-        self.scenario = TestScenario.objects.create(
+        self.section = TestSection.objects.create(
             suite=self.suite,
+            name="General",
+            order_index=0,
+        )
+        self.scenario = TestScenario.objects.create(
+            section=self.section,
             title="Successful login",
             description="Check valid login flow.",
         )
@@ -97,18 +115,18 @@ class AutomationApiTests(APITestCase):
 
         self.client.force_authenticate(self.user)
 
-    def _script_payload(self):
+    def _script_payload(self, *, framework="playwright", script_content="print('playwright smoke')"):
         return {
             "test_case": self.test_case,
-            "framework": "playwright",
+            "framework": framework,
             "language": "python",
-            "script_content": "print('playwright smoke')",
+            "script_content": script_content,
             "generated_by": "user",
             "is_active": True,
         }
 
-    def _script_request_payload(self):
-        payload = self._script_payload().copy()
+    def _script_request_payload(self, **kwargs):
+        payload = self._script_payload(**kwargs).copy()
         payload["test_case"] = str(self.test_case.id)
         return payload
 
@@ -130,8 +148,8 @@ class AutomationApiTests(APITestCase):
         )
 
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(list_response.data), 1)
-        self.assertNotIn("validation", list_response.data[0])
+        self.assertEqual(len(list_response.data["results"]), 1)
+        self.assertNotIn("validation", list_response.data["results"][0])
 
     def test_validate_endpoint_returns_script_validation_summary(self):
         script = AutomationScript.objects.create(**self._script_payload())
@@ -172,7 +190,32 @@ class AutomationApiTests(APITestCase):
             {"project": str(self.project.id), "status": "passed"},
         )
         self.assertEqual(filtered_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(filtered_response.data), 1)
+        self.assertEqual(len(filtered_response.data["results"]), 1)
+
+    def test_create_selenium_execution_runs_and_returns_result_payload(self):
+        script = AutomationScript.objects.create(
+            **self._script_payload(
+                framework="selenium",
+                script_content="print('selenium smoke')",
+            )
+        )
+
+        response = self.client.post(
+            reverse("test-execution-list-create"),
+            {
+                "test_case": str(self.test_case.id),
+                "script": str(script.id),
+                "browser": "chromium",
+                "platform": "desktop",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        execution = TestExecution.objects.select_related("result").get(pk=response.data["id"])
+        self.assertEqual(execution.status, "passed")
+        self.assertIsNotNone(execution.result)
+        self.assertEqual(execution.result.status, "passed")
 
     def test_pause_resume_and_stop_endpoints_update_execution_state(self):
         execution = TestExecution.objects.create(
@@ -254,4 +297,8 @@ class AutomationApiTests(APITestCase):
         )
 
         self.assertEqual(trigger_response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(len(trigger_response.data), 1)
+        # Trigger now returns a TestRun object, not a list of executions.
+        data = trigger_response.data
+        self.assertIn("run_id", data)
+        self.assertIn("run_case_count", data)
+        self.assertEqual(data["trigger_type"], "scheduled")

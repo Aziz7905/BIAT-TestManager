@@ -27,6 +27,13 @@ class SpecChunk(models.Model):
         null=True,
         blank=True,
     )
+    embedding_model_config = models.ForeignKey(
+        "specs.EmbeddingModel",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="spec_chunks",
+    )
     embedding_model = models.CharField(max_length=200, blank=True)
     embedded_at = models.DateTimeField(null=True, blank=True)
     token_count = models.IntegerField(default=0)

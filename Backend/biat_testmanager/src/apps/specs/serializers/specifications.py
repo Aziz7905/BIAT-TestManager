@@ -16,15 +16,19 @@ from apps.specs.services import (
     can_manage_specification_source_record,
     find_duplicate_specification,
     import_selected_records,
-    index_specification,
     infer_source_name,
     parse_specification_source,
-    sync_specification_chunks,
+    synchronize_specification_index,
 )
 from apps.testing.models import TestCase
 
 
 class SpecChunkSerializer(serializers.ModelSerializer):
+    embedding_model_config_id = serializers.UUIDField(
+        source="embedding_model_config.id",
+        read_only=True,
+    )
+
     class Meta:
         model = SpecChunk
         fields = [
@@ -33,7 +37,7 @@ class SpecChunkSerializer(serializers.ModelSerializer):
             "chunk_type",
             "component_tag",
             "content",
-            "embedding_vector",
+            "embedding_model_config_id",
             "embedding_model",
             "embedded_at",
             "token_count",
@@ -157,6 +161,9 @@ class SpecificationSerializer(serializers.ModelSerializer):
             "external_reference",
             "source_metadata",
             "version",
+            "index_status",
+            "index_error",
+            "indexed_at",
             "uploaded_by",
             "uploaded_by_name",
             "chunk_count",
@@ -172,6 +179,9 @@ class SpecificationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = [
+            "index_status",
+            "index_error",
+            "indexed_at",
             "uploaded_by",
             "uploaded_by_name",
             "source_id",
@@ -225,8 +235,12 @@ class SpecificationSerializer(serializers.ModelSerializer):
         prefetched_cases = getattr(obj, "_prefetched_objects_cache", {}).get("linked_test_cases")
         if prefetched_cases is not None:
             return prefetched_cases
-        return obj.linked_test_cases.select_related("scenario", "scenario__suite").order_by(
-            "scenario__suite__name",
+        return obj.linked_test_cases.select_related(
+            "scenario",
+            "scenario__section",
+            "scenario__section__suite",
+        ).order_by(
+            "scenario__section__suite__name",
             "scenario__title",
             "title",
         )
@@ -247,7 +261,7 @@ class SpecificationSerializer(serializers.ModelSerializer):
         annotated_value = getattr(obj, "linked_suite_count", None)
         if annotated_value is not None:
             return annotated_value
-        return obj.linked_test_cases.values("scenario__suite_id").distinct().count()
+        return obj.linked_test_cases.values("scenario__section__suite_id").distinct().count()
 
     def get_linked_test_cases(self, obj):
         linked_test_cases = self._get_linked_test_case_queryset(obj)
@@ -357,8 +371,7 @@ class SpecificationSerializer(serializers.ModelSerializer):
             content_hash=build_spec_content_hash(validated_data["content"]),
             **validated_data,
         )
-        sync_specification_chunks(specification)
-        index_specification(specification, force=True)
+        synchronize_specification_index(specification, force=True)
         return specification
 
     def update(self, instance, validated_data):
@@ -373,8 +386,7 @@ class SpecificationSerializer(serializers.ModelSerializer):
         instance.save()
 
         if content_changed:
-            sync_specification_chunks(instance)
-            index_specification(instance, force=True)
+            synchronize_specification_index(instance, force=True)
 
         return instance
 

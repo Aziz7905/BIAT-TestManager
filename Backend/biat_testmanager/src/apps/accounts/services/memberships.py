@@ -1,29 +1,16 @@
+from __future__ import annotations
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
-from apps.accounts.models import Team, TeamMembership, TeamMembershipRole, UserProfileRole
+from apps.accounts.models import (
+    OrganizationRole,
+    Team,
+    TeamMembership,
+    TeamMembershipRole,
+)
 
 User = get_user_model()
-
-
-def map_profile_role_to_membership_role(profile_role: str | None) -> str | None:
-    if profile_role == UserProfileRole.TEAM_MANAGER:
-        return TeamMembershipRole.MANAGER
-    if profile_role == UserProfileRole.TESTER:
-        return TeamMembershipRole.TESTER
-    if profile_role == UserProfileRole.VIEWER:
-        return TeamMembershipRole.VIEWER
-    return None
-
-
-def map_membership_role_to_profile_role(membership_role: str | None) -> str | None:
-    if membership_role == TeamMembershipRole.MANAGER:
-        return UserProfileRole.TEAM_MANAGER
-    if membership_role == TeamMembershipRole.TESTER:
-        return UserProfileRole.TESTER
-    if membership_role == TeamMembershipRole.VIEWER:
-        return UserProfileRole.VIEWER
-    return None
 
 
 def get_active_team_memberships_for_user(user: User):  # type: ignore[type-arg]
@@ -36,6 +23,23 @@ def get_active_team_memberships_for_user(user: User):  # type: ignore[type-arg]
 def get_primary_team_membership_for_user(user: User):  # type: ignore[type-arg]
     memberships = get_active_team_memberships_for_user(user)
     return memberships.filter(is_primary=True).first() or memberships.first()
+
+
+def _ensure_member_organization_role(user: User | None) -> None:  # type: ignore[type-arg]
+    if not user:
+        return
+
+    profile = getattr(user, "profile", None)
+    if not profile:
+        return
+
+    if profile.organization_role not in {
+        OrganizationRole.PLATFORM_OWNER,
+        OrganizationRole.ORG_ADMIN,
+    }:
+        if profile.organization_role != OrganizationRole.MEMBER:
+            profile.organization_role = OrganizationRole.MEMBER
+            profile.save(update_fields=["organization_role"])
 
 
 @transaction.atomic
@@ -79,6 +83,7 @@ def upsert_team_membership(
         membership.save(update_fields=update_fields)
 
     sync_user_profile_team_from_memberships(user)
+    _ensure_member_organization_role(user)
     return membership
 
 
@@ -93,8 +98,8 @@ def remove_team_membership(
     if role is not None:
         queryset = queryset.filter(role=role)
     queryset.delete()
-    sync_user_profile_role_from_memberships(user)
     sync_user_profile_team_from_memberships(user)
+    _ensure_member_organization_role(user)
 
 
 def sync_user_profile_team_from_memberships(user: User | None) -> None:  # type: ignore[type-arg]
@@ -121,12 +126,11 @@ def sync_user_profile_team_from_memberships(user: User | None) -> None:  # type:
         primary_membership.save(update_fields=["is_primary"])
 
     primary_team = primary_membership.team if primary_membership else None
-
     update_fields: list[str] = []
 
-    if profile.team_id != getattr(primary_team, "id", None):
-        profile.team = primary_team
-        update_fields.append("team")
+    if profile.primary_team_id != getattr(primary_team, "id", None):
+        profile.primary_team = primary_team
+        update_fields.append("primary_team")
 
     if primary_team and profile.organization_id != primary_team.organization_id:
         profile.organization = primary_team.organization
@@ -134,38 +138,6 @@ def sync_user_profile_team_from_memberships(user: User | None) -> None:  # type:
 
     if update_fields:
         profile.save(update_fields=update_fields)
-
-
-def sync_user_profile_role_from_memberships(
-    user: User | None,  # type: ignore[type-arg]
-    *,
-    preferred_role: str | None = None,
-) -> None:
-    if not user:
-        return
-
-    profile = getattr(user, "profile", None)
-    if not profile or profile.role in {
-        UserProfileRole.PLATFORM_OWNER,
-        UserProfileRole.ORG_ADMIN,
-    }:
-        return
-
-    memberships = list(get_active_team_memberships_for_user(user))
-    desired_role: str | None = None
-
-    if any(membership.role == TeamMembershipRole.MANAGER for membership in memberships):
-        desired_role = UserProfileRole.TEAM_MANAGER
-    elif preferred_role in {UserProfileRole.TESTER, UserProfileRole.VIEWER}:
-        desired_role = preferred_role
-    elif any(membership.role == TeamMembershipRole.TESTER for membership in memberships):
-        desired_role = UserProfileRole.TESTER
-    elif any(membership.role == TeamMembershipRole.VIEWER for membership in memberships):
-        desired_role = UserProfileRole.VIEWER
-
-    if desired_role and profile.role != desired_role:
-        profile.role = desired_role
-        profile.save(update_fields=["role"])
 
 
 @transaction.atomic
@@ -176,16 +148,21 @@ def sync_team_manager_membership(team: Team, manager_user: User | None) -> None:
     )
 
     if manager_user is None:
-        affected_user_ids = list(existing_manager_memberships.values_list("user_id", flat=True))
+        affected_user_ids = list(
+            existing_manager_memberships.values_list("user_id", flat=True)
+        )
         existing_manager_memberships.delete()
         for affected_user_id in affected_user_ids:
             affected_user = User.objects.filter(pk=affected_user_id).first()
-            sync_user_profile_role_from_memberships(affected_user)
             sync_user_profile_team_from_memberships(affected_user)
+            _ensure_member_organization_role(affected_user)
         return
 
     affected_user_ids = list(
-        existing_manager_memberships.exclude(user=manager_user).values_list("user_id", flat=True)
+        existing_manager_memberships.exclude(user=manager_user).values_list(
+            "user_id",
+            flat=True,
+        )
     )
     existing_manager_memberships.exclude(user=manager_user).delete()
 
@@ -204,8 +181,8 @@ def sync_team_manager_membership(team: Team, manager_user: User | None) -> None:
 
     for affected_user_id in affected_user_ids:
         affected_user = User.objects.filter(pk=affected_user_id).first()
-        sync_user_profile_role_from_memberships(affected_user)
         sync_user_profile_team_from_memberships(affected_user)
+        _ensure_member_organization_role(affected_user)
 
 
 @transaction.atomic
@@ -240,11 +217,8 @@ def assign_user_to_team(
             is_primary=is_primary,
         )
 
-    sync_user_profile_role_from_memberships(
-        user,
-        preferred_role=map_membership_role_to_profile_role(role),
-    )
     sync_user_profile_team_from_memberships(user)
+    _ensure_member_organization_role(user)
     return membership
 
 
@@ -263,5 +237,5 @@ def delete_team_membership(membership: TeamMembership) -> None:
         team.save(update_fields=["manager"])
         sync_team_manager_membership(team, None)
 
-    sync_user_profile_role_from_memberships(user)
     sync_user_profile_team_from_memberships(user)
+    _ensure_member_organization_role(user)

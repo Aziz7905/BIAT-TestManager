@@ -18,6 +18,8 @@ class Team(models.Model):
     )
     name = models.CharField(max_length=200)
 
+    # Compatibility assignment pointer. Team authority is granted by
+    # TeamMembership(role="manager"), not by this field alone.
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

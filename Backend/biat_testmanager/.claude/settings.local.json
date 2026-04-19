@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/Users/barka/OneDrive/Documents/GitHub/BIAT-TestManager/Backend/biat_testmanager/src/apps/*/services/)",
+      "Bash(python manage.py check)",
+      "Bash(python manage.py makemigrations --check --dry-run)",
+      "Bash(xargs grep:*)",
+      "Bash(awk '{sum += $1} END {print \"total defs:\", sum}')",
+      "Bash(python -m pytest src/apps/testing/ -x -q)",
+      "Bash(python src/manage.py test apps.testing apps.specs apps.accounts apps.projects -v 1)",
+      "Bash(python src/manage.py test apps.automation --verbosity=2)",
+      "Bash(python src/manage.py test apps.accounts apps.projects apps.automation apps.testing apps.specs apps.integrations --verbosity=1)",
+      "Bash(grep \"^def \" apps/automation/services/*.py)",
+      "Bash(awk -F: '{print $2}')",
+      "Bash(python manage.py test --verbosity=1)",
+      "Bash(python src/manage.py check)"
+    ]
+  }
+}

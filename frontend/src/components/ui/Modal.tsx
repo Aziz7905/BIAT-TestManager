@@ -1,107 +1,67 @@
-/** Branded modal with sticky header and optional sticky footer slots. */
-import { useEffect, useId, useRef } from "react";
-import type { MouseEvent, ReactNode } from "react";
-
-type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
+import { useEffect, type ReactNode } from "react";
 
 interface ModalProps {
-  isOpen: boolean;
+  open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
-  size?: ModalSize;
   footer?: ReactNode;
-  actions?: ReactNode;
+  size?: "sm" | "md" | "lg" | "xl" | "2xl";
 }
 
-const SIZE_CLASSES: Record<ModalSize, string> = {
-  sm: "max-w-xl",
-  md: "max-w-2xl",
-  lg: "max-w-4xl",
-  xl: "max-w-6xl",
-  full: "max-w-[92rem]",
+const sizeClasses = {
+  sm: "max-w-sm",
+  md: "max-w-md",
+  lg: "max-w-2xl",
+  xl: "max-w-4xl",
+  "2xl": "max-w-6xl",
 };
 
-export function Modal({
-  isOpen,
-  onClose,
-  title,
-  children,
-  size = "md",
-  footer,
-  actions,
-}: Readonly<ModalProps>) {
-  const overlayRef = useRef<HTMLDivElement | null>(null);
-  const titleId = useId();
-
+export default function Modal({ open, onClose, title, children, footer, size = "md" }: ModalProps) {
+  // Close on Escape
   useEffect(() => {
-    if (!isOpen) {
-      return undefined;
-    }
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "unset";
-    };
-  }, [isOpen, onClose]);
-
-  const handleOverlayClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target === overlayRef.current) {
-      onClose();
-    }
-  };
-
-  if (!isOpen) {
-    return null;
-  }
+  if (!open) return null;
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-text/40 px-4 py-5 backdrop-blur-sm"
-      onClick={handleOverlayClick}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+
+      {/* Panel */}
       <div
-        className={`flex max-h-[92vh] w-full flex-col overflow-hidden rounded-[28px] border border-border bg-surface shadow-panel ${SIZE_CLASSES[size]}`}
+        className={[
+          "relative z-10 flex max-h-[90vh] w-full flex-col rounded-lg bg-white shadow-xl",
+          sizeClasses[size],
+        ].join(" ")}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/95 px-6 py-5 backdrop-blur-sm">
-          <div>
-            <h2 id={titleId} className="text-xl font-semibold tracking-tight text-text">
-              {title}
-            </h2>
-          </div>
-          <div className="flex items-center gap-3">
-            {actions}
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-muted transition hover:border-primary-light/40 hover:bg-primary-light/10 hover:text-primary"
-              aria-label="Close modal"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 18 18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 transition p-1 rounded-md hover:bg-slate-100"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{children}</div>
-        {footer ? (
-          <div className="sticky bottom-0 z-10 border-t border-border bg-surface/95 px-6 py-4 backdrop-blur-sm">
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+
+        {/* Footer */}
+        {footer && (
+          <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
             {footer}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,14 @@ class AutomationScript(models.Model):
         on_delete=models.CASCADE,
         related_name="scripts",
     )
+    # Revision this script was written against. Null means "latest at time of authoring".
+    test_case_revision = models.ForeignKey(
+        "testing.TestCaseRevision",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scripts",
+    )
     framework = models.CharField(
         max_length=20,
         choices=AutomationFramework.choices,

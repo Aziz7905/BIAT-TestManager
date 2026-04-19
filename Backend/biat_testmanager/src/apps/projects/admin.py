@@ -5,6 +5,7 @@ from apps.projects.models import Project, ProjectMember
 
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):
+    list_select_related = ("team", "team__organization", "created_by")
     list_display = (
         "name",
         "team",
@@ -22,10 +23,12 @@ class ProjectAdmin(admin.ModelAdmin):
         "created_by__email",
     )
     list_filter = ("status", "team__organization", "team")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(ProjectMember)
 class ProjectMemberAdmin(admin.ModelAdmin):
+    list_select_related = ("project", "project__team", "user")
     list_display = (
         "project",
         "user",
@@ -39,4 +42,4 @@ class ProjectMemberAdmin(admin.ModelAdmin):
         "user__email",
     )
     list_filter = ("role", "project__team__organization", "project__team")
-
+    readonly_fields = ("joined_at",)

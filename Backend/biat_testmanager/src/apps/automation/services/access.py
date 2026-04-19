@@ -68,11 +68,13 @@ def get_automation_script_queryset_for_actor(actor):
     project_queryset = get_project_queryset_for_actor(actor)
     return AutomationScript.objects.select_related(
         "test_case",
+        "test_case_revision",
         "test_case__scenario",
-        "test_case__scenario__suite",
-        "test_case__scenario__suite__project",
+        "test_case__scenario__section",
+        "test_case__scenario__section__suite",
+        "test_case__scenario__section__suite__project",
     ).filter(
-        test_case__scenario__suite__project__in=project_queryset
+        test_case__scenario__section__suite__project__in=project_queryset
     ).order_by(
         "test_case__title",
         "framework",
@@ -86,13 +88,18 @@ def get_test_execution_queryset_for_actor(actor):
     return TestExecution.objects.select_related(
         "test_case",
         "test_case__scenario",
-        "test_case__scenario__suite",
-        "test_case__scenario__suite__project",
+        "test_case__scenario__section",
+        "test_case__scenario__section__suite",
+        "test_case__scenario__section__suite__project",
+        "run_case",
+        "run_case__test_case_revision",
+        "environment",
         "script",
+        "script__test_case_revision",
         "triggered_by",
         "result",
     ).filter(
-        test_case__scenario__suite__project__in=project_queryset
+        test_case__scenario__section__suite__project__in=project_queryset
     ).order_by("-started_at", "-id")
 
 
@@ -101,8 +108,9 @@ def get_execution_step_queryset_for_actor(actor):
         "execution",
         "execution__test_case",
         "execution__test_case__scenario",
-        "execution__test_case__scenario__suite",
-        "execution__test_case__scenario__suite__project",
+        "execution__test_case__scenario__section",
+        "execution__test_case__scenario__section__suite",
+        "execution__test_case__scenario__section__suite__project",
     ).filter(
         execution__in=get_test_execution_queryset_for_actor(actor)
     ).order_by("execution__started_at", "step_index")
@@ -113,8 +121,9 @@ def get_test_result_queryset_for_actor(actor):
         "execution",
         "execution__test_case",
         "execution__test_case__scenario",
-        "execution__test_case__scenario__suite",
-        "execution__test_case__scenario__suite__project",
+        "execution__test_case__scenario__section",
+        "execution__test_case__scenario__section__suite",
+        "execution__test_case__scenario__section__suite__project",
     ).filter(
         execution__in=get_test_execution_queryset_for_actor(actor)
     ).order_by("-created_at")

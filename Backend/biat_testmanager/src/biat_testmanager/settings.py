@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
     #third party apps
     'rest_framework',
     'rest_framework_simplejwt',
+    'channels',
     'corsheaders',
     'encrypted_model_fields',
     'rest_framework_simplejwt.token_blacklist',
@@ -58,6 +60,7 @@ INSTALLED_APPS = [
     'apps.specs.apps.SpecsConfig',
     'apps.testing.apps.TestingConfig',
     'apps.automation.apps.AutomationConfig',
+    'apps.integrations.apps.IntegrationsConfig',
 ]
 
 
@@ -70,6 +73,8 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
 }
 
 AUTHENTICATION_BACKENDS = [
@@ -106,6 +111,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'biat_testmanager.urls'
+ASGI_APPLICATION = "biat_testmanager.asgi.application"
 
 TEMPLATES = [
     {
@@ -251,6 +257,26 @@ CELERY_RESULT_BACKEND = config(
     "CELERY_RESULT_BACKEND",
     default=CELERY_BROKER_URL,
 )
+CHANNEL_REDIS_URL = config(
+    "CHANNEL_REDIS_URL",
+    default=CELERY_BROKER_URL,
+)
+RUNNING_TESTS = "test" in sys.argv
+if RUNNING_TESTS:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [CHANNEL_REDIS_URL],
+            },
+        },
+    }
 CELERY_TASK_ALWAYS_EAGER = config(
     "CELERY_TASK_ALWAYS_EAGER",
     default=False,
@@ -261,6 +287,12 @@ CELERY_TASK_EAGER_PROPAGATES = config(
     default=True,
     cast=bool,
 )
+CELERY_BEAT_SCHEDULE = {
+    "expire-stale-execution-checkpoints": {
+        "task": "automation.expire_stale_execution_checkpoints",
+        "schedule": 300.0,
+    },
+}
 AUTOMATION_ARTIFACTS_ROOT = Path(
     config(
         "AUTOMATION_ARTIFACTS_ROOT",
@@ -282,5 +314,13 @@ AUTOMATION_PLAYWRIGHT_PYTHON_BIN = config(
 AUTOMATION_PLAYWRIGHT_WORKDIR = config(
     "AUTOMATION_PLAYWRIGHT_WORKDIR",
     default=str(BASE_DIR),
+)
+AUTOMATION_SELENIUM_PYTHON_BIN = config(
+    "AUTOMATION_SELENIUM_PYTHON_BIN",
+    default=AUTOMATION_PLAYWRIGHT_PYTHON_BIN,
+)
+AUTOMATION_SELENIUM_WORKDIR = config(
+    "AUTOMATION_SELENIUM_WORKDIR",
+    default=AUTOMATION_PLAYWRIGHT_WORKDIR,
 )
 

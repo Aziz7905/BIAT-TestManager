@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.accounts.models import Organization, Team, UserProfileRole, build_org_email
+from apps.accounts.models import Organization, OrganizationRole, Team, build_org_email
 
 User = get_user_model()
 
@@ -23,9 +23,9 @@ def validate_manager_for_organization(manager_user, organization: Organization |
             {"manager": "Selected manager has no profile."}
         )
 
-    if manager_profile.role != UserProfileRole.TEAM_MANAGER:
+    if manager_profile.organization_role != OrganizationRole.MEMBER:
         raise serializers.ValidationError(
-            {"manager": "Selected user must have role team_manager."}
+            {"manager": "Selected manager must be an organization member."}
         )
 
     if organization and manager_profile.organization_id != organization.id:

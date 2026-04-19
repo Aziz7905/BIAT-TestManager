@@ -14,8 +14,10 @@ from .access import (
     get_test_result_queryset_for_actor,
 )
 from .execution_runner import (
+    activate_script,
     create_and_queue_execution,
     create_execution_record,
+    deactivate_script,
     queue_execution,
     request_execution_pause,
     request_execution_resume,
@@ -24,11 +26,30 @@ from .execution_runner import (
     select_execution_script,
 )
 from .artifacts import get_result_artifacts
+from .checkpoints import (
+    cancel_pending_execution_checkpoints,
+    create_pending_execution_checkpoint,
+    expire_stale_execution_checkpoints,
+    resume_execution_checkpoint,
+)
+from .control import write_execution_stop_signal
 from .results import finalize_execution_result
 from .scheduling import compute_next_run_for_schedule, trigger_execution_schedule
 from .script_validation import validate_script_content
+from .streaming import (
+    build_execution_snapshot,
+    issue_execution_stream_ticket,
+    publish_execution_artifact_created,
+    publish_execution_event,
+    publish_execution_result_ready,
+    publish_execution_snapshot,
+    publish_execution_status_changed,
+    publish_execution_step_updated,
+    verify_execution_stream_ticket,
+)
 
 __all__ = [
+    "activate_script",
     "can_manage_automation_for_project",
     "can_manage_automation_script_record",
     "can_manage_execution_schedule_record",
@@ -37,22 +58,37 @@ __all__ = [
     "can_view_automation_script_record",
     "can_view_execution_schedule_record",
     "can_view_test_execution_record",
+    "cancel_pending_execution_checkpoints",
     "compute_next_run_for_schedule",
+    "create_pending_execution_checkpoint",
     "create_and_queue_execution",
     "create_execution_record",
+    "deactivate_script",
+    "expire_stale_execution_checkpoints",
     "finalize_execution_result",
+    "build_execution_snapshot",
     "get_automation_script_queryset_for_actor",
     "get_result_artifacts",
     "get_execution_schedule_queryset_for_actor",
     "get_execution_step_queryset_for_actor",
     "get_test_execution_queryset_for_actor",
     "get_test_result_queryset_for_actor",
+    "issue_execution_stream_ticket",
+    "publish_execution_artifact_created",
+    "publish_execution_event",
+    "publish_execution_result_ready",
+    "publish_execution_snapshot",
+    "publish_execution_status_changed",
+    "publish_execution_step_updated",
     "queue_execution",
     "request_execution_pause",
     "request_execution_resume",
     "request_execution_stop",
+    "resume_execution_checkpoint",
     "run_execution",
     "select_execution_script",
     "trigger_execution_schedule",
     "validate_script_content",
+    "verify_execution_stream_ticket",
+    "write_execution_stop_signal",
 ]

@@ -4,10 +4,10 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Organization, Team, UserProfile
-from apps.accounts.models.choices import UserProfileRole
+from apps.accounts.models.choices import OrganizationRole
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.specs.models import Specification, SpecificationSourceType
-from apps.testing.models import TestCase, TestScenario, TestSuite
+from apps.testing.models import TestCase, TestScenario, TestSection, TestSuite
 
 
 class TraceabilityApiTests(APITestCase):
@@ -33,7 +33,7 @@ class TraceabilityApiTests(APITestCase):
         UserProfile.objects.create(
             user=self.user,
             organization=self.organization,
-            role=UserProfileRole.TESTER,
+            organization_role=OrganizationRole.MEMBER,
         )
 
         self.team = Team.objects.create(
@@ -98,14 +98,24 @@ class TraceabilityApiTests(APITestCase):
             folder_path="Regression",
             created_by=self.user,
         )
+        self.direct_section = TestSection.objects.create(
+            suite=self.direct_suite,
+            name="General",
+            order_index=0,
+        )
+        self.indirect_section = TestSection.objects.create(
+            suite=self.indirect_suite,
+            name="General",
+            order_index=0,
+        )
 
         self.direct_scenario = TestScenario.objects.create(
-            suite=self.direct_suite,
+            section=self.direct_section,
             title="Successful login",
             description="Verify the user can log in successfully.",
         )
         self.indirect_scenario = TestScenario.objects.create(
-            suite=self.indirect_suite,
+            section=self.indirect_section,
             title="Logout coverage",
             description="Verify logout flow keeps login requirement traceable.",
         )
@@ -201,8 +211,9 @@ class TraceabilityApiTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
-        returned_suite_ids = {item["id"] for item in response.data}
+        payload = response.data["results"]
+        self.assertEqual(len(payload), 2)
+        returned_suite_ids = {item["id"] for item in payload}
         self.assertSetEqual(
             returned_suite_ids,
             {str(self.direct_suite.id), str(self.indirect_suite.id)},
@@ -217,11 +228,13 @@ class TraceabilityApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         specification_payload = next(
-            item for item in response.data if item["id"] == str(self.specification.id)
+            item
+            for item in response.data["results"]
+            if item["id"] == str(self.specification.id)
         )
         uncovered_payload = next(
             item
-            for item in response.data
+            for item in response.data["results"]
             if item["id"] == str(self.uncovered_specification.id)
         )
 

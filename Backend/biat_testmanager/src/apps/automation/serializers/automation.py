@@ -3,7 +3,9 @@ from rest_framework import serializers
 from apps.automation.models import (
     AutomationScript,
     AutomationScriptGeneratedBy,
+    ExecutionCheckpoint,
     ExecutionBrowser,
+    ExecutionEnvironment,
     ExecutionPlatform,
     ExecutionSchedule,
     ExecutionStep,
@@ -20,7 +22,7 @@ from apps.automation.services import (
     get_result_artifacts,
     validate_script_content,
 )
-from apps.testing.models import TestCase
+from apps.testing.models import TestCase, TestCaseRevision
 
 
 class AutomationScriptSerializer(serializers.ModelSerializer):
@@ -44,6 +46,7 @@ class AutomationScriptSerializer(serializers.ModelSerializer):
             "scenario_id",
             "suite_id",
             "project_id",
+            "test_case_revision",
             "framework",
             "language",
             "script_content",
@@ -85,11 +88,17 @@ class AutomationScriptWriteSerializer(serializers.ModelSerializer):
         choices=AutomationScriptGeneratedBy.choices,
         required=False,
     )
+    test_case_revision = serializers.PrimaryKeyRelatedField(
+        queryset=TestCaseRevision.objects.select_related("test_case").all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = AutomationScript
         fields = [
             "test_case",
+            "test_case_revision",
             "framework",
             "language",
             "script_content",
@@ -124,6 +133,15 @@ class AutomationScriptWriteSerializer(serializers.ModelSerializer):
         ):
             raise serializers.ValidationError(
                 {"test_case": "You do not have permission to move this script to the selected test case."}
+            )
+
+        test_case_revision = attrs.get(
+            "test_case_revision",
+            getattr(self.instance, "test_case_revision", None),
+        )
+        if test_case_revision is not None and test_case_revision.test_case_id != test_case.id:
+            raise serializers.ValidationError(
+                {"test_case_revision": "The selected revision must belong to the selected test case."}
             )
 
         validation_result = validate_script_content(
@@ -162,6 +180,31 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
         ]
 
 
+class ExecutionCheckpointSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExecutionCheckpoint
+        fields = [
+            "id",
+            "execution",
+            "step",
+            "checkpoint_key",
+            "title",
+            "instructions",
+            "payload_json",
+            "status",
+            "requested_at",
+            "resolved_at",
+            "resolved_by",
+        ]
+        read_only_fields = fields
+
+
+class ExecutionStreamTicketSerializer(serializers.Serializer):
+    ticket = serializers.CharField()
+    expires_in = serializers.IntegerField()
+    websocket_path = serializers.CharField()
+
+
 class TestResultSerializer(serializers.ModelSerializer):
     artifacts = serializers.SerializerMethodField()
 
@@ -181,7 +224,6 @@ class TestResultSerializer(serializers.ModelSerializer):
             "video_url",
             "artifacts_path",
             "artifacts",
-            "ai_failure_analysis",
             "issues_count",
             "created_at",
         ]
@@ -214,7 +256,10 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "scenario_id",
             "suite_id",
             "project_id",
+            "run_case",
             "script",
+            "environment",
+            "attempt_number",
             "triggered_by",
             "triggered_by_name",
             "trigger_type",
@@ -226,10 +271,12 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "duration_ms",
             "celery_task_id",
             "pause_requested",
-            "agent_run",
             "result",
         ]
         read_only_fields = [
+            "run_case",
+            "environment",
+            "attempt_number",
             "status",
             "started_at",
             "ended_at",
@@ -251,10 +298,20 @@ class TestExecutionSerializer(serializers.ModelSerializer):
 
 class TestExecutionCreateSerializer(serializers.ModelSerializer):
     test_case = serializers.PrimaryKeyRelatedField(
-        queryset=TestCase.objects.select_related("scenario", "scenario__suite", "scenario__suite__project").all()
+        queryset=TestCase.objects.select_related(
+            "scenario",
+            "scenario__section",
+            "scenario__section__suite",
+            "scenario__section__suite__project",
+        ).all()
     )
     script = serializers.PrimaryKeyRelatedField(
         queryset=AutomationScript.objects.select_related("test_case").all(),
+        required=False,
+        allow_null=True,
+    )
+    environment = serializers.PrimaryKeyRelatedField(
+        queryset=ExecutionEnvironment.objects.select_related("team").all(),
         required=False,
         allow_null=True,
     )
@@ -270,6 +327,7 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
         fields = [
             "test_case",
             "script",
+            "environment",
             "trigger_type",
             "browser",
             "platform",
@@ -279,6 +337,7 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         test_case = attrs["test_case"]
         script = attrs.get("script")
+        environment = attrs.get("environment")
 
         if not can_trigger_test_execution(request.user, test_case):
             raise serializers.ValidationError(
@@ -290,7 +349,54 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
                 {"script": "The selected script must belong to the selected test case."}
             )
 
+        attrs.setdefault("trigger_type", ExecutionTriggerType.MANUAL)
+
+        if environment is not None:
+            attrs.setdefault("browser", environment.browser)
+            attrs.setdefault("platform", environment.platform)
+            if not environment.is_active:
+                raise serializers.ValidationError(
+                    {"environment": "The selected execution environment is inactive."}
+                )
+            if environment.team_id != test_case.scenario.section.suite.project.team_id:
+                raise serializers.ValidationError(
+                    {"environment": "The selected environment must belong to the test case team."}
+                )
+            if script is not None and environment.engine != script.framework:
+                raise serializers.ValidationError(
+                    {"environment": "The selected environment engine must match the script framework."}
+                )
+            if attrs["browser"] != environment.browser:
+                raise serializers.ValidationError(
+                    {"browser": "The selected browser must match the execution environment."}
+                )
+            if attrs["platform"] != environment.platform:
+                raise serializers.ValidationError(
+                    {"platform": "The selected platform must match the execution environment."}
+                )
+        else:
+            attrs.setdefault("browser", ExecutionBrowser.CHROMIUM)
+            attrs.setdefault("platform", ExecutionPlatform.DESKTOP)
+
         return attrs
+
+
+class ScheduleTriggerResponseSerializer(serializers.Serializer):
+    """
+    Lightweight read-only shape returned when a schedule is triggered manually.
+    The schedule now produces a TestRun + TestRunCase records; executions are
+    dispatched later when workers pick up run-cases.
+    """
+    run_id = serializers.UUIDField(source="id")
+    name = serializers.CharField()
+    status = serializers.CharField()
+    trigger_type = serializers.CharField()
+    project = serializers.UUIDField(source="project_id")
+    run_case_count = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField()
+
+    def get_run_case_count(self, obj):
+        return obj.run_cases.count()
 
 
 class ExecutionScheduleSerializer(serializers.ModelSerializer):

@@ -6,6 +6,10 @@ from apps.accounts.services.notifications import (
     normalize_notification_provider,
 )
 from apps.accounts.services.user_identity import update_user_identity_from_name
+from apps.integrations.services import (
+    get_user_integration_token,
+    update_user_integration_token,
+)
 
 
 class TeamMembershipSummarySerializer(serializers.ModelSerializer):
@@ -35,6 +39,7 @@ class TeamMembershipSummarySerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     organization = serializers.UUIDField(source="organization.id", read_only=True)
     organization_name = serializers.CharField(source="organization.name", read_only=True)
+    organization_role = serializers.CharField(read_only=True)
     team = serializers.SerializerMethodField()
     team_name = serializers.SerializerMethodField()
     team_memberships = serializers.SerializerMethodField()
@@ -57,16 +62,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
         primary_membership = self._get_primary_membership(obj)
         if primary_membership:
             return str(primary_membership.team_id)
-        if obj.team_id:
-            return str(obj.team_id)
+        if obj.primary_team_id:
+            return str(obj.primary_team_id)
         return None
 
     def get_team_name(self, obj):
         primary_membership = self._get_primary_membership(obj)
         if primary_membership:
             return primary_membership.team.name
-        if obj.team:
-            return obj.team.name
+        if obj.primary_team:
+            return obj.primary_team.name
         return None
 
     def get_team_memberships(self, obj):
@@ -79,10 +84,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "id",
             "organization",
             "organization_name",
+            "organization_role",
             "team",
             "team_name",
             "team_memberships",
-            "role",
             "notification_provider",
             "notifications_enabled",
             "created_at",
@@ -94,6 +99,7 @@ class MyProfileSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
     organization_name = serializers.CharField(source="organization.name", read_only=True)
+    organization_role = serializers.CharField(read_only=True)
     team = serializers.SerializerMethodField()
     team_name = serializers.SerializerMethodField()
     team_memberships = serializers.SerializerMethodField()
@@ -120,16 +126,16 @@ class MyProfileSerializer(serializers.ModelSerializer):
         primary_membership = self._get_primary_membership(obj)
         if primary_membership:
             return primary_membership.team.name
-        if obj.team:
-            return obj.team.name
+        if obj.primary_team:
+            return obj.primary_team.name
         return None
 
     def get_team(self, obj):
         primary_membership = self._get_primary_membership(obj)
         if primary_membership:
             return str(primary_membership.team_id)
-        if obj.team_id:
-            return str(obj.team_id)
+        if obj.primary_team_id:
+            return str(obj.primary_team_id)
         return None
 
     def get_team_memberships(self, obj):
@@ -145,10 +151,10 @@ class MyProfileSerializer(serializers.ModelSerializer):
             "email",
             "organization",
             "organization_name",
+            "organization_role",
             "team",
             "team_name",
             "team_memberships",
-            "role",
             "has_jira_token",
             "has_github_token",
             "notification_provider",
@@ -162,10 +168,10 @@ class MyProfileSerializer(serializers.ModelSerializer):
         ]
 
     def get_has_jira_token(self, obj):
-        return bool(obj.jira_token)
+        return bool(get_user_integration_token(obj, "jira"))
 
     def get_has_github_token(self, obj):
-        return bool(obj.github_token)
+        return bool(get_user_integration_token(obj, "github"))
 
     def get_has_slack_user(self, obj):
         return bool(obj.slack_user_id)
@@ -217,10 +223,18 @@ class UpdateMyProfileSerializer(serializers.Serializer):
         )
 
         if "jira_token" in validated_data:
-            instance.jira_token = validated_data["jira_token"] or None
+            update_user_integration_token(
+                instance,
+                "jira",
+                validated_data["jira_token"] or None,
+            )
 
         if "github_token" in validated_data:
-            instance.github_token = validated_data["github_token"] or None
+            update_user_integration_token(
+                instance,
+                "github",
+                validated_data["github_token"] or None,
+            )
 
         if "notification_provider" in validated_data:
             provider = normalize_notification_provider(

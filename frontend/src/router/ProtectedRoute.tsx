@@ -1,48 +1,34 @@
-/** Route guard with a branded loading state for authenticated app sections. */
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
-import type { UserProfileRole } from "../types/accounts";
 
-interface ProtectedRouteProps {
-  allowedRoles?: UserProfileRole[];
+function FullscreenSpinner() {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-slate-50">
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+    </div>
+  );
 }
 
-function getDefaultPathByRole(role: UserProfileRole | undefined): string {
-  if (role === "platform_owner" || role === "org_admin") {
-    return "/admin/users";
-  }
-
-  return "/home";
-}
-
-export default function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, user } = useAuthStore();
+export default function ProtectedRoute() {
+  const hasHydrated = useAuthStore((s) => s.hasHydrated);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const sessionExpired = useAuthStore((s) => s.sessionExpired);
   const location = useLocation();
 
-  // ======================
-  // LOADING STATE
-  // ======================
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-bg text-sm text-muted">
-        Loading...
-      </div>
-    );
+  if (!hasHydrated) {
+    return <FullscreenSpinner />;
   }
 
-  // ======================
-  // NOT AUTHENTICATED
-  // ======================
-  if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
-  }
-
-  // ======================
-  // ROLE CHECK
-  // ======================
-  if (allowedRoles && !allowedRoles.includes(user.profile.role)) {
-    return <Navigate to={getDefaultPathByRole(user.profile.role)} replace state={{ from: location }} />;
-  }
-
-  return <Outlet />;
+  return isAuthenticated
+    ? <Outlet />
+    : (
+        <Navigate
+          to="/login"
+          state={{
+            from: location,
+            reason: sessionExpired ? "expired" : undefined,
+          }}
+          replace
+        />
+      );
 }

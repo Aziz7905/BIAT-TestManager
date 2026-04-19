@@ -1,136 +1,103 @@
-// src/api/client.ts
 import axios from "axios";
-import type {
-  AxiosError,
-  AxiosRequestConfig,
-  InternalAxiosRequestConfig,
-} from "axios";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const ACCESS_TOKEN_KEY = "access";
-const REFRESH_TOKEN_KEY = "refresh";
+const TOKEN_KEY = "biat_access";
+const REFRESH_KEY = "biat_refresh";
 
-interface RetryableRequestConfig extends AxiosRequestConfig {
-  _retry?: boolean;
-}
-
-const getAccessToken = (): string | null => localStorage.getItem(ACCESS_TOKEN_KEY);
-
-const getRefreshToken = (): string | null =>
-  localStorage.getItem(REFRESH_TOKEN_KEY);
-
-const setAccessToken = (token: string): void => {
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
-};
-
-const clearStoredTokens = (): void => {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-};
-
-const shouldSkipRefresh = (url?: string): boolean => {
-  if (!url) {
-    return false;
-  }
-
-  return ["/login/", "/logout/", "/refresh/"].some((path) => url.includes(path));
-};
-
-const attachAuthorizationHeader = <T extends { headers?: unknown }>(
-  config: T,
-  token: string
-): T => {
-  const headers =
-    config.headers && typeof config.headers === "object"
-      ? (config.headers as Record<string, string>)
-      : {};
-
-  return {
-    ...config,
-    headers: {
-      ...headers,
-      Authorization: `Bearer ${token}`,
-    },
-  };
-};
-
-const authClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
+export const tokenStorage = {
+  getAccess: () => localStorage.getItem(TOKEN_KEY),
+  getRefresh: () => localStorage.getItem(REFRESH_KEY),
+  setTokens: (access: string, refresh: string) => {
+    localStorage.setItem(TOKEN_KEY, access);
+    localStorage.setItem(REFRESH_KEY, refresh);
   },
+  setAccess: (access: string) => {
+    localStorage.setItem(TOKEN_KEY, access);
+  },
+  clear: () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  },
+};
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL,
+  headers: { "Content-Type": "application/json" },
 });
 
-let refreshPromise: Promise<string> | null = null;
-
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = getAccessToken();
-
+// Attach access token on every request
+apiClient.interceptors.request.use((config) => {
+  const token = tokenStorage.getAccess();
   if (token) {
-    return attachAuthorizationHeader(config, token);
+    config.headers.Authorization = `Bearer ${token}`;
   }
-
   return config;
 });
 
+// On 401: try refresh once, then force logout
+let isRefreshing = false;
+let pendingQueue: Array<{
+  resolve: (token: string) => void;
+  reject: (err: unknown) => void;
+}> = [];
+
+function drainQueue(token: string | null, err: unknown) {
+  pendingQueue.forEach((p) => (token ? p.resolve(token) : p.reject(err)));
+  pendingQueue = [];
+}
+
+function notifyAuthExpired() {
+  window.dispatchEvent(new CustomEvent("biat-auth-expired"));
+}
+
 apiClient.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError) => {
-    const originalRequest = error.config as RetryableRequestConfig | undefined;
-    const statusCode = error.response?.status;
-
-    if (
-      !originalRequest ||
-      statusCode !== 401 ||
-      originalRequest._retry ||
-      shouldSkipRefresh(originalRequest.url)
-    ) {
+  (res) => res,
+  async (error) => {
+    const original = error.config as (typeof error.config & { _retry?: boolean }) | undefined;
+    if (!original || error.response?.status !== 401 || original._retry) {
       return Promise.reject(error);
     }
 
-    const refreshToken = getRefreshToken();
-
-    if (!refreshToken) {
-      clearStoredTokens();
+    const refresh = tokenStorage.getRefresh();
+    if (!refresh) {
+      tokenStorage.clear();
+      notifyAuthExpired();
       return Promise.reject(error);
     }
 
-    originalRequest._retry = true;
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        pendingQueue.push({
+          resolve: (token) => {
+            original.headers.Authorization = `Bearer ${token}`;
+            resolve(apiClient(original));
+          },
+          reject,
+        });
+      });
+    }
+
+    original._retry = true;
+    isRefreshing = true;
 
     try {
-      if (!refreshPromise) {
-        refreshPromise = authClient
-          .post<{ access: string }>("/refresh/", { refresh: refreshToken })
-          .then((response) => {
-            setAccessToken(response.data.access);
-            return response.data.access;
-          })
-          .catch((refreshError) => {
-            clearStoredTokens();
-            throw refreshError;
-          })
-          .finally(() => {
-            refreshPromise = null;
-          });
-      }
-
-      const newAccessToken = await refreshPromise;
-      const requestWithNewToken = attachAuthorizationHeader(
-        originalRequest,
-        newAccessToken
+      const { data } = await axios.post(
+        `${import.meta.env.VITE_API_BASE_URL}/refresh/`,
+        { refresh }
       );
-
-      return apiClient(requestWithNewToken);
+      tokenStorage.setAccess(data.access);
+      apiClient.defaults.headers.common.Authorization = `Bearer ${data.access}`;
+      drainQueue(data.access, null);
+      original.headers.Authorization = `Bearer ${data.access}`;
+      return apiClient(original);
     } catch (refreshError) {
+      drainQueue(null, refreshError);
+      tokenStorage.clear();
+      notifyAuthExpired();
       return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
     }
   }
 );
+
+export default apiClient;

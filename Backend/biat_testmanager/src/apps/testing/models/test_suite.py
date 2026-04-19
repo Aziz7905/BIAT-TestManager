@@ -1,5 +1,7 @@
+#src/app/testing/models/test_suite.py
 import uuid
 
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.db import models
 
@@ -43,22 +45,38 @@ class TestSuite(models.Model):
             return f"{self.project.name} / {self.folder_path} / {self.name}"
         return f"{self.project.name} / {self.name}"
 
+    @property
+    def scenarios(self):
+        scenario_model = django_apps.get_model("testing", "TestScenario")
+        return scenario_model.objects.filter(section__suite=self)
+
     def get_scenarios(self):
-        return self.scenarios.order_by("order_index", "title")
+        return self.scenarios.select_related("section").order_by(
+            "section__order_index",
+            "order_index",
+            "title",
+        )
 
     def get_total_cases(self) -> int:
-        return self.scenarios.aggregate(total=models.Count("cases"))["total"] or 0
+        return (
+            self.sections.aggregate(total=models.Count("scenarios__cases", distinct=True))["total"]
+            or 0
+        )
 
     def get_pass_rate(self) -> float:
-        aggregates = self.scenarios.aggregate(
-            total=models.Count("cases"),
+        # Batch 4 keeps this intentionally simple: a case counts as passed when it
+        # has at least one passing execution result linked to it.
+        aggregates = self.sections.aggregate(
+            total=models.Count("scenarios__cases", distinct=True),
             passed=models.Count(
-                "cases",
-                filter=models.Q(cases__status="passed"),
+                "scenarios__cases",
+                filter=models.Q(
+                    scenarios__cases__executions__result__status="passed",
+                ),
+                distinct=True,
             ),
         )
         return calculate_pass_rate(
             total_count=aggregates["total"] or 0,
             passed_count=aggregates["passed"] or 0,
         )
-
