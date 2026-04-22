@@ -203,6 +203,12 @@ class ExecutionStreamTicketSerializer(serializers.Serializer):
     ticket = serializers.CharField()
     expires_in = serializers.IntegerField()
     websocket_path = serializers.CharField()
+    browser_websocket_path = serializers.CharField()
+    browser_view_url = serializers.CharField(required=False, allow_blank=True)
+    browser_view_urls = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
 
 
 class TestResultSerializer(serializers.ModelSerializer):
@@ -246,6 +252,7 @@ class TestExecutionSerializer(serializers.ModelSerializer):
     triggered_by_name = serializers.SerializerMethodField()
     result = TestResultSerializer(read_only=True)
     duration_ms = serializers.SerializerMethodField()
+    has_browser_session = serializers.SerializerMethodField()
 
     class Meta:
         model = TestExecution
@@ -271,6 +278,7 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "duration_ms",
             "celery_task_id",
             "pause_requested",
+            "has_browser_session",
             "result",
         ]
         read_only_fields = [
@@ -283,6 +291,7 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "duration_ms",
             "celery_task_id",
             "pause_requested",
+            "has_browser_session",
             "result",
         ]
 
@@ -294,6 +303,9 @@ class TestExecutionSerializer(serializers.ModelSerializer):
 
     def get_duration_ms(self, obj):
         return obj.get_duration_ms()
+
+    def get_has_browser_session(self, obj):
+        return bool(obj.selenium_session_id)
 
 
 class TestExecutionCreateSerializer(serializers.ModelSerializer):
@@ -378,6 +390,37 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
             attrs.setdefault("browser", ExecutionBrowser.CHROMIUM)
             attrs.setdefault("platform", ExecutionPlatform.DESKTOP)
 
+        return attrs
+
+
+class ManualBrowserExecutionCreateSerializer(serializers.Serializer):
+    test_case = serializers.PrimaryKeyRelatedField(
+        queryset=TestCase.objects.select_related(
+            "scenario",
+            "scenario__section",
+            "scenario__section__suite",
+            "scenario__section__suite__project",
+        ).all()
+    )
+    target_url = serializers.URLField(required=False, allow_blank=True)
+    browser = serializers.ChoiceField(
+        choices=ExecutionBrowser.choices,
+        required=False,
+        default=ExecutionBrowser.CHROMIUM,
+    )
+    platform = serializers.ChoiceField(
+        choices=ExecutionPlatform.choices,
+        required=False,
+        default=ExecutionPlatform.DESKTOP,
+    )
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        test_case = attrs["test_case"]
+        if not can_trigger_test_execution(request.user, test_case):
+            raise serializers.ValidationError(
+                {"test_case": "You do not have permission to execute this test case."}
+            )
         return attrs
 
 

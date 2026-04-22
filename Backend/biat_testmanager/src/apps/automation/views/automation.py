@@ -1,6 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,7 +11,7 @@ from apps.automation.models import (
     ExecutionSchedule,
     TestExecution,
 )
-from apps.automation.models.choices import ExecutionStatus
+from apps.automation.models.choices import ExecutionStatus, ExecutionTriggerType
 from apps.automation.serializers import (
     AutomationScriptDetailSerializer,
     AutomationScriptSerializer,
@@ -20,6 +20,7 @@ from apps.automation.serializers import (
     ExecutionScheduleSerializer,
     ExecutionStreamTicketSerializer,
     ExecutionStepSerializer,
+    ManualBrowserExecutionCreateSerializer,
     ScheduleTriggerResponseSerializer,
     TestExecutionCreateSerializer,
     TestExecutionSerializer,
@@ -34,6 +35,7 @@ from apps.automation.services import (
     can_view_execution_schedule_record,
     can_view_test_execution_record,
     create_and_queue_execution,
+    create_and_queue_manual_browser_execution,
     deactivate_script,
     get_automation_script_queryset_for_actor,
     get_execution_schedule_queryset_for_actor,
@@ -47,6 +49,13 @@ from apps.automation.services import (
     resume_execution_checkpoint,
     trigger_execution_schedule,
 )
+from apps.automation.services.control import ExecutionControlUnavailable
+
+
+class ExecutionControlUnavailableApiError(APIException):
+    status_code = 503
+    default_detail = "Execution control channel is unavailable."
+    default_code = "execution_control_unavailable"
 
 
 class AutomationScriptListCreateView(generics.ListCreateAPIView):
@@ -135,6 +144,12 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
         suite_id = self.request.query_params.get("suite")
         test_case_id = self.request.query_params.get("test_case")
         status_value = self.request.query_params.get("status")
+        trigger_type = self.request.query_params.get("trigger_type")
+        include_diagnostic = self.request.query_params.get("include_diagnostic") in {
+            "1",
+            "true",
+            "yes",
+        }
 
         if project_id:
             queryset = queryset.filter(
@@ -146,6 +161,10 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
             queryset = queryset.filter(test_case_id=test_case_id)
         if status_value:
             queryset = queryset.filter(status=status_value)
+        if trigger_type:
+            queryset = queryset.filter(trigger_type=trigger_type)
+        elif not include_diagnostic:
+            queryset = queryset.exclude(trigger_type=ExecutionTriggerType.DIAGNOSTIC)
         return queryset
 
     def get_serializer_class(self):
@@ -169,6 +188,26 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
 
+class ManualBrowserExecutionCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ManualBrowserExecutionCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        execution = create_and_queue_manual_browser_execution(
+            test_case=serializer.validated_data["test_case"],
+            triggered_by=request.user,
+            target_url=serializer.validated_data.get("target_url", ""),
+            browser=serializer.validated_data["browser"],
+            platform=serializer.validated_data["platform"],
+        )
+        response_serializer = TestExecutionSerializer(execution, context={"request": request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+
 class TestExecutionDetailView(generics.RetrieveDestroyAPIView):
     serializer_class = TestExecutionSerializer
     permission_classes = [IsAuthenticated]
@@ -179,14 +218,6 @@ class TestExecutionDetailView(generics.RetrieveDestroyAPIView):
     def perform_destroy(self, instance):
         if not can_manage_test_execution_record(self.request.user, instance):
             raise PermissionDenied("You do not have permission to delete this execution.")
-        if instance.status not in {
-            ExecutionStatus.FAILED,
-            ExecutionStatus.ERROR,
-            ExecutionStatus.CANCELLED,
-        }:
-            raise PermissionDenied(
-                "Only failed, errored, or cancelled executions can be deleted."
-            )
         instance.delete()
 
 
@@ -209,6 +240,8 @@ class TestExecutionStreamTicketView(APIView):
             get_test_execution_queryset_for_actor(request.user),
             pk=pk,
         )
+        if not can_manage_test_execution_record(request.user, execution):
+            raise PermissionDenied("You do not have permission to stream this execution.")
         serializer = ExecutionStreamTicketSerializer(
             issue_execution_stream_ticket(execution, request.user)
         )
@@ -233,7 +266,11 @@ class TestExecutionStopView(APIView):
         execution = get_object_or_404(get_test_execution_queryset_for_actor(request.user), pk=pk)
         if not can_manage_test_execution_record(request.user, execution):
             raise PermissionDenied("You do not have permission to stop this execution.")
-        serializer = TestExecutionSerializer(request_execution_stop(execution), context={"request": request})
+        try:
+            stopped = request_execution_stop(execution)
+        except ExecutionControlUnavailable as exc:
+            raise ExecutionControlUnavailableApiError() from exc
+        serializer = TestExecutionSerializer(stopped, context={"request": request})
         return Response(serializer.data)
 
 
@@ -253,15 +290,18 @@ class ExecutionCheckpointResumeView(APIView):
             pk=checkpoint_pk,
             execution=execution,
         )
-        serializer = ExecutionCheckpointSerializer(
-            resume_execution_checkpoint(checkpoint, resolved_by=request.user)
-        )
+        try:
+            resumed = resume_execution_checkpoint(checkpoint, resolved_by=request.user)
+        except ExecutionControlUnavailable as exc:
+            raise ExecutionControlUnavailableApiError() from exc
+        serializer = ExecutionCheckpointSerializer(resumed)
         return Response(serializer.data)
 
 
 class ExecutionStepListView(generics.ListAPIView):
     serializer_class = ExecutionStepSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         return get_execution_step_queryset_for_actor(self.request.user).filter(

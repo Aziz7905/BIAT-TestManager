@@ -11,6 +11,7 @@ from apps.automation.models import (
     TestExecution,
     TestResult,
 )
+from apps.automation.models.choices import ExecutionTriggerType
 from apps.projects.models import Project
 from apps.specs.models import Specification
 from apps.testing.models import TestCase, TestScenario, TestSection, TestSuite
@@ -364,19 +365,22 @@ def build_test_case_workspace(test_case: TestCase) -> dict:
             is_active=True,
         ).order_by("framework", "language", "-script_version")
     )
+    product_executions = TestExecution.objects.filter(test_case=test_case).exclude(
+        trigger_type=ExecutionTriggerType.DIAGNOSTIC
+    )
     latest_execution = (
-        TestExecution.objects.filter(test_case=test_case)
+        product_executions
         .select_related("result", "script")
         .prefetch_related("artifacts")
         .order_by("-started_at", "-id")
         .first()
     )
     recent_results = list(
-        TestResult.objects.filter(execution__test_case=test_case)
+        TestResult.objects.filter(execution__in=product_executions)
         .select_related("execution")
         .order_by("-created_at")[:CASE_RECENT_RESULTS_LIMIT]
     )
-    artifact_summary = TestArtifact.objects.filter(execution__test_case=test_case).aggregate(
+    artifact_summary = TestArtifact.objects.filter(execution__in=product_executions).aggregate(
         artifact_count=Count("id"),
         last_artifact_at=Max("created_at"),
     )

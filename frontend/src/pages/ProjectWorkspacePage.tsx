@@ -11,10 +11,12 @@ import ProjectTree from "../components/project/ProjectTree";
 import RepositoryDetailPane from "../components/project/RepositoryDetailPane";
 import ProjectMembersModal from "../components/project/ProjectMembersModal";
 import CaseEditorModal from "../components/project/case-editor/CaseEditorModal";
+import ProjectAutomationWorkspace from "../components/project/automation/ProjectAutomationWorkspace";
 import ProjectSpecificationsWorkspace from "../components/project/specs/ProjectSpecificationsWorkspace";
+import ProjectTestRunsWorkspace from "../components/project/test-runs/ProjectTestRunsWorkspace";
 import { Spinner } from "../components/ui";
 
-type ProjectWorkspaceTab = "repository" | "specs";
+type ProjectWorkspaceTab = "repository" | "specs" | "automation" | "test-runs";
 
 export default function ProjectWorkspacePage() {
   const { id } = useParams<{ id: string }>();
@@ -29,11 +31,17 @@ export default function ProjectWorkspacePage() {
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [scenarioCasesById, setScenarioCasesById] = useState<Record<string, TreeCase[]>>({});
   const [loadingScenarioIds, setLoadingScenarioIds] = useState<Record<string, boolean>>({});
+  const [focusedExecutionId, setFocusedExecutionId] = useState<string | null>(null);
   const [treeWidth, setTreeWidth] = useState(320);
   const [resizing, setResizing] = useState(false);
 
+  const requestedTab = searchParams.get("tab");
   const activeTab: ProjectWorkspaceTab =
-    searchParams.get("tab") === "specs" ? "specs" : "repository";
+    requestedTab === "specs" ||
+    requestedTab === "automation" ||
+    requestedTab === "test-runs"
+      ? requestedTab
+      : "repository";
 
   const setActiveTab = useCallback(
     (tab: ProjectWorkspaceTab) => {
@@ -198,6 +206,8 @@ export default function ProjectWorkspacePage() {
             {([
               { key: "repository", label: "Repository" },
               { key: "specs", label: "Specifications" },
+              { key: "automation", label: "Automation" },
+              { key: "test-runs", label: "Test Runs" },
             ] as const).map((tab) => (
               <button
                 key={tab.key}
@@ -256,11 +266,15 @@ export default function ProjectWorkspacePage() {
                 onSelect={setSelection}
                 onClearSelection={() => setSelection(null)}
                 onEditCase={setEditingCaseId}
+                onViewExecution={(executionId) => {
+                  setFocusedExecutionId(executionId);
+                  setActiveTab("automation");
+                }}
                 onScenarioSaved={() => void refreshTree({ resetCaseCache: true })}
               />
             </main>
           </div>
-        ) : (
+        ) : activeTab === "specs" ? (
           <div className="flex-1 overflow-hidden">
             <ProjectSpecificationsWorkspace
               projectId={id ?? ""}
@@ -269,6 +283,17 @@ export default function ProjectWorkspacePage() {
                 setActiveTab("repository");
               }}
             />
+          </div>
+        ) : activeTab === "automation" ? (
+          <div className="flex-1 overflow-hidden">
+            <ProjectAutomationWorkspace
+              projectId={id ?? ""}
+              focusExecutionId={focusedExecutionId}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-hidden">
+            <ProjectTestRunsWorkspace projectId={id ?? ""} />
           </div>
         )}
       </div>

@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CaseWorkspace } from "../../../types/testing";
-import { Badge, Button } from "../../ui";
+import type { AutomationScript, TestExecution } from "../../../types/automation";
+import { getScripts } from "../../../api/automation/scripts";
+import {
+  createExecution,
+  deleteExecution,
+  getExecutions,
+  startManualBrowser,
+} from "../../../api/automation/executions";
+import { Badge, Button, EmptyState, ErrorMessage, Spinner } from "../../ui";
 import {
   CaseSummaryBadges,
   Header,
@@ -8,33 +16,130 @@ import {
   MetricGrid,
   PanelSection,
   automationTone,
+  executionStatusTone,
   formatDateTime,
   formatJson,
   formatLabel,
   resultTone,
 } from "./shared";
+import CaseScriptEditorModal from "../case-editor/CaseScriptEditorModal";
 
-type CaseTab = "design" | "automation" | "history";
+type CaseTab = "design" | "automation" | "history" | "code" | "runs";
+
+const TAB_LABELS: Record<CaseTab, string> = {
+  design: "Design",
+  automation: "Automation Snapshot",
+  history: "History",
+  code: "Code",
+  runs: "Runs",
+};
 
 interface CaseWorkspacePanelProps {
-  testCase: CaseWorkspace;
-  onEditCase?: (caseId: string) => void;
+  readonly testCase: CaseWorkspace;
+  readonly onEditCase?: (caseId: string) => void;
+  readonly onViewExecution?: (executionId: string) => void;
 }
 
 export default function CaseWorkspacePanel({
   testCase,
   onEditCase,
+  onViewExecution,
 }: CaseWorkspacePanelProps) {
   const [tab, setTab] = useState<CaseTab>("design");
 
-  useEffect(() => {
-    setTab("design");
-  }, [testCase.id]);
+  // Code tab state
+  const [scripts, setScripts] = useState<AutomationScript[]>([]);
+  const [isLoadingScripts, setIsLoadingScripts] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [isOpeningBrowser, setIsOpeningBrowser] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+
+  // Runs tab state
+  const [executions, setExecutions] = useState<TestExecution[]>([]);
+  const [isLoadingRuns, setIsLoadingRuns] = useState(false);
 
   const prettyTestData = useMemo(
     () => formatJson(testCase.design.test_data),
     [testCase.design.test_data]
   );
+
+  useEffect(() => {
+    setTab("design");
+    setScripts([]);
+    setExecutions([]);
+    setRunError(null);
+    setScriptEditorOpen(false);
+  }, [testCase.id]);
+
+  async function loadScripts() {
+    setIsLoadingScripts(true);
+    try {
+      setScripts(await getScripts({ test_case: testCase.id }));
+    } finally {
+      setIsLoadingScripts(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab !== "code") return;
+    void loadScripts();
+  }, [tab, testCase.id]);
+
+  useEffect(() => {
+    if (tab !== "runs") return;
+    setIsLoadingRuns(true);
+    getExecutions({ test_case: testCase.id })
+      .then(setExecutions)
+      .finally(() => setIsLoadingRuns(false));
+  }, [tab, testCase.id]);
+
+  const activeScript = scripts.find((s) => s.is_active) ?? null;
+
+  async function handleRun() {
+    setIsRunning(true);
+    setRunError(null);
+    try {
+      const execution = await createExecution({
+        test_case: testCase.id,
+        script: activeScript?.id ?? null,
+      });
+      setExecutions((prev) => [execution, ...prev]);
+      onViewExecution?.(execution.id);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        "Failed to start execution.";
+      setRunError(msg);
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  async function handleOpenBrowser() {
+    setIsOpeningBrowser(true);
+    setRunError(null);
+    try {
+      const execution = await startManualBrowser({ test_case: testCase.id });
+      setExecutions((prev) => [execution, ...prev]);
+      onViewExecution?.(execution.id);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        "Failed to open manual browser.";
+      setRunError(msg);
+    } finally {
+      setIsOpeningBrowser(false);
+    }
+  }
+
+  async function handleDeleteExecution(executionId: string) {
+    if (!window.confirm("Delete this execution and its stored results?")) return;
+    await deleteExecution(executionId);
+    if (tab === "runs") {
+      setExecutions((current) => current.filter((item) => item.id !== executionId));
+    }
+  }
 
   return (
     <>
@@ -44,17 +149,30 @@ export default function CaseWorkspacePanel({
         subtitle={`Revision ${testCase.design.version}`}
         badges={<CaseSummaryBadges testCase={testCase} />}
         actions={
-          onEditCase ? (
-            <Button variant="secondary" size="sm" onClick={() => onEditCase(testCase.id)}>
-              Edit
-            </Button>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-2">
+            {onViewExecution && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleOpenBrowser()}
+                isLoading={isOpeningBrowser}
+                loadingText="Opening"
+              >
+                Open browser
+              </Button>
+            )}
+            {onEditCase && (
+              <Button variant="secondary" size="sm" onClick={() => onEditCase(testCase.id)}>
+                Edit
+              </Button>
+            )}
+          </div>
         }
       />
 
       <div className="border-b border-slate-200 px-6">
         <div className="flex flex-wrap gap-2 py-3">
-          {(["design", "automation", "history"] as CaseTab[]).map((key) => (
+          {(Object.keys(TAB_LABELS) as CaseTab[]).map((key) => (
             <button
               key={key}
               type="button"
@@ -65,7 +183,7 @@ export default function CaseWorkspacePanel({
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
-              {key === "design" ? "Design" : key === "automation" ? "Automation Snapshot" : "History"}
+              {TAB_LABELS[key]}
             </button>
           ))}
         </div>
@@ -281,7 +399,18 @@ export default function CaseWorkspacePanel({
                       <Badge label={formatLabel(result.status)} color={resultTone(result.status)} dot />
                       <span className="text-sm text-slate-700">{formatDateTime(result.created_at)}</span>
                     </div>
-                    <div className="text-xs text-slate-500">{result.duration_ms} ms</div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-slate-500">{result.duration_ms} ms</span>
+                      {onViewExecution && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onViewExecution(result.execution_id)}
+                        >
+                          View
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -289,6 +418,171 @@ export default function CaseWorkspacePanel({
           </PanelSection>
         </>
       )}
+
+      {tab === "code" && (
+        <PanelSection
+          title="Active script"
+          action={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleOpenBrowser()}
+                isLoading={isOpeningBrowser}
+                loadingText="Opening"
+              >
+                Open browser
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setScriptEditorOpen(true)}
+                disabled={isLoadingScripts}
+              >
+                {activeScript ? "Edit code" : "Add code"}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleRun}
+                isLoading={isRunning}
+                loadingText="Starting…"
+                disabled={isRunning || isLoadingScripts || !activeScript}
+              >
+                Run
+              </Button>
+            </div>
+          }
+        >
+          {runError && (
+            <div className="mb-4">
+              <ErrorMessage message={runError} onDismiss={() => setRunError(null)} />
+            </div>
+          )}
+
+          {isLoadingScripts && (
+            <div className="flex justify-center py-8">
+              <Spinner size="md" />
+            </div>
+          )}
+          {!isLoadingScripts && activeScript && (
+            <>
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+                  {activeScript.framework}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+                  {activeScript.language}
+                </span>
+                <span className="text-xs text-slate-400">
+                  v{activeScript.script_version} · {formatDateTime(activeScript.created_at)}
+                </span>
+              </div>
+              <pre className="overflow-x-auto rounded-md border border-slate-200 bg-slate-950 px-4 py-4 text-xs leading-relaxed text-slate-100">
+                {activeScript.script_content}
+              </pre>
+            </>
+          )}
+          {!isLoadingScripts && !activeScript && (
+            <EmptyState
+              title="No active script"
+              description="No active automation script is linked to this test case."
+            />
+          )}
+
+          {!isLoadingScripts && scripts.some((s) => !s.is_active) && (
+            <div className="mt-6">
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Inactive scripts
+              </h4>
+              <div className="space-y-2">
+                {scripts
+                  .filter((s) => !s.is_active)
+                  .map((script) => (
+                    <div
+                      key={script.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500"
+                    >
+                      <span>
+                        {script.framework} / {script.language} · v{script.script_version}
+                      </span>
+                      <span className="text-xs">{formatDateTime(script.created_at)}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </PanelSection>
+      )}
+
+      {tab === "runs" && (
+        <PanelSection title="Execution history">
+          {isLoadingRuns && (
+            <div className="flex justify-center py-8">
+              <Spinner size="md" />
+            </div>
+          )}
+          {!isLoadingRuns && executions.length === 0 && (
+            <EmptyState
+              title="No executions yet"
+              description="Run this test case to see execution history here."
+            />
+          )}
+          {!isLoadingRuns && executions.length > 0 && (
+            <div className="space-y-2">
+              {executions.map((execution) => (
+                <div
+                  key={execution.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 px-3 py-3"
+                >
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Badge
+                      label={formatLabel(execution.status)}
+                      color={executionStatusTone(execution.status)}
+                      dot
+                    />
+                    <span className="text-sm text-slate-700">
+                      {formatDateTime(execution.started_at)}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {execution.browser} · {formatLabel(execution.trigger_type)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-500">
+                      {execution.duration_ms == null ? "—" : `${execution.duration_ms} ms`}
+                    </span>
+                    {onViewExecution && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onViewExecution(execution.id)}
+                      >
+                        View
+                      </Button>
+                    )}
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => void handleDeleteExecution(execution.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </PanelSection>
+      )}
+
+      <CaseScriptEditorModal
+        open={scriptEditorOpen}
+        testCaseId={testCase.id}
+        script={activeScript}
+        onClose={() => setScriptEditorOpen(false)}
+        onSaved={loadScripts}
+      />
     </>
   );
 }

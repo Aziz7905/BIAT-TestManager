@@ -72,7 +72,7 @@ class TestPlanDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         if not can_manage_test_design_for_project(self.request.user, instance.project):
-            raise PermissionDenied
+            raise PermissionDenied("You do not have permission to delete this test plan.")
         archive_test_plan(instance)
 
 
@@ -80,6 +80,7 @@ class TestPlanRunListView(generics.ListAPIView):
     """List all runs under a specific plan."""
     serializer_class = TestRunSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         return _run_queryset(self.request.user).filter(plan_id=self.kwargs["plan_pk"])
@@ -109,7 +110,7 @@ class TestRunDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         if not can_manage_test_design_for_project(self.request.user, instance.project):
-            raise PermissionDenied
+            raise PermissionDenied("You do not have permission to delete this test run.")
         instance.delete()
 
 
@@ -120,7 +121,7 @@ class TestRunStartView(APIView):
     def post(self, request, pk):
         run = generics.get_object_or_404(_run_queryset(request.user), pk=pk)
         if not can_manage_test_design_for_project(request.user, run.project):
-            raise PermissionDenied
+            raise PermissionDenied("You do not have permission to start this test run.")
         updated = start_test_run(run)
         return Response(TestRunSerializer(updated, context={"request": request}).data)
 
@@ -132,7 +133,7 @@ class TestRunCloseView(APIView):
     def post(self, request, pk):
         run = generics.get_object_or_404(_run_queryset(request.user), pk=pk)
         if not can_manage_test_design_for_project(request.user, run.project):
-            raise PermissionDenied
+            raise PermissionDenied("You do not have permission to close this test run.")
         updated = close_test_run(run)
         return Response(TestRunSerializer(updated, context={"request": request}).data)
 
@@ -144,7 +145,7 @@ class TestRunExpandView(APIView):
     def post(self, request, pk):
         run = generics.get_object_or_404(_run_queryset(request.user), pk=pk)
         if not can_manage_test_design_for_project(request.user, run.project):
-            raise PermissionDenied
+            raise PermissionDenied("You do not have permission to expand this test run.")
 
         serializer = TestRunExpandSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -162,6 +163,7 @@ class TestRunExpandView(APIView):
 class TestRunCaseListView(generics.ListAPIView):
     serializer_class = TestRunCaseSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         return _run_case_queryset(self.request.user).filter(run_id=self.kwargs["run_pk"])
@@ -173,3 +175,9 @@ class TestRunCaseDetailView(generics.RetrieveUpdateAPIView):
 
     def get_queryset(self):
         return _run_case_queryset(self.request.user)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if not can_manage_test_design_for_project(self.request.user, instance.run.project):
+            raise PermissionDenied("You do not have permission to update this run case.")
+        serializer.save()

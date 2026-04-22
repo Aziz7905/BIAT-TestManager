@@ -28,15 +28,31 @@ def _artifact_dir() -> Path:
     return Path(value)
 
 
-def _control_dir() -> Path:
-    return _artifact_dir() / "control"
-
-
 def _absolute_artifact_path(path: str) -> str:
     candidate = Path(path)
     if candidate.is_absolute():
         return str(candidate)
     return str((_artifact_dir() / candidate).resolve())
+
+
+def _get_redis_client():
+    import redis as redis_lib
+    url = os.environ.get("BIAT_REDIS_URL", "redis://localhost:6379/0")
+    return redis_lib.from_url(url, decode_responses=True)
+
+
+def _stop_key() -> str:
+    execution_id = os.environ.get("BIAT_EXECUTION_ID", "")
+    return f"biat:exec:{execution_id}:stop"
+
+
+def _checkpoint_resume_key(checkpoint_key: str) -> str:
+    execution_id = os.environ.get("BIAT_EXECUTION_ID", "")
+    return f"biat:exec:{execution_id}:ckpt:{checkpoint_key}"
+
+
+def report_session_started(*, session_id: str) -> None:
+    _emit_event("session_started", session_id=session_id)
 
 
 def report_step_started(
@@ -122,22 +138,23 @@ def require_human_action(
         payload=payload or {},
     )
 
-    control_directory = _control_dir()
-    resume_path = control_directory / f"checkpoint-{checkpoint_key}.resume.json"
-    stop_path = control_directory / "execution.stop"
+    stop_key = _stop_key()
+    resume_key = _checkpoint_resume_key(checkpoint_key)
+    client = _get_redis_client()
 
     while True:
-        if stop_path.exists():
-            raise SystemExit(130)
+        try:
+            if client.get(stop_key):
+                raise SystemExit(130)
 
-        if resume_path.exists():
-            try:
-                raw_payload = resume_path.read_text(encoding="utf-8").strip()
-                return json.loads(raw_payload) if raw_payload else {}
-            finally:
-                try:
-                    resume_path.unlink()
-                except FileNotFoundError:
-                    pass
+            raw_payload = client.getdel(resume_key)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                "Execution control channel is unavailable while waiting for checkpoint resume."
+            ) from exc
+        if raw_payload is not None:
+            return json.loads(raw_payload) if raw_payload else {}
 
         time.sleep(poll_interval_seconds)

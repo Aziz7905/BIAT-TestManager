@@ -27,10 +27,12 @@ from apps.automation.services.artifacts import (
     write_execution_text_artifact,
 )
 from apps.automation.services.checkpoints import create_pending_execution_checkpoint
-from apps.automation.services.control import get_execution_stop_signal_path
+from apps.automation.services.control import is_execution_stop_signaled
+from apps.automation.services.grid import cache_browser_session_urls
 from apps.automation.services.streaming import (
     publish_execution_artifact_created,
     publish_execution_step_updated,
+    publish_execution_status_changed,
 )
 from apps.testing.models.utils import normalize_step_lines
 
@@ -111,6 +113,20 @@ def run_python_automation_execution(
     if return_code == 0:
         if runtime_events_seen:
             finalize_runtime_steps(execution, success=True)
+            failed_step = (
+                execution.steps.filter(status=ExecutionStepStatus.FAILED)
+                .order_by("step_index")
+                .first()
+            )
+            if failed_step is not None:
+                return {
+                    "status": "failed",
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "error_message": failed_step.error_message or f"Step {failed_step.step_index} failed.",
+                    "stack_trace": failed_step.stack_trace or "",
+                    "artifacts": log_artifacts,
+                }
         else:
             execution_steps = ensure_execution_steps(execution)
             mark_all_steps_passed(execution_steps, started_at)
@@ -190,6 +206,15 @@ def build_execution_environment(execution) -> dict[str, str]:
     if execution.environment_id:
         env["BIAT_EXECUTION_ENVIRONMENT_ID"] = str(execution.environment_id)
         env["BIAT_EXECUTION_ENGINE"] = execution.environment.engine
+
+    grid_url = getattr(settings, "SELENIUM_GRID_HUB_URL", "")
+    if grid_url:
+        env["BIAT_SELENIUM_GRID_URL"] = grid_url
+        # Grid executions are streamed through VNC, so default to a visible browser.
+        # Execution environments can still override this with capabilities_json.headless.
+        env.setdefault("BIAT_HEADLESS", "0")
+
+    env["BIAT_REDIS_URL"] = getattr(settings, "REDIS_URL", "redis://localhost:6379/0")
 
     if execution.environment_id and execution.environment.capabilities_json:
         caps = execution.environment.capabilities_json
@@ -312,7 +337,6 @@ def _run_process_with_live_events(
     )
     line_queue: Queue[tuple[str, str | None]] = Queue()
     closed_streams: set[str] = set()
-    stop_signal_path = get_execution_stop_signal_path(execution)
     stop_requested = False
 
     stdout_thread = threading.Thread(
@@ -340,7 +364,7 @@ def _run_process_with_live_events(
                 runtime_events_seen=runtime_events_seen,
             )
 
-            if stop_signal_path.exists() and process.poll() is None:
+            if is_execution_stop_signaled(execution) and process.poll() is None:
                 stop_requested = True
                 process.terminate()
 
@@ -446,84 +470,103 @@ def _parse_runner_event(line: str) -> dict | None:
 
 
 def _handle_runner_event(execution, event: dict) -> None:
-    event_type = event.get("type")
-    if event_type == "step_started":
-        step = _upsert_execution_step(
-            execution,
-            step_index=event["step_index"],
-            defaults={
-                "action": event.get("action") or f"Step {event['step_index']}",
-                "target_element": event.get("target_element") or "",
-                "selector_used": event.get("selector_used") or None,
-                "input_value": event.get("input_value") or None,
-                "status": ExecutionStepStatus.RUNNING,
-                "executed_at": timezone.now(),
-                "error_message": None,
-                "stack_trace": None,
-            },
-        )
-        publish_execution_step_updated(step)
-        return
+    handlers = {
+        "session_started": _handle_session_started,
+        "step_started": _handle_step_started,
+        "step_passed": _handle_step_passed,
+        "step_failed": _handle_step_failed,
+        "artifact_created": _handle_artifact_created,
+        "checkpoint_requested": _handle_checkpoint_requested,
+    }
+    handler = handlers.get(event.get("type"))
+    if handler:
+        handler(execution, event)
 
-    if event_type == "step_passed":
-        screenshot_url = _coerce_artifact_url(execution, event.get("screenshot_path"))
-        step = _upsert_execution_step(
-            execution,
-            step_index=event["step_index"],
-            defaults={
-                "action": f"Step {event['step_index']}",
-                "target_element": "",
-                "status": ExecutionStepStatus.PASSED,
-                "duration_ms": event.get("duration_ms"),
-                "executed_at": timezone.now(),
-                "screenshot_url": screenshot_url,
-            },
-        )
-        publish_execution_step_updated(step)
-        return
 
-    if event_type == "step_failed":
-        screenshot_url = _coerce_artifact_url(execution, event.get("screenshot_path"))
-        step = _upsert_execution_step(
-            execution,
-            step_index=event["step_index"],
-            defaults={
-                "action": f"Step {event['step_index']}",
-                "target_element": "",
-                "status": ExecutionStepStatus.FAILED,
-                "duration_ms": event.get("duration_ms"),
-                "executed_at": timezone.now(),
-                "error_message": event.get("error_message") or "Execution step failed.",
-                "stack_trace": event.get("stack_trace") or "",
-                "screenshot_url": screenshot_url,
-            },
-        )
-        publish_execution_step_updated(step)
+def _handle_session_started(execution, event: dict) -> None:
+    session_id = event.get("session_id", "")
+    if not session_id:
         return
+    execution.selenium_session_id = session_id
+    execution.save(update_fields=["selenium_session_id"])
 
-    if event_type == "artifact_created":
-        artifact = TestArtifact.objects.create(
-            execution=execution,
-            artifact_type=event.get("artifact_type", ArtifactType.LOG),
-            storage_path=event.get("path", ""),
-            metadata_json=event.get("metadata") or {},
-        )
-        publish_execution_artifact_created(artifact)
-        return
+    cache_browser_session_urls(str(execution.id), session_id)
+    publish_execution_status_changed(execution)
 
-    if event_type == "checkpoint_requested":
-        step = None
-        step_index = event.get("step_index")
-        if step_index is not None:
-            step = execution.steps.filter(step_index=step_index).first()
-        create_pending_execution_checkpoint(
-            execution,
-            checkpoint_key=event.get("checkpoint_key") or f"checkpoint-{event.get('seq', 0)}",
-            title=event.get("title") or "Human action required",
-            instructions=event.get("instructions") or "",
-            payload_json=event.get("payload") or {},
-            step=step,
-        )
+
+def _handle_step_started(execution, event: dict) -> None:
+    step = _upsert_execution_step(
+        execution,
+        step_index=event["step_index"],
+        defaults={
+            "action": event.get("action") or f"Step {event['step_index']}",
+            "target_element": event.get("target_element") or "",
+            "selector_used": event.get("selector_used") or None,
+            "input_value": event.get("input_value") or None,
+            "status": ExecutionStepStatus.RUNNING,
+            "executed_at": timezone.now(),
+            "error_message": None,
+            "stack_trace": None,
+        },
+    )
+    publish_execution_step_updated(step)
+
+
+def _handle_step_passed(execution, event: dict) -> None:
+    screenshot_url = _coerce_artifact_url(execution, event.get("screenshot_path"))
+    step = _upsert_execution_step(
+        execution,
+        step_index=event["step_index"],
+        defaults={
+            "status": ExecutionStepStatus.PASSED,
+            "duration_ms": event.get("duration_ms"),
+            "executed_at": timezone.now(),
+            "screenshot_url": screenshot_url,
+        },
+    )
+    publish_execution_step_updated(step)
+
+
+def _handle_step_failed(execution, event: dict) -> None:
+    screenshot_url = _coerce_artifact_url(execution, event.get("screenshot_path"))
+    step = _upsert_execution_step(
+        execution,
+        step_index=event["step_index"],
+        defaults={
+            "status": ExecutionStepStatus.FAILED,
+            "duration_ms": event.get("duration_ms"),
+            "executed_at": timezone.now(),
+            "error_message": event.get("error_message") or "Execution step failed.",
+            "stack_trace": event.get("stack_trace") or "",
+            "screenshot_url": screenshot_url,
+        },
+    )
+    publish_execution_step_updated(step)
+
+
+def _handle_artifact_created(execution, event: dict) -> None:
+    artifact = TestArtifact.objects.create(
+        execution=execution,
+        artifact_type=event.get("artifact_type", ArtifactType.LOG),
+        storage_path=event.get("path", ""),
+        metadata_json=event.get("metadata") or {},
+    )
+    publish_execution_artifact_created(artifact)
+
+
+def _handle_checkpoint_requested(execution, event: dict) -> None:
+    step = None
+    step_index = event.get("step_index")
+    if step_index is not None:
+        step = execution.steps.filter(step_index=step_index).first()
+    create_pending_execution_checkpoint(
+        execution,
+        checkpoint_key=event.get("checkpoint_key") or f"checkpoint-{event.get('seq', 0)}",
+        title=event.get("title") or "Human action required",
+        instructions=event.get("instructions") or "",
+        payload_json=event.get("payload") or {},
+        step=step,
+    )
 
 
 def _upsert_execution_step(execution, *, step_index: int, defaults: dict):

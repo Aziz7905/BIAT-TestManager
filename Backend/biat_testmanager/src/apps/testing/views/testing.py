@@ -27,10 +27,6 @@ from apps.testing.services import (
     can_manage_test_scenario_record,
     can_manage_test_section_record,
     can_manage_test_suite_record,
-    can_view_test_case_record,
-    can_view_test_scenario_record,
-    can_view_test_section_record,
-    can_view_test_suite_record,
     clone_test_case,
     clone_test_scenario,
     get_repository_case_summary_queryset,
@@ -97,6 +93,7 @@ class TestSuiteDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class TestSectionListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_suite(self):
         return get_object_or_404(
@@ -161,6 +158,7 @@ class TestSectionDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class TestScenarioListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_suite(self):
         return get_object_or_404(
@@ -225,6 +223,7 @@ class TestScenarioDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class TestSectionScenarioListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_section(self):
         return get_object_or_404(
@@ -433,6 +432,7 @@ class TestCaseCloneView(APIView):
 class TestCaseRevisionListView(generics.ListAPIView):
     serializer_class = TestCaseRevisionSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_case(self):
         return get_object_or_404(

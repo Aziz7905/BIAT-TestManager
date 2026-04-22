@@ -63,6 +63,17 @@ export function resultTone(status: string | null | undefined): BadgeTone {
   return "slate";
 }
 
+export function executionStatusTone(status: string | null | undefined): BadgeTone {
+  if (status === "passed") return "green";
+  if (status === "failed") return "red";
+  if (status === "error") return "orange";
+  if (status === "running") return "blue";
+  if (status === "paused") return "yellow";
+  if (status === "queued") return "slate";
+  if (status === "cancelled") return "slate";
+  return "slate";
+}
+
 export function priorityTone(priority: string): BadgeTone {
   if (priority === "critical") return "red";
   if (priority === "high") return "orange";

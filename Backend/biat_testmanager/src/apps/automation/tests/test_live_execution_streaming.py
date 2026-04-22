@@ -38,6 +38,7 @@ from apps.automation.services import (
     request_execution_stop,
     run_execution,
 )
+from apps.automation.services.control import ExecutionControlUnavailable
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.testing.models import TestCase as QaTestCase
 from apps.testing.models import TestScenario, TestSection, TestSuite
@@ -126,6 +127,7 @@ class StreamTicketApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("ticket", response.data)
         self.assertIn(str(self.execution.id), response.data["websocket_path"])
+        self.assertIn(str(self.execution.id), response.data["browser_websocket_path"])
         self.assertEqual(response.data["expires_in"], 120)
 
     def test_hidden_execution_cannot_get_stream_ticket(self):
@@ -143,6 +145,31 @@ class StreamTicketApiTests(APITestCase):
             reverse("test-execution-stream-ticket", kwargs={"pk": hidden_execution.id})
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_checkpoint_resume_returns_503_when_control_channel_is_down(self):
+        checkpoint = ExecutionCheckpoint.objects.create(
+            execution=self.execution,
+            checkpoint_key="mfa",
+            title="Approve MFA",
+            instructions="Approve the browser prompt.",
+            status=ExecutionCheckpointStatus.PENDING,
+        )
+
+        with mock.patch(
+            "apps.automation.services.checkpoints.write_checkpoint_resume_signal",
+            side_effect=ExecutionControlUnavailable("down"),
+        ):
+            response = self.client.post(
+                reverse(
+                    "execution-checkpoint-resume",
+                    kwargs={
+                        "execution_pk": self.execution.id,
+                        "checkpoint_pk": checkpoint.id,
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 @override_settings(

@@ -13,6 +13,7 @@ from apps.automation.models import AutomationScript, TestExecution, TestResult
 from apps.automation.models.choices import (
     AutomationFramework,
     AutomationLanguage,
+    ExecutionTriggerType,
     TestResultStatus,
 )
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
@@ -157,6 +158,31 @@ class RepositoryWorkspaceServiceTests(TestCase):
         self.assertEqual(payload["automation"]["latest_execution"]["status"], TestResultStatus.PASSED)
         self.assertEqual(payload["history"]["version_history"][0]["version_number"], 1)
         self.assertEqual(payload["history"]["recent_results"][0]["status"], TestResultStatus.PASSED)
+
+    def test_case_workspace_service_excludes_diagnostic_results(self):
+        diagnostic_execution = TestExecution.objects.create(
+            test_case=self.test_case,
+            script=self.script,
+            triggered_by=self.owner,
+            status=TestResultStatus.FAILED,
+            trigger_type=ExecutionTriggerType.DIAGNOSTIC,
+        )
+        TestResult.objects.create(
+            execution=diagnostic_execution,
+            status=TestResultStatus.FAILED,
+            duration_ms=10,
+            total_steps=1,
+            passed_steps=0,
+            failed_steps=1,
+        )
+
+        payload = build_test_case_workspace(self.test_case)
+
+        self.assertEqual(payload["automation"]["latest_execution"]["id"], self.execution.id)
+        self.assertEqual(
+            [result["execution_id"] for result in payload["history"]["recent_results"]],
+            [self.execution.id],
+        )
 
     def test_clone_test_case_copies_design_and_resets_revision_history(self):
         cloned_case = clone_test_case(self.test_case, created_by=self.owner)

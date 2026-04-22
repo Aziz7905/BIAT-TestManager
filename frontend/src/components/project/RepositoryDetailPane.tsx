@@ -35,6 +35,7 @@ interface RepositoryDetailPaneProps {
   onSelect?: (selection: TreeSelection) => void;
   onClearSelection?: () => void;
   onEditCase?: (caseId: string) => void;
+  onViewExecution?: (executionId: string) => void;
   onScenarioSaved?: () => void;
 }
 
@@ -45,6 +46,7 @@ export default function RepositoryDetailPane({
   onSelect,
   onClearSelection,
   onEditCase,
+  onViewExecution,
   onScenarioSaved,
 }: RepositoryDetailPaneProps) {
   const [detail, setDetail] = useState<RepositoryDetailState | null>(null);
@@ -133,7 +135,13 @@ export default function RepositoryDetailPane({
           onScenarioSaved={onScenarioSaved}
         />
       )}
-      {detail.kind === "case" && <CaseWorkspacePanel testCase={detail.data} onEditCase={onEditCase} />}
+      {detail.kind === "case" && (
+        <CaseWorkspacePanel
+          testCase={detail.data}
+          onEditCase={onEditCase}
+          onViewExecution={onViewExecution}
+        />
+      )}
     </div>
   );
 }

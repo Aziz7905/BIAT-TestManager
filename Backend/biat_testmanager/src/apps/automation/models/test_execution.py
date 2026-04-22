@@ -73,6 +73,7 @@ class TestExecution(models.Model):
     started_at = models.DateTimeField(null=True, blank=True, db_index=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
+    selenium_session_id = models.CharField(max_length=255, null=True, blank=True)
     pause_requested = models.BooleanField(default=False)
 
     class Meta:

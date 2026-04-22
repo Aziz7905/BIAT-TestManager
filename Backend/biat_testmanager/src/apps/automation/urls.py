@@ -12,6 +12,7 @@ from apps.automation.views import (
     ExecutionScheduleTriggerView,
     ExecutionStepDetailView,
     ExecutionStepListView,
+    ManualBrowserExecutionCreateView,
     TestExecutionDetailView,
     TestExecutionListCreateView,
     TestExecutionPauseView,
@@ -52,6 +53,11 @@ urlpatterns = [
         "test-executions/",
         TestExecutionListCreateView.as_view(),
         name="test-execution-list-create",
+    ),
+    path(
+        "test-executions/manual-browser/",
+        ManualBrowserExecutionCreateView.as_view(),
+        name="manual-browser-execution-create",
     ),
     path(
         "test-executions/<uuid:pk>/",

@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  selenium-hub:
+    image: selenium/hub:4.20.0
+    container_name: biat-selenium-hub
+    ports:
+      - "4444:4444"
+      - "4442:4442"
+      - "4443:4443"
+
+  chrome-node-1:
+    image: selenium/node-chrome:4.20.0
+    container_name: biat-chrome-1
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_OVERRIDE_MAX_SESSIONS=true
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_SCREEN_DPI=96
+    ports:
+      - "7900:7900"
+    shm_size: "2gb"
+
+  chrome-node-2:
+    image: selenium/node-chrome:4.20.0
+    container_name: biat-chrome-2
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_OVERRIDE_MAX_SESSIONS=true
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_SCREEN_DPI=96
+    ports:
+      - "7901:7900"
+    shm_size: "2gb"
+
+  chrome-node-3:
+    image: selenium/node-chrome:4.20.0
+    container_name: biat-chrome-3
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_OVERRIDE_MAX_SESSIONS=true
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_SCREEN_DPI=96
+    ports:
+      - "7902:7900"
+    shm_size: "2gb"

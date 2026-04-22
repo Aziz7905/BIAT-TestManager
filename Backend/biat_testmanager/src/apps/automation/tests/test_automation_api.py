@@ -11,6 +11,7 @@ from rest_framework.test import APITestCase
 from apps.accounts.models import Organization, Team, TeamMembership, UserProfile
 from apps.accounts.models.choices import OrganizationRole, TeamMembershipRole
 from apps.automation.models import AutomationScript, ExecutionSchedule, TestExecution
+from apps.automation.models.choices import ExecutionTriggerType
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
 from apps.testing.models import TestCase as QaTestCase
 from apps.testing.models import TestScenario, TestSection, TestSuite
@@ -191,6 +192,43 @@ class AutomationApiTests(APITestCase):
         )
         self.assertEqual(filtered_response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(filtered_response.data["results"]), 1)
+
+    def test_execution_list_excludes_diagnostic_by_default(self):
+        normal = TestExecution.objects.create(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            status="passed",
+            browser="chromium",
+            platform="desktop",
+        )
+        diagnostic = TestExecution.objects.create(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            status="passed",
+            trigger_type=ExecutionTriggerType.DIAGNOSTIC,
+            browser="chromium",
+            platform="desktop",
+        )
+
+        response = self.client.get(
+            reverse("test-execution-list-create"),
+            {"project": str(self.project.id)},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        execution_ids = {item["id"] for item in response.data["results"]}
+        self.assertIn(str(normal.id), execution_ids)
+        self.assertNotIn(str(diagnostic.id), execution_ids)
+
+        diagnostic_response = self.client.get(
+            reverse("test-execution-list-create"),
+            {
+                "project": str(self.project.id),
+                "trigger_type": ExecutionTriggerType.DIAGNOSTIC,
+            },
+        )
+        self.assertEqual(diagnostic_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(diagnostic_response.data["results"][0]["id"], str(diagnostic.id))
 
     def test_create_selenium_execution_runs_and_returns_result_payload(self):
         script = AutomationScript.objects.create(

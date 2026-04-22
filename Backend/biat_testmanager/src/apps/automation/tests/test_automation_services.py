@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from unittest import mock
+
+import redis as redis_lib
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
@@ -20,6 +23,7 @@ from apps.automation.services.execution_runner import (
     create_execution_record,
     select_execution_script,
 )
+from apps.automation.services.control import is_execution_stop_signaled
 from apps.automation.services.results import finalize_execution_result
 from apps.automation.services.scheduling import compute_next_run_for_schedule
 from apps.automation.services.script_validation import validate_script_content
@@ -223,3 +227,18 @@ class AutomationServiceTests(TestCase):
         )
 
         self.assertEqual(execution.script_id, script.id)
+
+    def test_stop_signal_check_survives_redis_failure(self):
+        execution = TestExecution.objects.create(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            status=ExecutionStatus.RUNNING,
+            browser="chromium",
+            platform="desktop",
+        )
+
+        with mock.patch(
+            "apps.automation.services.control.redis_lib.from_url",
+            side_effect=redis_lib.RedisError("down"),
+        ):
+            self.assertFalse(is_execution_stop_signaled(execution))

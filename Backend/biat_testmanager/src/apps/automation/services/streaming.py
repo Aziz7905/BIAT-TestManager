@@ -33,10 +33,32 @@ def issue_execution_stream_ticket(execution, user) -> dict:
     }
     ticket = signing.dumps(payload, salt=EXECUTION_STREAM_TICKET_SALT)
     query = urlencode({"ticket": ticket})
+    browser_websocket_path = f"/ws/executions/{execution.id}/browser-stream/?{query}"
+    browser_view_urls = []
+    if execution.selenium_session_id:
+        try:
+            from apps.automation.services.grid import (
+                get_browser_view_urls_for_session,
+                get_session_vnc_websocket_url,
+            )
+
+            browser_websocket_path = (
+                get_session_vnc_websocket_url(execution.selenium_session_id)
+                or browser_websocket_path
+            )
+            browser_view_urls = get_browser_view_urls_for_session(
+                execution.selenium_session_id
+            )
+        except Exception:
+            pass
+
     return {
         "ticket": ticket,
         "expires_in": EXECUTION_STREAM_TICKET_TTL_SECONDS,
         "websocket_path": f"/ws/executions/{execution.id}/?{query}",
+        "browser_websocket_path": browser_websocket_path,
+        "browser_view_url": browser_view_urls[0] if browser_view_urls else "",
+        "browser_view_urls": browser_view_urls,
     }
 
 

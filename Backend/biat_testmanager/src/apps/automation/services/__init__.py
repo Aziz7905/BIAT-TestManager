@@ -33,6 +33,7 @@ from .checkpoints import (
     resume_execution_checkpoint,
 )
 from .control import write_execution_stop_signal
+from .manual_browser import create_and_queue_manual_browser_execution
 from .results import finalize_execution_result
 from .scheduling import compute_next_run_for_schedule, trigger_execution_schedule
 from .script_validation import validate_script_content
@@ -63,6 +64,7 @@ __all__ = [
     "create_pending_execution_checkpoint",
     "create_and_queue_execution",
     "create_execution_record",
+    "create_and_queue_manual_browser_execution",
     "deactivate_script",
     "expire_stale_execution_checkpoints",
     "finalize_execution_result",

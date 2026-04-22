@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'daphne',
     'django.contrib.staticfiles',
     'django.contrib.postgres',
     #third party apps
@@ -261,6 +262,7 @@ CHANNEL_REDIS_URL = config(
     "CHANNEL_REDIS_URL",
     default=CELERY_BROKER_URL,
 )
+REDIS_URL = config("REDIS_URL", default=CELERY_BROKER_URL)
 RUNNING_TESTS = "test" in sys.argv
 if RUNNING_TESTS:
     CHANNEL_LAYERS = {
@@ -323,4 +325,5 @@ AUTOMATION_SELENIUM_WORKDIR = config(
     "AUTOMATION_SELENIUM_WORKDIR",
     default=AUTOMATION_PLAYWRIGHT_WORKDIR,
 )
+SELENIUM_GRID_HUB_URL = config("SELENIUM_GRID_HUB_URL", default="")
 
