@@ -132,7 +132,6 @@ class SpecificationSerializer(serializers.ModelSerializer):
     source_record_id = serializers.SerializerMethodField()
     chunk_count = serializers.IntegerField(read_only=True)
     can_manage = serializers.SerializerMethodField()
-    qtest_preview = serializers.SerializerMethodField()
     chunks = SpecChunkSerializer(many=True, read_only=True)
     linked_test_case_count = serializers.SerializerMethodField()
     linked_scenario_count = serializers.SerializerMethodField()
@@ -168,7 +167,6 @@ class SpecificationSerializer(serializers.ModelSerializer):
             "uploaded_by_name",
             "chunk_count",
             "can_manage",
-            "qtest_preview",
             "chunks",
             "linked_test_case_count",
             "linked_scenario_count",
@@ -190,7 +188,6 @@ class SpecificationSerializer(serializers.ModelSerializer):
             "source_metadata",
             "chunk_count",
             "can_manage",
-            "qtest_preview",
             "chunks",
             "linked_test_case_count",
             "linked_scenario_count",
@@ -219,17 +216,6 @@ class SpecificationSerializer(serializers.ModelSerializer):
         if not request:
             return False
         return can_manage_specification_record(request.user, obj)
-
-    def _get_structured_record_fields(self, obj) -> dict[str, str]:
-        record_metadata = obj.source_metadata.get("record", {}) if obj.source_metadata else {}
-        structured_fields = record_metadata.get("structured_fields", {})
-        if isinstance(structured_fields, dict):
-            return {
-                str(key): str(value)
-                for key, value in structured_fields.items()
-                if value not in (None, "")
-            }
-        return {}
 
     def _get_linked_test_case_queryset(self, obj):
         prefetched_cases = getattr(obj, "_prefetched_objects_cache", {}).get("linked_test_cases")
@@ -271,43 +257,6 @@ class SpecificationSerializer(serializers.ModelSerializer):
         if self.get_linked_test_case_count(obj) > 0:
             return "covered"
         return "uncovered"
-
-    def get_qtest_preview(self, obj):
-        try:
-            record = obj.source_record
-        except SpecificationSourceRecord.DoesNotExist:
-            record = None
-        structured_fields = self._get_structured_record_fields(obj)
-        description = structured_fields.get("description") or obj.content
-        if structured_fields.get("actor"):
-            description = f"{description}\nActeur: {structured_fields['actor']}"
-        if structured_fields.get("steps"):
-            description = f"{description}\nEtapes: {structured_fields['steps']}"
-        if structured_fields.get("acceptance_criteria"):
-            description = (
-                f"{description}\nCriteres d'acceptation: "
-                f"{structured_fields['acceptance_criteria']}"
-            )
-        return {
-            "module": structured_fields.get("module")
-            or getattr(record, "section_label", "")
-            or obj.project.name,
-            "requirement_id": obj.external_reference
-            or getattr(record, "external_reference", "")
-            or structured_fields.get("reference", "")
-            or obj.jira_issue_key
-            or "",
-            "summary": structured_fields.get("title") or obj.title,
-            "description": description,
-            "section": structured_fields.get("section")
-            or getattr(record, "section_label", "")
-            or obj.project.team.name,
-            "preconditions": structured_fields.get("preconditions", ""),
-            "expected_result": structured_fields.get(
-                "expected_result",
-                "To be generated during the test design layer.",
-            ),
-        }
 
     def validate(self, attrs):
         request = self.context["request"]

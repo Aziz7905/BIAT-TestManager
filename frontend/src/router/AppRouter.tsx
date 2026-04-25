@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import ProtectedRoute from "./ProtectedRoute";
 import LoginPage from "../pages/LoginPage";
+import AutomationLivePage from "../pages/AutomationLivePage";
 import ProjectsPage from "../pages/ProjectsPage";
 import ProjectWorkspacePage from "../pages/ProjectWorkspacePage";
 import ProfilePage from "../pages/ProfilePage";
@@ -42,6 +43,10 @@ export default function AppRouter() {
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectWorkspacePage />} />
+          <Route
+            path="/projects/:id/automation/executions/:executionId/live"
+            element={<AutomationLivePage />}
+          />
           <Route path="/profile" element={<ProfilePage />} />
           <Route
             path="/admin/users"

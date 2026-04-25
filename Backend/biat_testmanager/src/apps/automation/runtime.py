@@ -51,8 +51,112 @@ def _checkpoint_resume_key(checkpoint_key: str) -> str:
     return f"biat:exec:{execution_id}:ckpt:{checkpoint_key}"
 
 
+def create_driver(*, browser: str = "chrome", headless: bool | None = None):
+    """
+    Create a Selenium RemoteWebDriver ready for BIAT execution.
+
+    Reads BIAT_SELENIUM_GRID_URL (injected by the runner) for the Grid endpoint
+    and BIAT_HEADLESS for headless mode. Maximizes the window and automatically
+    calls report_session_started() so you don't have to.
+
+    Usage in your script::
+
+        from biat import runtime as biat
+        driver = biat.create_driver()
+        # test steps
+        driver.quit()
+    """
+    from selenium import webdriver as _webdriver
+
+    grid_url = os.environ.get("BIAT_SELENIUM_GRID_URL", "")
+    if not grid_url:
+        raise RuntimeError(
+            "BIAT_SELENIUM_GRID_URL is not set. "
+            "Ensure SELENIUM_GRID_HUB_URL is configured in your .env."
+        )
+
+    if headless is None:
+        headless = os.environ.get("BIAT_HEADLESS", "0") == "1"
+
+    if browser == "firefox":
+        from selenium.webdriver.firefox.options import Options
+        options = Options()
+        if headless:
+            options.add_argument("--headless")
+    else:
+        from selenium.webdriver.chrome.options import Options
+        options = Options()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-session-crashed-bubble")
+        options.add_argument("--disable-features=Translate,InfiniteSessionRestore")
+        options.add_argument(f"--user-data-dir=/tmp/biat-runtime-{uuid.uuid4().hex}")
+        options.add_argument("--window-position=0,0")
+        options.add_argument("--force-device-scale-factor=1")
+        if headless:
+            options.add_argument("--headless=new")
+        else:
+            options.add_argument("--start-maximized")
+
+    viewport_w = os.environ.get("BIAT_VIEWPORT_WIDTH")
+    viewport_h = os.environ.get("BIAT_VIEWPORT_HEIGHT")
+    if viewport_w and viewport_h:
+        options.add_argument(f"--window-size={viewport_w},{viewport_h}")
+
+    driver = _webdriver.Remote(command_executor=grid_url, options=options)
+
+    if not headless:
+        try:
+            driver.maximize_window()
+        except Exception:
+            pass
+        if viewport_w and viewport_h:
+            try:
+                driver.set_window_rect(
+                    x=0,
+                    y=0,
+                    width=int(viewport_w),
+                    height=int(viewport_h),
+                )
+            except Exception:
+                try:
+                    driver.set_window_size(int(viewport_w), int(viewport_h))
+                except Exception:
+                    pass
+        _reset_browser_tabs(driver)
+
+    report_session_started(session_id=driver.session_id)
+    return driver
+
+
+def _reset_browser_tabs(driver) -> None:
+    try:
+        handles = list(driver.window_handles)
+        if not handles:
+            return
+        driver.switch_to.window(handles[0])
+        for handle in handles[1:]:
+            try:
+                driver.switch_to.window(handle)
+                driver.close()
+            except Exception:
+                continue
+        driver.switch_to.window(handles[0])
+        driver.get("about:blank")
+    except Exception:
+        pass
+
+
 def report_session_started(*, session_id: str) -> None:
-    _emit_event("session_started", session_id=session_id)
+    payload = {"session_id": session_id}
+    viewport_w = os.environ.get("BIAT_VIEWPORT_WIDTH")
+    viewport_h = os.environ.get("BIAT_VIEWPORT_HEIGHT")
+    if viewport_w and viewport_h:
+        payload["viewport_width"] = viewport_w
+        payload["viewport_height"] = viewport_h
+    _emit_event("session_started", **payload)
 
 
 def report_step_started(

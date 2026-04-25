@@ -101,6 +101,58 @@ def cache_browser_session_urls(execution_id: str, session_id: str) -> str | None
     return browser_ws_url
 
 
+def resize_browser_window(
+    session_id: str,
+    *,
+    width: int = 1920,
+    height: int = 1080,
+) -> bool:
+    hub_url = getattr(settings, "SELENIUM_GRID_HUB_URL", "").rstrip("/")
+    if not hub_url or not session_id:
+        return False
+
+    root_url = _grid_root_url(hub_url)
+    endpoints = [
+        (f"{root_url}/session/{session_id}/window/maximize", {}),
+        (f"{hub_url}/session/{session_id}/window/maximize", {}),
+        (
+            f"{root_url}/session/{session_id}/window/rect",
+            {"x": 0, "y": 0, "width": int(width), "height": int(height)},
+        ),
+        (
+            f"{hub_url}/session/{session_id}/window/rect",
+            {"x": 0, "y": 0, "width": int(width), "height": int(height)},
+        ),
+        (
+            f"{root_url}/session/{session_id}/window/current/position",
+            {"x": 0, "y": 0},
+        ),
+        (
+            f"{root_url}/session/{session_id}/window/current/size",
+            {"width": int(width), "height": int(height)},
+        ),
+        (f"{root_url}/session/{session_id}/window/maximize", {}),
+    ]
+
+    changed = False
+    for attempt in range(3):
+        for url, payload in endpoints:
+            try:
+                response = requests.post(url, json=payload, timeout=5)
+                changed = changed or response.status_code < 400
+            except Exception:
+                continue
+        if changed:
+            return True
+        if attempt < 2:
+            time.sleep(0.25)
+    return changed
+
+
+def _grid_root_url(hub_url: str) -> str:
+    return hub_url.removesuffix("/wd/hub").rstrip("/")
+
+
 def get_browser_view_urls_for_session(session_id: str) -> list[str]:
     urls: list[str] = []
     resolved_vnc_url = get_node_vnc_url_for_session(session_id)

@@ -1,6 +1,8 @@
 import apiClient from "./client";
 import type { PaginatedResponse } from "../types/common";
 import type {
+  CreateTestPlanPayload,
+  CreateTestRunPayload,
   ExpandRunPayload,
   TestPlan,
   TestRun,
@@ -27,6 +29,11 @@ export async function getTestPlans(projectId: string, page = 1): Promise<Paginat
   return normalizePage<TestPlan>(data);
 }
 
+export async function createTestPlan(payload: CreateTestPlanPayload): Promise<TestPlan> {
+  const { data } = await apiClient.post("/test-plans/", payload);
+  return data;
+}
+
 export async function getTestRuns(filters: {
   project?: string;
   plan?: string;
@@ -34,6 +41,11 @@ export async function getTestRuns(filters: {
 }): Promise<PaginatedResponse<TestRun>> {
   const { data } = await apiClient.get("/test-runs/", { params: filters });
   return normalizePage<TestRun>(data);
+}
+
+export async function createTestRun(payload: CreateTestRunPayload): Promise<TestRun> {
+  const { data } = await apiClient.post("/test-runs/", payload);
+  return data;
 }
 
 export async function getPlanRuns(planId: string): Promise<TestRun[]> {
@@ -66,5 +78,13 @@ export async function updateRunCaseStatus(
   status: TestRunCaseStatus
 ): Promise<TestRunCase> {
   const { data } = await apiClient.patch(`/test-run-cases/${runCaseId}/`, { status });
+  return data;
+}
+
+export async function executeRunCase(
+  runCaseId: string,
+  options: { browser?: string; platform?: string } = {}
+): Promise<TestRunCase> {
+  const { data } = await apiClient.post(`/test-run-cases/${runCaseId}/execute/`, options);
   return data;
 }

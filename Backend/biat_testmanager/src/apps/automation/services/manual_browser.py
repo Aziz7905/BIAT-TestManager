@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import time
 import traceback
+import uuid
 
 from django.conf import settings
 from django.db.models import Max
@@ -16,7 +18,7 @@ from apps.automation.models.choices import (
     ExecutionTriggerType,
 )
 from apps.automation.services.control import is_execution_stop_signaled
-from apps.automation.services.grid import cache_browser_session_urls
+from apps.automation.services.grid import cache_browser_session_urls, resize_browser_window
 from apps.automation.services.results import finalize_execution_result
 from apps.automation.services.streaming import (
     publish_execution_status_changed,
@@ -107,11 +109,17 @@ def run_manual_browser_session(execution_id: str, *, target_url: str = ""):
         driver = _build_driver(execution.browser)
         execution.selenium_session_id = driver.session_id
         execution.save(update_fields=["selenium_session_id"])
-        cache_browser_session_urls(str(execution.id), driver.session_id)
-        publish_execution_status_changed(execution)
-
         if target_url:
             driver.get(target_url)
+        else:
+            driver.get("about:blank")
+        resize_browser_window(
+            driver.session_id,
+            width=int(os.environ.get("BIAT_VIEWPORT_WIDTH", "1920")),
+            height=int(os.environ.get("BIAT_VIEWPORT_HEIGHT", "1080")),
+        )
+        cache_browser_session_urls(str(execution.id), driver.session_id)
+        publish_execution_status_changed(execution)
 
         timeout_seconds = int(
             getattr(settings, "MANUAL_BROWSER_SESSION_TIMEOUT_SECONDS", 1800)
@@ -180,5 +188,48 @@ def _build_driver(browser: str):
     options = ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1280,900")
-    return webdriver.Remote(command_executor=grid_url, options=options)
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-session-crashed-bubble")
+    options.add_argument("--disable-features=Translate,InfiniteSessionRestore")
+    viewport_width = int(os.environ.get("BIAT_VIEWPORT_WIDTH", "1920"))
+    viewport_height = int(os.environ.get("BIAT_VIEWPORT_HEIGHT", "1080"))
+    options.add_argument("--window-position=0,0")
+    options.add_argument("--force-device-scale-factor=1")
+    options.add_argument(f"--window-size={viewport_width},{viewport_height}")
+    options.add_argument("--start-maximized")
+    options.add_argument(f"--user-data-dir=/tmp/biat-manual-{uuid.uuid4().hex}")
+    driver = webdriver.Remote(command_executor=grid_url, options=options)
+    try:
+        driver.maximize_window()
+        driver.set_window_rect(
+            x=0,
+            y=0,
+            width=viewport_width,
+            height=viewport_height,
+        )
+    except Exception:
+        try:
+            driver.set_window_size(viewport_width, viewport_height)
+        except Exception:
+            pass
+    _reset_browser_tabs(driver)
+    return driver
+
+
+def _reset_browser_tabs(driver) -> None:
+    try:
+        handles = list(driver.window_handles)
+        if not handles:
+            return
+        driver.switch_to.window(handles[0])
+        for handle in handles[1:]:
+            try:
+                driver.switch_to.window(handle)
+                driver.close()
+            except Exception:
+                continue
+        driver.switch_to.window(handles[0])
+        driver.get("about:blank")
+    except Exception:
+        pass

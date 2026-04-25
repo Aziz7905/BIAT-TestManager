@@ -4,7 +4,7 @@ import io
 from .base import (
     ParsedSourceResult,
     SpecificationSourceParseError,
-    build_record_from_row,
+    build_records_from_tabular_rows,
 )
 
 
@@ -21,23 +21,15 @@ class CSVSpecificationSourceParser:
         finally:
             source.file.seek(0)
 
-        reader = csv.DictReader(io.StringIO(decoded))
-        if not reader.fieldnames:
-            raise SpecificationSourceParseError("The CSV file does not contain headers.")
+        reader = csv.reader(io.StringIO(decoded))
+        raw_rows = [row for row in reader]
+        if not raw_rows:
+            raise SpecificationSourceParseError("The CSV file is empty.")
 
-        records = []
-        languages: set[str] = set()
-        for index, row in enumerate(reader):
-            if not any(str(value).strip() for value in row.values() if value is not None):
-                continue
-
-            record = build_record_from_row(
-                row,
-                fallback_title=f"{source.name} row {index + 1}",
-                row_number=index + 2,
-            )
-            languages.add(record.record_metadata.get("language", "unknown"))
-            records.append(record)
+        records, languages, headers, header_row_number = build_records_from_tabular_rows(
+            raw_rows,
+            fallback_title_prefix=source.name,
+        )
 
         return ParsedSourceResult(
             records=records,
@@ -45,9 +37,10 @@ class CSVSpecificationSourceParser:
                 "filename": source.file.name.split("/")[-1],
                 "format": "csv",
                 "languages": sorted(language for language in languages if language),
-                "parser_strategy": "structured_tabular_v1",
+                "parser_strategy": "heuristic_tabular_v2",
+                "header_row": header_row_number,
             },
             column_mapping={
-                "columns": [field for field in reader.fieldnames if field],
+                "columns": headers,
             },
         )

@@ -196,6 +196,14 @@ PREFERRED_CONTENT_ORDER = [
     "url",
 ]
 
+HEADER_SIGNAL_KEYS = {
+    alias
+    for aliases in STRUCTURED_FIELD_ALIASES.values()
+    for alias in aliases
+}
+
+GENERIC_REFERENCE_RE = re.compile(r"\b[A-Z][A-Z0-9]+(?:[._/\-][A-Z0-9]+){1,}\b")
+
 FRENCH_FIELD_KEYS = {
     "titre",
     "nom",
@@ -313,11 +321,33 @@ def build_title_from_analysis(analysis: dict, fallback: str) -> str:
         if structured_fields.get("reference") and title == structured_fields["reference"]:
             return fallback
         return title[:300]
+    first_other_value = next(
+        (
+            item["value"]
+            for item in analysis["other_fields"]
+            if item["value"]
+        ),
+        "",
+    )
+    if first_other_value:
+        return first_other_value[:300]
     return fallback
 
 
 def build_reference_from_analysis(analysis: dict) -> str:
-    return analysis["structured_fields"].get("reference", "")
+    reference = analysis["structured_fields"].get("reference", "")
+    if reference:
+        return reference
+
+    for candidate in [
+        analysis["structured_fields"].get("title", ""),
+        analysis["structured_fields"].get("description", ""),
+        *[item["value"] for item in analysis["other_fields"]],
+    ]:
+        match = GENERIC_REFERENCE_RE.search(candidate or "")
+        if match:
+            return match.group(0)
+    return ""
 
 
 def row_to_content(row: dict, ignore_keys: list[str] | None = None) -> str:
@@ -340,7 +370,10 @@ def row_to_content(row: dict, ignore_keys: list[str] | None = None) -> str:
         normalized_key = slugify_label(item["key"])
         if normalized_key in ignored:
             continue
-        lines.append(f"{item['key']}: {item['value']}")
+        if normalized_key.startswith("column_"):
+            lines.append(item["value"])
+        else:
+            lines.append(f"{item['key']}: {item['value']}")
 
     return "\n".join(lines)
 
@@ -354,9 +387,11 @@ def build_record_from_row(
 ) -> ParsedSourceRecord:
     analysis = analyze_row_structure(row)
     structured_fields = analysis["structured_fields"]
+    title_value = structured_fields.get("title", "")
+    module_value = structured_fields.get("module", "")
     section_label = (
         structured_fields.get("section")
-        or structured_fields.get("module")
+        or (module_value if module_value and module_value != title_value else "")
         or default_section_label
     )
 
@@ -401,3 +436,192 @@ def split_text_into_records(
             )
         )
     return records
+
+
+def _looks_numeric_like(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized:
+        return False
+    candidate = normalized.replace(",", "").replace(".", "").replace("-", "").replace("/", "")
+    return candidate.isdigit()
+
+
+def _score_header_candidate(row_values: list[str]) -> float:
+    non_empty_values = [value for value in row_values if value]
+    if len(non_empty_values) < 2:
+        return float("-inf")
+
+    normalized_values = [slugify_label(value) for value in non_empty_values]
+    alias_hits = sum(1 for value in normalized_values if value in HEADER_SIGNAL_KEYS)
+    numeric_hits = sum(1 for value in non_empty_values if _looks_numeric_like(value))
+    unique_ratio = len(set(normalized_values)) / max(len(normalized_values), 1)
+    average_length = sum(len(value) for value in non_empty_values) / max(len(non_empty_values), 1)
+
+    score = alias_hits * 4
+    score += len(non_empty_values) * 0.6
+    score += unique_ratio
+
+    if average_length <= 40:
+        score += 1
+    elif average_length >= 90:
+        score -= 2
+
+    score -= numeric_hits * 1.5
+    if any(len(value) > 140 for value in non_empty_values):
+        score -= 2
+
+    return score
+
+
+def detect_tabular_header_row(tabular_rows: list[list[str]], *, scan_limit: int = 12) -> tuple[int, bool]:
+    best_index = -1
+    best_score = float("-inf")
+
+    for index, row_values in enumerate(tabular_rows[:scan_limit]):
+        score = _score_header_candidate(row_values)
+        if score > best_score:
+            best_index = index
+            best_score = score
+
+    if best_index >= 0 and best_score >= 4:
+        return best_index, True
+
+    for index, row_values in enumerate(tabular_rows):
+        if any(row_values):
+            return index, False
+
+    return 0, False
+
+
+def build_unique_headers(row_values: list[str]) -> list[str]:
+    headers: list[str] = []
+    seen: dict[str, int] = {}
+
+    for index, value in enumerate(row_values):
+        base_value = clean_text(value) or f"column_{index + 1}"
+        normalized = slugify_label(base_value) or f"column_{index + 1}"
+        duplicate_count = seen.get(normalized, 0)
+        seen[normalized] = duplicate_count + 1
+
+        if duplicate_count:
+            headers.append(f"{base_value}_{duplicate_count + 1}")
+        else:
+            headers.append(base_value)
+
+    return headers
+
+
+def extend_headers(headers: list[str], required_length: int) -> list[str]:
+    extended = list(headers)
+    while len(extended) < required_length:
+        extended.append(f"column_{len(extended) + 1}")
+    return extended
+
+
+def is_repeated_header_row(row_values: list[str], headers: list[str]) -> bool:
+    row_keys = {slugify_label(value) for value in row_values if value}
+    header_keys = {slugify_label(header) for header in headers if header}
+
+    if len(row_keys) < 2 or len(header_keys) < 2:
+        return False
+
+    overlap = len(row_keys & header_keys) / max(len(row_keys), 1)
+    return overlap >= 0.8
+
+
+def extract_section_context(row_values: list[str]) -> str:
+    non_empty_values = [value for value in row_values if value]
+    if len(non_empty_values) != 1:
+        return ""
+
+    candidate = non_empty_values[0]
+    if len(candidate) > 180:
+        return ""
+    if _looks_numeric_like(candidate):
+        return ""
+    if GENERIC_REFERENCE_RE.fullmatch(candidate):
+        return ""
+    if candidate.endswith((".", ";")):
+        return ""
+    if ":" in candidate and len(candidate.split()) > 6:
+        return ""
+    return candidate
+
+
+def build_records_from_tabular_rows(
+    tabular_rows: list[list[object]],
+    *,
+    fallback_title_prefix: str,
+    default_section_label: str = "",
+) -> tuple[list[ParsedSourceRecord], list[str], int | None, bool]:
+    indexed_rows = [
+        (index + 1, [clean_text(value) for value in row])
+        for index, row in enumerate(tabular_rows)
+    ]
+    non_empty_rows = [
+        (row_number, row_values)
+        for row_number, row_values in indexed_rows
+        if any(row_values)
+    ]
+    if not non_empty_rows:
+        return [], [], None, False
+
+    header_row_index, has_explicit_header = detect_tabular_header_row(
+        [row_values for _, row_values in non_empty_rows]
+    )
+
+    if has_explicit_header:
+        headers = build_unique_headers(non_empty_rows[header_row_index][1])
+        data_rows = non_empty_rows[header_row_index + 1 :]
+    else:
+        max_width = max(len(row_values) for _, row_values in non_empty_rows)
+        headers = [f"column_{index + 1}" for index in range(max_width)]
+        data_rows = non_empty_rows[header_row_index:]
+
+    records: list[ParsedSourceRecord] = []
+    languages: set[str] = set()
+    current_section_label = default_section_label
+
+    for row_number, row_values in data_rows:
+        if not any(row_values):
+            continue
+
+        effective_headers = extend_headers(headers, len(row_values))
+        if has_explicit_header and is_repeated_header_row(row_values, effective_headers):
+            continue
+
+        inline_section_label = extract_section_context(row_values)
+        if inline_section_label:
+            current_section_label = inline_section_label
+            continue
+
+        row = {
+            effective_headers[index]: row_values[index] if index < len(row_values) else ""
+            for index in range(len(effective_headers))
+        }
+
+        record = build_record_from_row(
+            row,
+            fallback_title=f"{fallback_title_prefix} row {row_number}",
+            default_section_label=current_section_label,
+            row_number=row_number,
+        )
+        record.record_metadata.update(
+            {
+                "source_mode": "tabular_row",
+                "tabular_header_row": non_empty_rows[header_row_index][0] if has_explicit_header else None,
+                "has_explicit_header": has_explicit_header,
+                "context_section_label": current_section_label,
+            }
+        )
+        languages.add(record.record_metadata.get("language", "unknown"))
+        records.append(record)
+
+    visible_headers = [
+        header
+        for header in headers
+        if header and not slugify_label(header).startswith("column_")
+    ]
+    return records, sorted(language for language in languages if language), visible_headers, (
+        non_empty_rows[header_row_index][0] if has_explicit_header else None
+    )

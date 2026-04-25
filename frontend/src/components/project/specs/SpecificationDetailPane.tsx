@@ -76,26 +76,6 @@ export default function SpecificationDetailPane({
           <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{detail.content}</p>
         </div>
 
-        <div className="rounded-lg border border-slate-200 px-4 py-4">
-          <h4 className="text-sm font-semibold text-slate-900">qTest-style preview</h4>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <PreviewField label="Module" value={detail.qtest_preview.module} />
-            <PreviewField label="Requirement ID" value={detail.qtest_preview.requirement_id} />
-            <PreviewField label="Summary" value={detail.qtest_preview.summary} />
-            <PreviewField label="Section" value={detail.qtest_preview.section} />
-            <PreviewField label="Preconditions" value={detail.qtest_preview.preconditions} />
-            <PreviewField label="Expected result" value={detail.qtest_preview.expected_result} />
-          </div>
-          <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Description
-            </p>
-            <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-              {detail.qtest_preview.description}
-            </p>
-          </div>
-        </div>
-
         <div className="grid gap-4 md:grid-cols-3">
           <SummaryCard label="Linked cases" value={detail.linked_test_case_count} />
           <SummaryCard label="Linked scenarios" value={detail.linked_scenario_count} />
@@ -193,15 +173,6 @@ export default function SpecificationDetailPane({
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function PreviewField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{value || "--"}</p>
     </div>
   );
 }

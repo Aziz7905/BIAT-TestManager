@@ -181,3 +181,49 @@ class TestRunCaseDetailView(generics.RetrieveUpdateAPIView):
         if not can_manage_test_design_for_project(self.request.user, instance.run.project):
             raise PermissionDenied("You do not have permission to update this run case.")
         serializer.save()
+
+
+class TestRunCaseExecuteView(APIView):
+    """Trigger an automated execution for a specific run case.
+
+    Reuses the existing automation pipeline — creates a queued TestExecution
+    tied to this run_case so progress and results stream back into the
+    Test Runs workspace.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from apps.automation.models.choices import (
+            ExecutionBrowser,
+            ExecutionPlatform,
+            ExecutionTriggerType,
+        )
+        from apps.automation.services import create_execution_record, queue_execution
+
+        run_case = generics.get_object_or_404(_run_case_queryset(request.user), pk=pk)
+        if not can_manage_test_design_for_project(request.user, run_case.run.project):
+            raise PermissionDenied("You do not have permission to run this case.")
+        if run_case.test_case_id is None:
+            return Response(
+                {"detail": "This run-case no longer has a linked test case."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        browser = request.data.get("browser") or ExecutionBrowser.CHROMIUM
+        platform = request.data.get("platform") or ExecutionPlatform.DESKTOP
+
+        execution = create_execution_record(
+            test_case=run_case.test_case,
+            triggered_by=request.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser=browser,
+            platform=platform,
+            run_case=run_case,
+        )
+        queue_execution(execution)
+
+        run_case.refresh_from_db()
+        return Response(
+            TestRunCaseSerializer(run_case, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )

@@ -293,7 +293,7 @@ export default function ProjectWorkspacePage() {
           </div>
         ) : (
           <div className="flex-1 overflow-hidden">
-            <ProjectTestRunsWorkspace projectId={id ?? ""} />
+            <ProjectTestRunsWorkspace projectId={id ?? ""} projectTree={tree} />
           </div>
         )}
       </div>

@@ -207,7 +207,6 @@ class TestCaseSerializer(serializers.ModelSerializer):
     project_id = serializers.UUIDField(source="scenario.suite.project.id", read_only=True)
     current_revision_id = serializers.SerializerMethodField()
     latest_result_status = serializers.SerializerMethodField()
-    gherkin_preview = serializers.SerializerMethodField()
     version_history = serializers.SerializerMethodField()
     linked_specifications = LinkedSpecificationSummarySerializer(many=True, read_only=True)
     linked_specification_ids = serializers.SerializerMethodField()
@@ -243,7 +242,6 @@ class TestCaseSerializer(serializers.ModelSerializer):
             "linked_specifications",
             "linked_specification_ids",
             "latest_result_status",
-            "gherkin_preview",
             "version_history",
             "created_at",
             "updated_at",
@@ -262,9 +260,6 @@ class TestCaseSerializer(serializers.ModelSerializer):
     def get_latest_result_status(self, obj):
         latest_result = obj.get_latest_result()
         return getattr(latest_result, "status", None)
-
-    def get_gherkin_preview(self, obj):
-        return obj.to_gherkin()
 
     def get_version_history(self, obj):
         revisions = getattr(obj, "_prefetched_objects_cache", {}).get("revisions")

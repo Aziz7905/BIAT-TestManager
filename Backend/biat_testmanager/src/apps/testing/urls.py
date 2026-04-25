@@ -9,6 +9,7 @@ from apps.testing.views import (
     TestPlanListCreateView,
     TestPlanRunListView,
     TestRunCaseDetailView,
+    TestRunCaseExecuteView,
     TestRunCaseListView,
     TestRunCloseView,
     TestRunDetailView,
@@ -71,6 +72,11 @@ urlpatterns = [
     path("test-runs/<uuid:pk>/expand/", TestRunExpandView.as_view(), name="test-run-expand"),
     path("test-runs/<uuid:run_pk>/cases/", TestRunCaseListView.as_view(), name="test-run-case-list"),
     path("test-run-cases/<uuid:pk>/", TestRunCaseDetailView.as_view(), name="test-run-case-detail"),
+    path(
+        "test-run-cases/<uuid:pk>/execute/",
+        TestRunCaseExecuteView.as_view(),
+        name="test-run-case-execute",
+    ),
     # Suites
     path("test-suites/", TestSuiteListCreateView.as_view(), name="test-suite-list-create"),
     path("test-suites/<uuid:pk>/", TestSuiteDetailView.as_view(), name="test-suite-detail"),

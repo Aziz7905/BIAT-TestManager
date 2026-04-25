@@ -134,7 +134,7 @@ export default function CaseWorkspacePanel({
   }
 
   async function handleDeleteExecution(executionId: string) {
-    if (!window.confirm("Delete this execution and its stored results?")) return;
+    if (!globalThis.confirm("Delete this execution and its stored results?")) return;
     await deleteExecution(executionId);
     if (tab === "runs") {
       setExecutions((current) => current.filter((item) => item.id !== executionId));

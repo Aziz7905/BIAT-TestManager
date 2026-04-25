@@ -227,11 +227,17 @@ class TestRunExpandSerializer(serializers.Serializer):
 class TestRunCaseSerializer(serializers.ModelSerializer):
     run_name = serializers.CharField(source="run.name", read_only=True)
     test_case_title = serializers.CharField(source="test_case.title", read_only=True)
+    test_case_automation_status = serializers.CharField(
+        source="test_case.automation_status",
+        read_only=True,
+    )
     revision_version = serializers.IntegerField(
         source="test_case_revision.version_number",
         read_only=True,
     )
     assigned_to_name = serializers.SerializerMethodField()
+    attempt_count = serializers.IntegerField(read_only=True)
+    latest_execution = serializers.SerializerMethodField()
 
     class Meta:
         model = TestRunCase
@@ -241,12 +247,15 @@ class TestRunCaseSerializer(serializers.ModelSerializer):
             "run_name",
             "test_case",
             "test_case_title",
+            "test_case_automation_status",
             "test_case_revision",
             "revision_version",
             "assigned_to",
             "assigned_to_name",
             "status",
             "order_index",
+            "attempt_count",
+            "latest_execution",
             "created_at",
             "updated_at",
         ]
@@ -254,8 +263,11 @@ class TestRunCaseSerializer(serializers.ModelSerializer):
             "id",
             "run_name",
             "test_case_title",
+            "test_case_automation_status",
             "revision_version",
             "assigned_to_name",
+            "attempt_count",
+            "latest_execution",
             "created_at",
             "updated_at",
         ]
@@ -264,6 +276,43 @@ class TestRunCaseSerializer(serializers.ModelSerializer):
         if not obj.assigned_to:
             return None
         return obj.assigned_to.get_full_name().strip() or obj.assigned_to.username
+
+    def get_latest_execution(self, obj):
+        execution = (
+            obj.executions.select_related("result", "triggered_by")
+            .order_by("-attempt_number", "-started_at", "-id")
+            .first()
+        )
+        if execution is None:
+            return None
+
+        result = getattr(execution, "result", None)
+        triggered_by = execution.triggered_by
+        triggered_by_name = None
+        if triggered_by:
+            triggered_by_name = (
+                triggered_by.get_full_name().strip() or triggered_by.username
+            )
+
+        return {
+            "id": str(execution.id),
+            "status": execution.status,
+            "browser": execution.browser,
+            "attempt_number": execution.attempt_number,
+            "started_at": execution.started_at,
+            "ended_at": execution.ended_at,
+            "duration_ms": execution.get_duration_ms(),
+            "triggered_by_name": triggered_by_name,
+            "has_browser_session": bool(execution.selenium_session_id),
+            "result": {
+                "status": result.status,
+                "duration_ms": result.duration_ms,
+                "total_steps": result.total_steps,
+                "passed_steps": result.passed_steps,
+                "failed_steps": result.failed_steps,
+                "error_message": result.error_message or "",
+            } if result else None,
+        }
 
     def update(self, instance, validated_data):
         allowed = {"status", "assigned_to", "order_index"}

@@ -28,7 +28,7 @@ from apps.automation.services.artifacts import (
 )
 from apps.automation.services.checkpoints import create_pending_execution_checkpoint
 from apps.automation.services.control import is_execution_stop_signaled
-from apps.automation.services.grid import cache_browser_session_urls
+from apps.automation.services.grid import cache_browser_session_urls, resize_browser_window
 from apps.automation.services.streaming import (
     publish_execution_artifact_created,
     publish_execution_step_updated,
@@ -213,6 +213,9 @@ def build_execution_environment(execution) -> dict[str, str]:
         # Grid executions are streamed through VNC, so default to a visible browser.
         # Execution environments can still override this with capabilities_json.headless.
         env.setdefault("BIAT_HEADLESS", "0")
+        env.setdefault("BIAT_VIEWPORT_WIDTH", "1920")
+        env.setdefault("BIAT_VIEWPORT_HEIGHT", "1080")
+        env.setdefault("BIAT_BROWSER_WINDOW_SIZE", "1920,1080")
 
     env["BIAT_REDIS_URL"] = getattr(settings, "REDIS_URL", "redis://localhost:6379/0")
 
@@ -487,6 +490,13 @@ def _handle_session_started(execution, event: dict) -> None:
     session_id = event.get("session_id", "")
     if not session_id:
         return
+    viewport_width = _coerce_positive_int(event.get("viewport_width"), 1920)
+    viewport_height = _coerce_positive_int(event.get("viewport_height"), 1080)
+    resize_browser_window(
+        session_id,
+        width=viewport_width,
+        height=viewport_height,
+    )
     execution.selenium_session_id = session_id
     execution.save(update_fields=["selenium_session_id"])
 
@@ -619,3 +629,11 @@ def _coerce_artifact_url(execution, screenshot_path: str | None) -> str | None:
 
     file_name = relative_path.replace("\\", "/")
     return get_execution_artifact_url(execution, file_name)
+
+
+def _coerce_positive_int(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

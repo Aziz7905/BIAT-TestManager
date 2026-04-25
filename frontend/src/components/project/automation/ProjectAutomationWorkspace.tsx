@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  createExecution,
   deleteExecution,
   getExecutions,
   pauseExecution,
@@ -82,7 +84,6 @@ export default function ProjectAutomationWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("result");
-  const [isBrowserFocused, setIsBrowserFocused] = useState(false);
 
   const {
     execution,
@@ -175,13 +176,28 @@ export default function ProjectAutomationWorkspace({
     }
   }
 
+  async function handleStartExecution(testCaseId: string) {
+    setIsMutating(true);
+    setError(null);
+    try {
+      const created = await createExecution({ test_case: testCaseId });
+      setExecutions((current) => [created, ...current]);
+      setSelectedExecutionId(created.id);
+      setExecution(created);
+    } catch {
+      setError("Could not start a new execution.");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
   const selectedFromList = useMemo(
     () => executions.find((item) => item.id === selectedExecutionId) ?? null,
     [executions, selectedExecutionId]
   );
 
   const visibleExecution = useMemo(() => {
-    if (!execution) return selectedFromList;
+    if (!execution || execution.id !== selectedExecutionId) return selectedFromList;
     if (!selectedFromList) return execution;
     return {
       ...selectedFromList,
@@ -189,13 +205,14 @@ export default function ProjectAutomationWorkspace({
       has_browser_session:
         execution.has_browser_session || selectedFromList.has_browser_session,
     };
-  }, [execution, selectedFromList]);
+  }, [execution, selectedExecutionId, selectedFromList]);
+  const isExecutionLive =
+    visibleExecution?.status === "running" || visibleExecution?.status === "paused";
 
   return (
     <div className="flex h-full overflow-hidden bg-white">
-      {/* ── Sidebar: execution list ── */}
-      {!isBrowserFocused && (
-      <aside className="flex w-[260px] shrink-0 flex-col border-r border-slate-200 bg-white">
+      {/* Sidebar: execution list */}
+      <aside className="flex w-[250px] shrink-0 flex-col border-r border-slate-200 bg-white">
         <div className="border-b border-slate-100 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -272,9 +289,8 @@ export default function ProjectAutomationWorkspace({
             ))}
         </div>
       </aside>
-      )}
 
-      {/* ── Main: detail panel ── */}
+      {/* Main: detail panel */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {error && (
           <div className="shrink-0 p-3">
@@ -294,7 +310,7 @@ export default function ProjectAutomationWorkspace({
         {visibleExecution && (
           <>
             {/* Compact header */}
-            <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-3">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -304,36 +320,48 @@ export default function ProjectAutomationWorkspace({
                       dot
                     />
                     <span className="text-xs text-slate-400">
-                      {visibleExecution.browser} · {visibleExecution.platform} · Attempt{" "}
+                      {visibleExecution.browser} / {visibleExecution.platform} / Attempt{" "}
                       {visibleExecution.attempt_number}
                     </span>
                     {isConnecting && (
-                      <span className="text-xs text-slate-400">· Connecting stream...</span>
+                      <span className="text-xs text-slate-400">/ Connecting stream...</span>
                     )}
                     {streamError && (
-                      <span className="text-xs text-red-500">· {streamError}</span>
+                      <span className="text-xs text-red-500">/ {streamError}</span>
                     )}
                   </div>
                   <h2 className="mt-0.5 truncate text-base font-semibold text-slate-900">
                     {visibleExecution.test_case_title}
                   </h2>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => setIsBrowserFocused((current) => !current)}
-                  >
-                    {isBrowserFocused ? "Exit focus" : "Focus browser"}
-                  </Button>
-                  <ExecutionControlBar
-                    execution={visibleExecution}
-                    isBusy={isMutating}
-                    onPause={() => void runControl(() => pauseExecution(visibleExecution.id))}
-                    onResume={() => void runControl(() => resumeExecution(visibleExecution.id))}
-                    onStop={() => void runControl(() => stopExecution(visibleExecution.id))}
-                  />
-                </div>
+                <ExecutionControlBar
+                  execution={visibleExecution}
+                  isBusy={isMutating}
+                  onPause={() => void runControl(() => pauseExecution(visibleExecution.id))}
+                  onResume={() => void runControl(() => resumeExecution(visibleExecution.id))}
+                  onStop={() => void runControl(() => stopExecution(visibleExecution.id))}
+                />
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void handleStartExecution(visibleExecution.test_case)}
+                  disabled={isMutating || isExecutionLive}
+                >
+                  Start
+                </Button>
+                <Link
+                  to={`/projects/${projectId}/automation/executions/${visibleExecution.id}/live`}
+                  aria-disabled={!isExecutionLive}
+                  tabIndex={isExecutionLive ? undefined : -1}
+                  className={[
+                    "inline-flex shrink-0 items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm transition",
+                    isExecutionLive
+                      ? "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                      : "pointer-events-none border-slate-200 bg-slate-50 text-slate-400",
+                  ].join(" ")}
+                >
+                  Full screen
+                </Link>
               </div>
             </div>
 
@@ -343,12 +371,12 @@ export default function ProjectAutomationWorkspace({
               <div
                 className={[
                   "flex shrink-0 flex-col overflow-y-auto border-r border-slate-100 bg-slate-50",
-                  isBrowserFocused ? "w-[220px]" : "w-[240px]",
+                  isExecutionLive ? "w-[240px]" : "w-[220px]",
                 ].join(" ")}
               >
                 <div className="border-b border-slate-100 px-3 py-2">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    Live steps{steps.length > 0 && ` · ${steps.length}`}
+                    Live steps{steps.length > 0 && ` / ${steps.length}`}
                   </p>
                 </div>
                 {steps.length === 0 ? (
@@ -363,31 +391,33 @@ export default function ProjectAutomationWorkspace({
               </div>
 
               {/* Browser panel */}
-              <div className="flex min-w-0 flex-1 overflow-hidden">
-                {visibleExecution.has_browser_session &&
-                visibleExecution.status !== "running" &&
-                visibleExecution.status !== "paused" ? (
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                {isExecutionLive ? (
+                  <NoVncViewer
+                    key={visibleExecution.id}
+                    executionId={visibleExecution.id}
+                    enabled={visibleExecution.has_browser_session}
+                  />
+                ) : visibleExecution.has_browser_session ? (
                   <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-slate-950 text-slate-500">
                     <p className="text-sm">Browser session ended</p>
                     <p className="text-xs text-slate-600">
-                      Live stream is only available while the execution is running.
+                      Click Start to re-run, or pick another execution.
                     </p>
                   </div>
                 ) : (
-                  <NoVncViewer
-                    executionId={visibleExecution.id}
-                    enabled={
-                      visibleExecution.has_browser_session &&
-                      (visibleExecution.status === "running" ||
-                        visibleExecution.status === "paused")
-                    }
-                  />
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-slate-950 text-slate-500">
+                    <p className="text-sm">No browser session</p>
+                    <p className="text-xs text-slate-600">
+                      This execution did not open a browser.
+                    </p>
+                  </div>
                 )}
               </div>
             </div>
 
             {/* Bottom tabs: Result | Checkpoints | Artifacts */}
-            {!isBrowserFocused && (
+            {!isExecutionLive && (
             <div className="flex h-[120px] shrink-0 flex-col border-t border-slate-200 bg-white">
               <div className="flex shrink-0 border-b border-slate-100">
                 {(["result", "checkpoints", "artifacts"] as BottomTab[]).map((tab) => (
@@ -428,7 +458,7 @@ export default function ProjectAutomationWorkspace({
                         <div className="flex items-center gap-2">
                           <span className="text-slate-400">Duration</span>
                           <span className="font-medium text-slate-700">
-                            {result.duration_ms == null ? "—" : `${result.duration_ms} ms`}
+                            {result.duration_ms == null ? "-" : `${result.duration_ms} ms`}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">

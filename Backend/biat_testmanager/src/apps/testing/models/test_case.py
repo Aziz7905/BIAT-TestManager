@@ -9,7 +9,6 @@ from .choices import (
     TestCaseDesignStatus,
     TestCaseOnFailureBehavior,
 )
-from .utils import normalize_step_lines
 
 
 class TestCase(models.Model):
@@ -85,26 +84,6 @@ class TestCase(models.Model):
         return result_model.objects.filter(
             execution__test_case=self
         ).select_related("execution").order_by("-created_at").first()
-
-    def to_gherkin(self) -> str:
-        lines = [
-            f"Feature: {self.scenario.suite.name}",
-            f"  Scenario: {self.title}",
-        ]
-
-        preconditions = [line.strip() for line in self.preconditions.splitlines() if line.strip()]
-        for index, precondition in enumerate(preconditions):
-            keyword = "Given" if index == 0 else "And"
-            lines.append(f"    {keyword} {precondition}")
-
-        for index, step in enumerate(normalize_step_lines(self.steps)):
-            keyword = "When" if index == 0 else "And"
-            lines.append(f"    {keyword} {step}")
-
-        if self.expected_result.strip():
-            lines.append(f"    Then {self.expected_result.strip()}")
-
-        return "\n".join(lines)
 
     def get_version_history(self):
         return [

@@ -1,7 +1,7 @@
 from .base import (
     ParsedSourceResult,
     SpecificationSourceParseError,
-    build_record_from_row,
+    build_records_from_tabular_rows,
 )
 
 
@@ -29,25 +29,26 @@ class XLSXSpecificationSourceParser:
             if not rows:
                 continue
 
-            headers = [str(value).strip() if value is not None else "" for value in rows[0]]
-            column_mapping[sheet.title] = [header for header in headers if header]
-
-            for row_offset, row_values in enumerate(rows[1:], start=2):
-                row = {
-                    headers[index] or f"column_{index + 1}": value
-                    for index, value in enumerate(row_values)
-                }
-                if not any(str(value).strip() for value in row.values() if value is not None):
-                    continue
-
-                record = build_record_from_row(
-                    row,
-                    fallback_title=f"{sheet.title} row {row_offset}",
-                    default_section_label=sheet.title,
-                    row_number=row_offset,
-                )
-                languages.add(record.record_metadata.get("language", "unknown"))
-                records.append(record)
+            (
+                sheet_records,
+                sheet_languages,
+                sheet_headers,
+                header_row_number,
+            ) = build_records_from_tabular_rows(
+                rows,
+                fallback_title_prefix=sheet.title,
+                default_section_label=sheet.title,
+            )
+            column_mapping[sheet.title] = sheet_headers
+            records.extend(sheet_records)
+            languages.update(sheet_languages)
+            if header_row_number is not None:
+                for record in sheet_records:
+                    record.record_metadata["sheet_name"] = sheet.title
+                    record.record_metadata["sheet_header_row"] = header_row_number
+            else:
+                for record in sheet_records:
+                    record.record_metadata["sheet_name"] = sheet.title
 
         return ParsedSourceResult(
             records=records,
@@ -56,7 +57,7 @@ class XLSXSpecificationSourceParser:
                 "format": "xlsx",
                 "sheet_count": len(workbook.worksheets),
                 "languages": sorted(language for language in languages if language),
-                "parser_strategy": "structured_tabular_v1",
+                "parser_strategy": "heuristic_tabular_v2",
             },
             column_mapping=column_mapping,
         )

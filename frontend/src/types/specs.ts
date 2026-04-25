@@ -27,16 +27,6 @@ export type SpecificationSourceRecordStatus =
 export type SpecificationIndexStatus = "pending" | "indexed" | "failed" | "stale";
 export type CoverageStatus = "covered" | "uncovered";
 
-export interface QTestPreview {
-  module: string;
-  requirement_id: string;
-  summary: string;
-  description: string;
-  section: string;
-  preconditions: string;
-  expected_result: string;
-}
-
 export interface SpecChunk {
   id: string;
   chunk_index: number;
@@ -135,7 +125,6 @@ export interface SpecificationListItem {
   uploaded_by_name: string | null;
   chunk_count: number;
   can_manage: boolean;
-  qtest_preview: QTestPreview;
   chunks: SpecChunk[];
   linked_test_case_count: number;
   linked_scenario_count: number;
@@ -179,4 +168,3 @@ export interface ImportSpecificationSourceResponse {
   imported_count: number;
   specifications: SpecificationListItem[];
 }
-

@@ -76,10 +76,10 @@ function BrowserCanvas({
   readonly isLoading: boolean;
 }) {
   return (
-    <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+    <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-950">
       <div ref={containerRef} className="absolute inset-0" />
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Spinner size="md" />
         </div>
       )}
@@ -94,82 +94,67 @@ export default function NoVncViewer({ executionId, enabled }: NoVncViewerProps) 
   const [error, setError] = useState<string | null>(null);
   const [isInteractive, setIsInteractive] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [browserViewUrls, setBrowserViewUrls] = useState<string[]>([]);
-  const [browserViewIndex, setBrowserViewIndex] = useState(0);
 
   useEffect(() => {
     if (!executionId || !enabled || !containerRef.current) return undefined;
 
     let cancelled = false;
-    let fallbackTimer: number | undefined;
-    let directConnected = false;
+    let resizeObserver: ResizeObserver | null = null;
     setIsLoading(true);
     setError(null);
     setIsConnected(false);
-    setBrowserViewUrls([]);
-    setBrowserViewIndex(0);
 
     getStreamTicket(executionId)
       .then((ticket) => {
         if (cancelled || !containerRef.current) return;
-        let viewUrls: string[];
-        if (ticket.browser_view_urls?.length) {
-          viewUrls = ticket.browser_view_urls;
-        } else if (ticket.browser_view_url) {
-          viewUrls = [ticket.browser_view_url];
-        } else {
-          viewUrls = [];
-        }
 
+        const target = containerRef.current;
         const RfbConstructor = getRfbConstructor();
         const rfb = new RfbConstructor(
-          containerRef.current,
+          target,
           buildWebSocketUrl(ticket.browser_websocket_path),
           { credentials: { password: "secret" } }
         );
         rfb.viewOnly = true;
         rfb.scaleViewport = true;
         rfb.resizeSession = true;
+
+        const triggerRescale = () => {
+          globalThis.dispatchEvent(new Event("resize"));
+        };
+
         rfb.addEventListener("connect", () => {
-          directConnected = true;
           setIsConnected(true);
           setIsLoading(false);
+          globalThis.setTimeout(triggerRescale, 50);
+          globalThis.setTimeout(triggerRescale, 300);
+          globalThis.setTimeout(triggerRescale, 1000);
         });
         rfb.addEventListener("disconnect", (event) => {
           setIsConnected(false);
           const detail = (event as CustomEvent<{ clean?: boolean; reason?: string }>).detail;
-          if (!detail?.clean && viewUrls.length > 0 && !cancelled) {
-            setBrowserViewUrls(viewUrls);
-            setBrowserViewIndex(0);
-            setError(null);
-            setIsConnected(true);
-            return;
-          }
           if (!detail?.clean) {
             setError(detail?.reason || "Browser stream disconnected.");
           }
         });
         rfbRef.current = rfb;
-        fallbackTimer = globalThis.setTimeout(() => {
-          if (!cancelled && !directConnected && viewUrls.length > 0) {
-            rfbRef.current?.disconnect();
-            rfbRef.current = null;
-            setBrowserViewUrls(viewUrls);
-            setBrowserViewIndex(0);
-            setError(null);
-            setIsConnected(true);
-          }
-        }, 4000);
+
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => triggerRescale());
+          resizeObserver.observe(target);
+        }
       })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Browser stream is unavailable.";
         setError(message);
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
 
     return () => {
       cancelled = true;
-      if (fallbackTimer) globalThis.clearTimeout(fallbackTimer);
+      resizeObserver?.disconnect();
       rfbRef.current?.disconnect();
       rfbRef.current = null;
       setIsConnected(false);
@@ -183,7 +168,7 @@ export default function NoVncViewer({ executionId, enabled }: NoVncViewerProps) 
   }, [isInteractive]);
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-slate-950">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-slate-950">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-800 px-3 py-1.5">
         <div className="flex items-center gap-2">
           <div
@@ -207,43 +192,15 @@ export default function NoVncViewer({ executionId, enabled }: NoVncViewerProps) 
         </button>
       </div>
 
-      {enabled && browserViewUrls.length > 0 && (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {browserViewUrls.length > 1 && (
-            <div className="flex shrink-0 items-center gap-2 border-b border-slate-800 px-3 py-2">
-              <span className="text-xs text-slate-500">Node</span>
-              {browserViewUrls.map((url, index) => (
-                <button
-                  key={url}
-                  type="button"
-                  onClick={() => setBrowserViewIndex(index)}
-                  className={`rounded px-2 py-1 text-xs ${
-                    browserViewIndex === index
-                      ? "bg-slate-200 text-slate-950"
-                      : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                  }`}
-                >
-                  {index + 1}
-                </button>
-              ))}
-            </div>
-          )}
-          <iframe
-            title="Browser session"
-            src={browserViewUrls[browserViewIndex]}
-            className="min-h-0 flex-1 border-0 bg-slate-950"
-          />
-        </div>
-      )}
-      {enabled && browserViewUrls.length === 0 && error && (
+      {!enabled && <NoSessionView />}
+      {enabled && error && !isConnected && (
         <div className="flex flex-1 items-center justify-center px-6">
-          <EmptyState title="Could not open browser" description={error} />
+          <EmptyState title="Browser stream unavailable" description={error} />
         </div>
       )}
-      {enabled && browserViewUrls.length === 0 && !error && (
+      {enabled && (!error || isConnected) && (
         <BrowserCanvas containerRef={containerRef} isLoading={isLoading} />
       )}
-      {!enabled && <NoSessionView />}
     </div>
   );
 }
