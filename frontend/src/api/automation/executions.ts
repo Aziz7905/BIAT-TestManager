@@ -15,6 +15,7 @@ export async function getExecutions(filters?: {
   test_case?: string;
   status?: string;
   trigger_type?: string;
+  exclude_user_runs?: boolean;
   include_diagnostic?: boolean;
 }): Promise<TestExecution[]> {
   const { data } = await apiClient.get("/test-executions/", { params: filters });

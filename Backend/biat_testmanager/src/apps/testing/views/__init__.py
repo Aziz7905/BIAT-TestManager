@@ -7,8 +7,10 @@ from .runs import (
     TestRunCaseListView,
     TestRunCloseView,
     TestRunDetailView,
+    TestRunExecuteView,
     TestRunExpandView,
     TestRunListCreateView,
+    TestRunRerunFailedView,
     TestRunStartView,
 )
 from .reporting import (
@@ -55,8 +57,10 @@ __all__ = [
     "TestRunCaseListView",
     "TestRunCloseView",
     "TestRunDetailView",
+    "TestRunExecuteView",
     "TestRunExpandView",
     "TestRunListCreateView",
+    "TestRunRerunFailedView",
     "TestRunStartView",
     "TestCaseApproveView",
     "TestCaseArchiveView",

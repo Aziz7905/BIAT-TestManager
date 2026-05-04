@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.projects.access import get_project_queryset_for_actor
-from apps.testing.models import TestPlan, TestRun, TestRunCase, TestRunCaseStatus
+from apps.testing.models import TestPlan, TestRun, TestRunCase, TestRunCaseStatus, TestRunKind
 from apps.testing.serializers import (
     TestPlanSerializer,
     TestRunCaseSerializer,
@@ -14,7 +14,13 @@ from apps.testing.serializers import (
     TestRunSerializer,
 )
 from apps.testing.services.access import can_manage_test_design_for_project
-from apps.testing.services.runs import archive_test_plan, close_test_run, start_test_run
+from apps.testing.services.runs import (
+    archive_test_plan,
+    close_test_run,
+    execute_pending_run_cases,
+    rerun_failed_run_cases,
+    start_test_run,
+)
 
 
 def _plan_queryset(actor):
@@ -71,9 +77,14 @@ class TestPlanDetailView(generics.RetrieveUpdateDestroyAPIView):
         return _plan_queryset(self.request.user)
 
     def perform_destroy(self, instance):
+        from apps.testing.models import TestPlanStatus
+
         if not can_manage_test_design_for_project(self.request.user, instance.project):
             raise PermissionDenied("You do not have permission to delete this test plan.")
-        archive_test_plan(instance)
+        if instance.status == TestPlanStatus.ARCHIVED:
+            instance.delete()
+        else:
+            archive_test_plan(instance)
 
 
 class TestPlanRunListView(generics.ListAPIView):
@@ -98,6 +109,9 @@ class TestRunListCreateView(generics.ListCreateAPIView):
         plan_id = self.request.query_params.get("plan")
         if plan_id:
             qs = qs.filter(plan_id=plan_id)
+        include_system = self.request.query_params.get("include_system", "").lower() in ("1", "true", "yes")
+        if not include_system:
+            qs = qs.exclude(run_kind=TestRunKind.SYSTEM_GENERATED)
         return qs
 
 
@@ -169,7 +183,7 @@ class TestRunCaseListView(generics.ListAPIView):
         return _run_case_queryset(self.request.user).filter(run_id=self.kwargs["run_pk"])
 
 
-class TestRunCaseDetailView(generics.RetrieveUpdateAPIView):
+class TestRunCaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = TestRunCaseSerializer
     permission_classes = [IsAuthenticated]
 
@@ -181,6 +195,79 @@ class TestRunCaseDetailView(generics.RetrieveUpdateAPIView):
         if not can_manage_test_design_for_project(self.request.user, instance.run.project):
             raise PermissionDenied("You do not have permission to update this run case.")
         serializer.save()
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError
+
+        if not can_manage_test_design_for_project(self.request.user, instance.run.project):
+            raise PermissionDenied("You do not have permission to remove this run case.")
+        if instance.status != TestRunCaseStatus.PENDING:
+            raise ValidationError(
+                "Run cases can only be removed while pending — protect execution history."
+            )
+        if instance.executions.exists():
+            raise ValidationError(
+                "This run case has executions and cannot be removed — protect execution history."
+            )
+        instance.delete()
+
+
+class TestRunExecuteView(APIView):
+    """Trigger automated execution for every pending run-case in this run.
+
+    Each pending case dispatches one TestExecution through the existing
+    automation pipeline, reusing the case's active AutomationScript.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        run = generics.get_object_or_404(_run_queryset(request.user), pk=pk)
+        if not can_manage_test_design_for_project(request.user, run.project):
+            raise PermissionDenied("You do not have permission to run this test run.")
+
+        browser = request.data.get("browser") or None
+        platform = request.data.get("platform") or None
+
+        executions = execute_pending_run_cases(
+            run,
+            triggered_by=request.user,
+            browser=browser,
+            platform=platform,
+        )
+        return Response(
+            {
+                "queued_count": len(executions),
+                "execution_ids": [str(execution.id) for execution in executions],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TestRunRerunFailedView(APIView):
+    """Reset failed run-cases to pending and re-queue executions for them."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        run = generics.get_object_or_404(_run_queryset(request.user), pk=pk)
+        if not can_manage_test_design_for_project(request.user, run.project):
+            raise PermissionDenied("You do not have permission to re-run this run.")
+
+        browser = request.data.get("browser") or None
+        platform = request.data.get("platform") or None
+
+        executions = rerun_failed_run_cases(
+            run,
+            triggered_by=request.user,
+            browser=browser,
+            platform=platform,
+        )
+        return Response(
+            {
+                "queued_count": len(executions),
+                "execution_ids": [str(execution.id) for execution in executions],
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class TestRunCaseExecuteView(APIView):

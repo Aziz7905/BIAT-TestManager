@@ -34,6 +34,18 @@ export async function createTestPlan(payload: CreateTestPlanPayload): Promise<Te
   return data;
 }
 
+export async function updateTestPlan(
+  planId: string,
+  payload: Partial<Pick<TestPlan, "name" | "description" | "status">>,
+): Promise<TestPlan> {
+  const { data } = await apiClient.patch(`/test-plans/${planId}/`, payload);
+  return data;
+}
+
+export async function archiveTestPlan(planId: string): Promise<void> {
+  await apiClient.delete(`/test-plans/${planId}/`);
+}
+
 export async function getTestRuns(filters: {
   project?: string;
   plan?: string;
@@ -46,6 +58,18 @@ export async function getTestRuns(filters: {
 export async function createTestRun(payload: CreateTestRunPayload): Promise<TestRun> {
   const { data } = await apiClient.post("/test-runs/", payload);
   return data;
+}
+
+export async function updateTestRun(
+  runId: string,
+  payload: Partial<Pick<TestRun, "name" | "status">>,
+): Promise<TestRun> {
+  const { data } = await apiClient.patch(`/test-runs/${runId}/`, payload);
+  return data;
+}
+
+export async function deleteTestRun(runId: string): Promise<void> {
+  await apiClient.delete(`/test-runs/${runId}/`);
 }
 
 export async function getPlanRuns(planId: string): Promise<TestRun[]> {
@@ -87,4 +111,24 @@ export async function executeRunCase(
 ): Promise<TestRunCase> {
   const { data } = await apiClient.post(`/test-run-cases/${runCaseId}/execute/`, options);
   return data;
+}
+
+export async function executeTestRun(
+  runId: string,
+  options: { browser?: string; platform?: string } = {}
+): Promise<{ queued_count: number; execution_ids: string[] }> {
+  const { data } = await apiClient.post(`/test-runs/${runId}/execute/`, options);
+  return data;
+}
+
+export async function rerunFailedTestRun(
+  runId: string,
+  options: { browser?: string; platform?: string } = {}
+): Promise<{ queued_count: number; execution_ids: string[] }> {
+  const { data } = await apiClient.post(`/test-runs/${runId}/rerun-failed/`, options);
+  return data;
+}
+
+export async function deleteRunCase(runCaseId: string): Promise<void> {
+  await apiClient.delete(`/test-run-cases/${runCaseId}/`);
 }

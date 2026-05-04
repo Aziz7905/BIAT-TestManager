@@ -13,8 +13,10 @@ from apps.testing.views import (
     TestRunCaseListView,
     TestRunCloseView,
     TestRunDetailView,
+    TestRunExecuteView,
     TestRunExpandView,
     TestRunListCreateView,
+    TestRunRerunFailedView,
     TestRunStartView,
     TestCaseApproveView,
     TestCaseArchiveView,
@@ -70,6 +72,12 @@ urlpatterns = [
     path("test-runs/<uuid:pk>/start/", TestRunStartView.as_view(), name="test-run-start"),
     path("test-runs/<uuid:pk>/close/", TestRunCloseView.as_view(), name="test-run-close"),
     path("test-runs/<uuid:pk>/expand/", TestRunExpandView.as_view(), name="test-run-expand"),
+    path("test-runs/<uuid:pk>/execute/", TestRunExecuteView.as_view(), name="test-run-execute"),
+    path(
+        "test-runs/<uuid:pk>/rerun-failed/",
+        TestRunRerunFailedView.as_view(),
+        name="test-run-rerun-failed",
+    ),
     path("test-runs/<uuid:run_pk>/cases/", TestRunCaseListView.as_view(), name="test-run-case-list"),
     path("test-run-cases/<uuid:pk>/", TestRunCaseDetailView.as_view(), name="test-run-case-detail"),
     path(

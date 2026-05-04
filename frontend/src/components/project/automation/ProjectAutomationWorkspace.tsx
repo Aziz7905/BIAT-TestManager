@@ -107,6 +107,7 @@ export default function ProjectAutomationWorkspace({
       const nextExecutions = await getExecutions({
         project: projectId,
         status: statusFilter === "all" ? undefined : statusFilter,
+        exclude_user_runs: true,
       });
       setExecutions(nextExecutions);
       setSelectedExecutionId((current) => {

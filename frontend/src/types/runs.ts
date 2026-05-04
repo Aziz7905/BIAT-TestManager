@@ -1,6 +1,7 @@
 export type TestPlanStatus = "draft" | "active" | "archived";
 export type TestRunTriggerType = "manual" | "ci_cd" | "scheduled" | "webhook";
 export type TestRunStatus = "pending" | "running" | "passed" | "failed" | "cancelled";
+export type TestRunKind = "planned" | "standalone" | "system_generated";
 export type TestRunCaseStatus =
   | "pending"
   | "running"
@@ -39,6 +40,7 @@ export interface TestRun {
   name: string;
   status: TestRunStatus;
   trigger_type: TestRunTriggerType;
+  run_kind: TestRunKind;
   run_case_count: number;
   passed_case_count: number;
   pass_rate: number;

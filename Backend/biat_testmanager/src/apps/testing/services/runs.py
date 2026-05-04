@@ -20,6 +20,7 @@ from apps.testing.models import (
     TestRun,
     TestRunCase,
     TestRunCaseStatus,
+    TestRunKind,
     TestRunStatus,
     TestRunTriggerType,
 )
@@ -56,13 +57,17 @@ def create_test_run(
     created_by=None,
     plan: TestPlan | None = None,
     trigger_type: str = TestRunTriggerType.MANUAL,
+    run_kind: str | None = None,
 ) -> TestRun:
+    if run_kind is None:
+        run_kind = TestRunKind.PLANNED if plan is not None else TestRunKind.STANDALONE
     return TestRun.objects.create(
         project=project,
         plan=plan,
         name=name,
         status=TestRunStatus.PENDING,
         trigger_type=trigger_type,
+        run_kind=run_kind,
         created_by=created_by,
     )
 
@@ -126,14 +131,25 @@ def expand_run_from_cases(
     *,
     base_order_index: int = 0,
 ) -> list[TestRunCase]:
-    """Create TestRunCase records for an explicit list of TestCase instances."""
+    """Create TestRunCase records for an explicit list of TestCase instances.
+
+    Deduplicates against cases that are already part of the run — the same
+    TestCase cannot appear twice in a run.
+    """
     cases = list(test_cases)
     if not cases:
         return []
 
+    existing_case_ids = set(
+        run.run_cases.values_list("test_case_id", flat=True)
+    )
+    new_cases = [case for case in cases if case.id not in existing_case_ids]
+    if not new_cases:
+        return []
+
     run_cases = [
         _build_run_case(run, case, order_index=base_order_index + i)
-        for i, case in enumerate(cases)
+        for i, case in enumerate(new_cases)
     ]
     TestRunCase.objects.bulk_create(run_cases)
     return run_cases
@@ -201,6 +217,7 @@ def get_or_create_adhoc_run_case(test_case: TestCase, *, triggered_by=None) -> T
             test_case=test_case,
             status=TestRunCaseStatus.PENDING,
             run__trigger_type=TestRunTriggerType.MANUAL,
+            run__run_kind=TestRunKind.SYSTEM_GENERATED,
             run__status=TestRunStatus.PENDING,
         )
         .select_related("run")
@@ -216,6 +233,7 @@ def get_or_create_adhoc_run_case(test_case: TestCase, *, triggered_by=None) -> T
             name=f"Ad-hoc - {test_case.title[:200]}",
             created_by=triggered_by,
             trigger_type=TestRunTriggerType.MANUAL,
+            run_kind=TestRunKind.SYSTEM_GENERATED,
         )
         run_case = _build_run_case(run, test_case)
         run_case.save()
@@ -259,6 +277,95 @@ def release_run_case_lease(run_case: TestRunCase) -> TestRunCase:
 # ---------------------------------------------------------------------------
 # Status sync helper (called after execution result is written)
 # ---------------------------------------------------------------------------
+
+def execute_pending_run_cases(
+    run: TestRun,
+    *,
+    triggered_by=None,
+    browser: str | None = None,
+    platform: str | None = None,
+) -> list:
+    """Queue an execution for every pending run-case in this run.
+
+    Reuses each test case's active AutomationScript through the existing
+    automation pipeline. Concurrency is bounded by Celery worker concurrency
+    and Selenium Grid capacity — not by this function.
+    """
+    from apps.automation.models.choices import (
+        ExecutionBrowser,
+        ExecutionPlatform,
+        ExecutionTriggerType,
+    )
+    from apps.automation.services import create_execution_record, queue_execution
+
+    resolved_browser = browser or ExecutionBrowser.CHROMIUM
+    resolved_platform = platform or ExecutionPlatform.DESKTOP
+
+    pending_cases = list(
+        run.run_cases.select_related("test_case", "test_case_revision")
+        .filter(status=TestRunCaseStatus.PENDING)
+        .order_by("order_index")
+    )
+    executions = []
+    for run_case in pending_cases:
+        if run_case.test_case_id is None:
+            continue
+        execution = create_execution_record(
+            test_case=run_case.test_case,
+            triggered_by=triggered_by,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser=resolved_browser,
+            platform=resolved_platform,
+            run_case=run_case,
+        )
+        queue_execution(execution)
+        executions.append(execution)
+
+    start_test_run(run)
+    return executions
+
+
+def rerun_failed_run_cases(
+    run: TestRun,
+    *,
+    triggered_by=None,
+    browser: str | None = None,
+    platform: str | None = None,
+) -> list:
+    """Reset failed/error run-cases back to pending and re-queue executions.
+
+    Keeps the same TestRun and TestRunCase rows so attempt history accumulates
+    on the existing records. Run status is also reset to pending so the
+    aggregate run lifecycle reflects the new attempt.
+    """
+    failed_statuses = {TestRunCaseStatus.FAILED, TestRunCaseStatus.ERROR}
+    failed_cases = list(
+        run.run_cases.select_related("test_case")
+        .filter(status__in=failed_statuses)
+    )
+    if not failed_cases:
+        return []
+
+    for run_case in failed_cases:
+        run_case.status = TestRunCaseStatus.PENDING
+        run_case.leased_at = None
+        run_case.leased_by = ""
+        run_case.save(
+            update_fields=["status", "leased_at", "leased_by", "updated_at"]
+        )
+
+    if run.status in {TestRunStatus.PASSED, TestRunStatus.FAILED, TestRunStatus.CANCELLED}:
+        run.status = TestRunStatus.PENDING
+        run.ended_at = None
+        run.save(update_fields=["status", "ended_at"])
+
+    return execute_pending_run_cases(
+        run,
+        triggered_by=triggered_by,
+        browser=browser,
+        platform=platform,
+    )
+
 
 def sync_run_case_status_from_execution(run_case: TestRunCase, execution_status: str) -> TestRunCase:
     """

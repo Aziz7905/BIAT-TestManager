@@ -93,6 +93,12 @@ class TestRunStatus(models.TextChoices):
     CANCELLED = "cancelled", "Cancelled"
 
 
+class TestRunKind(models.TextChoices):
+    PLANNED = "planned", "Planned"
+    STANDALONE = "standalone", "Standalone"
+    SYSTEM_GENERATED = "system_generated", "System Generated"
+
+
 class TestRunCaseStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     RUNNING = "running", "Running"

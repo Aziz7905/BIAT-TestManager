@@ -1,32 +1,35 @@
 import { useEffect, useState } from "react";
-import { createTestPlan } from "../../../api/runs";
+import { createTestPlan, updateTestPlan } from "../../../api/runs";
 import type { TestPlan } from "../../../types/runs";
 import { Button, Modal } from "../../ui";
 
 interface CreateTestPlanModalProps {
   open: boolean;
   projectId: string;
+  plan?: TestPlan | null;
   onClose: () => void;
-  onCreated: (plan: TestPlan) => void;
+  onSaved: (plan: TestPlan) => void;
 }
 
 export default function CreateTestPlanModal({
   open,
   projectId,
+  plan,
   onClose,
-  onCreated,
+  onSaved,
 }: CreateTestPlanModalProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isEditing = Boolean(plan);
 
   useEffect(() => {
     if (!open) return;
-    setName("");
-    setDescription("");
+    setName(plan?.name ?? "");
+    setDescription(plan?.description ?? "");
     setError(null);
-  }, [open]);
+  }, [open, plan]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -34,14 +37,19 @@ export default function CreateTestPlanModal({
     setError(null);
 
     try {
-      const plan = await createTestPlan({
-        project: projectId,
-        name: name.trim(),
-        description: description.trim(),
-      });
-      onCreated(plan);
+      const savedPlan = plan
+        ? await updateTestPlan(plan.id, {
+            name: name.trim(),
+            description: description.trim(),
+          })
+        : await createTestPlan({
+            project: projectId,
+            name: name.trim(),
+            description: description.trim(),
+          });
+      onSaved(savedPlan);
     } catch {
-      setError("Could not create this test plan.");
+      setError(isEditing ? "Could not update this test plan." : "Could not create this test plan.");
     } finally {
       setSaving(false);
     }
@@ -51,7 +59,7 @@ export default function CreateTestPlanModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="New test plan"
+      title={isEditing ? "Edit test plan" : "New test plan"}
       size="lg"
       footer={
         <>
@@ -64,7 +72,7 @@ export default function CreateTestPlanModal({
             isLoading={saving}
             disabled={!name.trim()}
           >
-            Create plan
+            {isEditing ? "Save changes" : "Create plan"}
           </Button>
         </>
       }

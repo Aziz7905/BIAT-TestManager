@@ -50,6 +50,7 @@ from apps.automation.services import (
     trigger_execution_schedule,
 )
 from apps.automation.services.control import ExecutionControlUnavailable
+from apps.testing.models import TestRunKind
 
 
 class ExecutionControlUnavailableApiError(APIException):
@@ -145,6 +146,11 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
         test_case_id = self.request.query_params.get("test_case")
         status_value = self.request.query_params.get("status")
         trigger_type = self.request.query_params.get("trigger_type")
+        exclude_user_runs = self.request.query_params.get("exclude_user_runs") in {
+            "1",
+            "true",
+            "yes",
+        }
         include_diagnostic = self.request.query_params.get("include_diagnostic") in {
             "1",
             "true",
@@ -165,6 +171,13 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
             queryset = queryset.filter(trigger_type=trigger_type)
         elif not include_diagnostic:
             queryset = queryset.exclude(trigger_type=ExecutionTriggerType.DIAGNOSTIC)
+        if exclude_user_runs:
+            queryset = queryset.exclude(
+                run_case__run__run_kind__in=[
+                    TestRunKind.PLANNED,
+                    TestRunKind.STANDALONE,
+                ]
+            )
         return queryset
 
     def get_serializer_class(self):

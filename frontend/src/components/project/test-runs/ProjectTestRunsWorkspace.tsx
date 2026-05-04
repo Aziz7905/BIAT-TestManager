@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import {
+  archiveTestPlan,
   closeTestRun,
+  deleteRunCase,
+  deleteTestRun,
   executeRunCase,
+  executeTestRun,
   getRunCases,
   getTestPlans,
   getTestRuns,
+  rerunFailedTestRun,
   startTestRun,
   updateRunCaseStatus,
 } from "../../../api/runs";
@@ -18,7 +22,7 @@ import type {
   TestRunCaseStatus,
 } from "../../../types/runs";
 import type { ProjectTree, TreeSection } from "../../../types/testing";
-import { Badge, Button, EmptyState, ErrorMessage, Spinner } from "../../ui";
+import { Badge, Button, ConfirmDialog, EmptyState, ErrorMessage, Spinner } from "../../ui";
 import {
   executionStatusTone,
   formatDateTime,
@@ -27,6 +31,7 @@ import {
 } from "../repository/shared";
 import CreateTestPlanModal from "./CreateTestPlanModal";
 import CreateTestRunModal from "./CreateTestRunModal";
+import EditTestRunModal from "./EditTestRunModal";
 import ExpandRunScopeModal from "./ExpandRunScopeModal";
 
 const MANUAL_STATUSES: TestRunCaseStatus[] = [
@@ -183,10 +188,19 @@ export default function ProjectTestRunsWorkspace({
   const [isLoadingRuns, setIsLoadingRuns] = useState(true);
   const [isLoadingCases, setIsLoadingCases] = useState(false);
   const [mutatingRunCaseId, setMutatingRunCaseId] = useState<string | null>(null);
+  const [isBatchExecuting, setIsBatchExecuting] = useState(false);
+  const [isRerunningFailed, setIsRerunningFailed] = useState(false);
+  const [planToArchive, setPlanToArchive] = useState<TestPlan | null>(null);
+  const [runToDelete, setRunToDelete] = useState<TestRun | null>(null);
+  const [runCaseToRemove, setRunCaseToRemove] = useState<TestRunCase | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoRefreshToken, setAutoRefreshToken] = useState(0);
+  const [planStatusFilter, setPlanStatusFilter] = useState<"active" | "archived">("active");
   const [showCreatePlan, setShowCreatePlan] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<TestPlan | null>(null);
   const [showCreateRun, setShowCreateRun] = useState(false);
+  const [showEditRun, setShowEditRun] = useState(false);
   const [showExpandRun, setShowExpandRun] = useState(false);
 
   const suiteOptions = useMemo(() => buildSuiteOptions(projectTree), [projectTree]);
@@ -286,6 +300,75 @@ export default function ProjectTestRunsWorkspace({
     }
   }
 
+  function handleArchivePlan(plan: TestPlan) {
+    setPlanToArchive(plan);
+  }
+
+  async function confirmArchivePlan() {
+    if (!planToArchive) return;
+    const wasArchived = planToArchive.status === "archived";
+    setIsConfirming(true);
+    setError(null);
+    try {
+      await archiveTestPlan(planToArchive.id);
+      if (wasArchived) {
+        setSelectedPlanId(null);
+        setSelectedRunId(null);
+        setRuns([]);
+        setRunCases([]);
+      }
+      await loadPlans();
+      await loadRuns();
+      setPlanToArchive(null);
+    } catch {
+      setError(wasArchived ? "Could not delete this test plan." : "Could not archive this test plan.");
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  function handleDeleteRun(run: TestRun) {
+    setRunToDelete(run);
+  }
+
+  function handleRemoveRunCase(runCase: TestRunCase) {
+    setRunCaseToRemove(runCase);
+  }
+
+  async function confirmRemoveRunCase() {
+    if (!runCaseToRemove) return;
+    setIsConfirming(true);
+    setError(null);
+    try {
+      await deleteRunCase(runCaseToRemove.id);
+      setRunCases((current) => current.filter((rc) => rc.id !== runCaseToRemove.id));
+      setRunCaseToRemove(null);
+      void loadRuns();
+    } catch {
+      setError("Could not remove this run case. It may already have executions.");
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  async function confirmDeleteRun() {
+    if (!runToDelete) return;
+    setIsConfirming(true);
+    setError(null);
+    try {
+      await deleteTestRun(runToDelete.id);
+      setSelectedRunId(null);
+      setRunCases([]);
+      await loadRuns();
+      await loadPlans();
+      setRunToDelete(null);
+    } catch {
+      setError("Could not delete this run.");
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
   async function handleRunCaseStatus(runCase: TestRunCase, status: TestRunCaseStatus) {
     setRunCases((current) =>
       current.map((item) => (item.id === runCase.id ? { ...item, status } : item)),
@@ -297,6 +380,36 @@ export default function ProjectTestRunsWorkspace({
     } catch {
       setError("Could not update this run case.");
       void loadRunCases();
+    }
+  }
+
+  async function handleRerunFailed() {
+    if (!selectedRun) return;
+    setIsRerunningFailed(true);
+    setError(null);
+    try {
+      await rerunFailedTestRun(selectedRun.id);
+      void loadRuns();
+      void loadRunCases();
+    } catch {
+      setError("Could not re-run failed cases.");
+    } finally {
+      setIsRerunningFailed(false);
+    }
+  }
+
+  async function handleExecuteAll() {
+    if (!selectedRun) return;
+    setIsBatchExecuting(true);
+    setError(null);
+    try {
+      await executeTestRun(selectedRun.id);
+      void loadRuns();
+      void loadRunCases();
+    } catch {
+      setError("Could not queue the run.");
+    } finally {
+      setIsBatchExecuting(false);
     }
   }
 
@@ -316,6 +429,20 @@ export default function ProjectTestRunsWorkspace({
     }
   }
 
+  const visiblePlans = useMemo(
+    () =>
+      plans.filter((plan) =>
+        planStatusFilter === "archived"
+          ? plan.status === "archived"
+          : plan.status !== "archived",
+      ),
+    [plans, planStatusFilter],
+  );
+  const archivedCount = useMemo(
+    () => plans.filter((plan) => plan.status === "archived").length,
+    [plans],
+  );
+  const activeCount = plans.length - archivedCount;
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? null;
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null;
   const runSummary = useMemo(() => computeRunSummary(runCases), [runCases]);
@@ -336,6 +463,33 @@ export default function ProjectTestRunsWorkspace({
             </Button>
           </div>
 
+          <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-3 py-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setPlanStatusFilter("active")}
+              className={[
+                "rounded-md px-2.5 py-1 font-medium transition",
+                planStatusFilter === "active"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100",
+              ].join(" ")}
+            >
+              Active ({activeCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlanStatusFilter("archived")}
+              className={[
+                "rounded-md px-2.5 py-1 font-medium transition",
+                planStatusFilter === "archived"
+                  ? "bg-slate-900 text-white"
+                  : "text-slate-600 hover:bg-slate-100",
+              ].join(" ")}
+            >
+              Archived ({archivedCount})
+            </button>
+          </div>
+
           <div className="flex-1 overflow-y-auto">
             {isLoadingPlans && (
               <div className="flex justify-center py-8">
@@ -343,22 +497,25 @@ export default function ProjectTestRunsWorkspace({
               </div>
             )}
 
-            {!isLoadingPlans && plans.length === 0 && (
+            {!isLoadingPlans && visiblePlans.length === 0 && (
               <div className="px-4 py-8">
                 <EmptyState
-                  title="No test plans yet"
-                  description="Create a plan to group meaningful runs instead of mixing them with ad-hoc automation history."
+                  title={
+                    planStatusFilter === "archived"
+                      ? "No archived plans"
+                      : "No test plans yet"
+                  }
+                  description={
+                    planStatusFilter === "archived"
+                      ? "Plans you archive will appear here."
+                      : "Use the New plan button above to start a release or regression cycle."
+                  }
                 />
-                <div className="mt-4">
-                  <Button size="sm" onClick={() => setShowCreatePlan(true)}>
-                    Create first plan
-                  </Button>
-                </div>
               </div>
             )}
 
             {!isLoadingPlans &&
-              plans.map((plan) => (
+              visiblePlans.map((plan) => (
                 <button
                   key={plan.id}
                   type="button"
@@ -437,13 +594,8 @@ export default function ProjectTestRunsWorkspace({
               <div className="px-4 py-8">
                 <EmptyState
                   title="No runs in this plan"
-                  description="Add a run and scope it to a suite or section to start executing approved cases."
+                  description="Use the Add run button above to scope a run to a suite or section and start executing approved cases."
                 />
-                <div className="mt-4">
-                  <Button onClick={() => setShowCreateRun(true)} disabled={!canCreateRun}>
-                    Add first run
-                  </Button>
-                </div>
               </div>
             )}
 
@@ -505,8 +657,8 @@ export default function ProjectTestRunsWorkspace({
               plan={selectedPlan}
               summary={planSummary}
               runs={runs}
-              canCreateRun={canCreateRun}
-              onCreateRun={() => setShowCreateRun(true)}
+              onEditPlan={() => setEditingPlan(selectedPlan)}
+              onArchivePlan={() => void handleArchivePlan(selectedPlan)}
             />
           )}
 
@@ -546,10 +698,51 @@ export default function ProjectTestRunsWorkspace({
                     <Button
                       size="sm"
                       variant="secondary"
+                      onClick={() => setShowEditRun(true)}
+                    >
+                      Edit run
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => void handleDeleteRun(selectedRun)}
+                      disabled={isBatchExecuting || selectedRun.status === "running"}
+                    >
+                      Delete run
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
                       onClick={() => void mutateRun(() => startTestRun(selectedRun.id))}
                       disabled={selectedRun.status !== "pending" || runCases.length === 0}
                     >
                       Start run
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => void handleExecuteAll()}
+                      isLoading={isBatchExecuting}
+                      loadingText="Queuing..."
+                      disabled={
+                        isBatchExecuting ||
+                        runSummary.pending === 0 ||
+                        runSummary.automated === 0 ||
+                        selectedRun.status === "passed" ||
+                        selectedRun.status === "failed" ||
+                        selectedRun.status === "cancelled"
+                      }
+                    >
+                      Run all pending
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void handleRerunFailed()}
+                      isLoading={isRerunningFailed}
+                      loadingText="Queuing..."
+                      disabled={isRerunningFailed || runSummary.failed === 0}
+                    >
+                      Re-run failed
                     </Button>
                     <Button
                       size="sm"
@@ -604,13 +797,8 @@ export default function ProjectTestRunsWorkspace({
                     <div className="px-6 py-10">
                       <EmptyState
                         title="No run cases yet"
-                        description="Add approved cases from a suite or section to make this run ready for execution."
+                        description="Use the Add approved cases button above to seed this run from a suite or section."
                       />
-                      <div className="mt-4">
-                        <Button onClick={() => setShowExpandRun(true)} disabled={!canCreateRun}>
-                          Add approved cases
-                        </Button>
-                      </div>
                     </div>
                   )}
 
@@ -620,10 +808,10 @@ export default function ProjectTestRunsWorkspace({
                         <RunCaseRow
                           key={runCase.id}
                           runCase={runCase}
-                          projectId={projectId}
                           isMutating={mutatingRunCaseId === runCase.id}
                           onManualStatusChange={(status) => void handleRunCaseStatus(runCase, status)}
                           onExecute={() => void handleExecute(runCase)}
+                          onRemove={() => handleRemoveRunCase(runCase)}
                         />
                       ))}
                     </ul>
@@ -639,11 +827,22 @@ export default function ProjectTestRunsWorkspace({
         open={showCreatePlan}
         projectId={projectId}
         onClose={() => setShowCreatePlan(false)}
-        onCreated={(plan) => {
+        onSaved={(plan) => {
           setPlans((current) => [plan, ...current]);
           setSelectedPlanId(plan.id);
           setSelectedRunId(null);
           setShowCreatePlan(false);
+        }}
+      />
+
+      <CreateTestPlanModal
+        open={Boolean(editingPlan)}
+        projectId={projectId}
+        plan={editingPlan}
+        onClose={() => setEditingPlan(null)}
+        onSaved={(plan) => {
+          setPlans((current) => current.map((item) => (item.id === plan.id ? plan : item)));
+          setEditingPlan(null);
         }}
       />
 
@@ -666,6 +865,17 @@ export default function ProjectTestRunsWorkspace({
         />
       )}
 
+      <EditTestRunModal
+        open={showEditRun}
+        run={selectedRun}
+        onClose={() => setShowEditRun(false)}
+        onSaved={(run) => {
+          setRuns((current) => current.map((item) => (item.id === run.id ? run : item)));
+          setSelectedRunId(run.id);
+          setShowEditRun(false);
+        }}
+      />
+
       <ExpandRunScopeModal
         open={showExpandRun}
         runId={selectedRun?.id ?? null}
@@ -679,6 +889,67 @@ export default function ProjectTestRunsWorkspace({
           void loadRunCases();
         }}
       />
+
+      <ConfirmDialog
+        open={planToArchive !== null}
+        title={planToArchive?.status === "archived" ? "Delete archived plan" : "Archive test plan"}
+        description={
+          planToArchive ? (
+            planToArchive.status === "archived" ? (
+              <>
+                Permanently delete <span className="font-semibold text-slate-900">{planToArchive.name}</span>?
+                Its runs and run cases will be removed. This cannot be undone.
+              </>
+            ) : (
+              <>
+                Archive <span className="font-semibold text-slate-900">{planToArchive.name}</span>?
+                It stays in history but leaves the active workflow.
+              </>
+            )
+          ) : null
+        }
+        confirmLabel={planToArchive?.status === "archived" ? "Delete plan" : "Archive plan"}
+        tone="danger"
+        isLoading={isConfirming}
+        onConfirm={() => void confirmArchivePlan()}
+        onCancel={() => setPlanToArchive(null)}
+      />
+
+      <ConfirmDialog
+        open={runCaseToRemove !== null}
+        title="Remove run case"
+        description={
+          runCaseToRemove ? (
+            <>
+              Remove <span className="font-semibold text-slate-900">{runCaseToRemove.test_case_title}</span> from
+              this run? Only pending cases with no executions can be removed.
+            </>
+          ) : null
+        }
+        confirmLabel="Remove case"
+        tone="danger"
+        isLoading={isConfirming}
+        onConfirm={() => void confirmRemoveRunCase()}
+        onCancel={() => setRunCaseToRemove(null)}
+      />
+
+      <ConfirmDialog
+        open={runToDelete !== null}
+        title="Delete run"
+        description={
+          runToDelete ? (
+            <>
+              Delete <span className="font-semibold text-slate-900">{runToDelete.name}</span> and
+              all of its run cases? This cannot be undone.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete run"
+        tone="danger"
+        isLoading={isConfirming}
+        onConfirm={() => void confirmDeleteRun()}
+        onCancel={() => setRunToDelete(null)}
+      />
     </>
   );
 }
@@ -687,14 +958,14 @@ function PlanOverviewPanel({
   plan,
   summary,
   runs,
-  canCreateRun,
-  onCreateRun,
+  onEditPlan,
+  onArchivePlan,
 }: {
   plan: TestPlan;
   summary: PlanSummary;
   runs: TestRun[];
-  canCreateRun: boolean;
-  onCreateRun: () => void;
+  onEditPlan: () => void;
+  onArchivePlan: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -714,9 +985,14 @@ function PlanOverviewPanel({
             </p>
           </div>
 
-          <Button onClick={onCreateRun} disabled={!canCreateRun}>
-            Add run
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={onEditPlan}>
+              Edit plan
+            </Button>
+            <Button variant="danger" onClick={onArchivePlan}>
+              {plan.status === "archived" ? "Delete plan" : "Archive plan"}
+            </Button>
+          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -800,24 +1076,25 @@ function StatCard({
 
 interface RunCaseRowProps {
   runCase: TestRunCase;
-  projectId: string;
   isMutating: boolean;
   onManualStatusChange: (status: TestRunCaseStatus) => void;
   onExecute: () => void;
+  onRemove: () => void;
 }
 
 function RunCaseRow({
   runCase,
-  projectId,
   isMutating,
   onManualStatusChange,
   onExecute,
+  onRemove,
 }: RunCaseRowProps) {
   const execution = runCase.latest_execution;
   const isAutomated = runCase.test_case_automation_status === "automated";
   const isLive = isExecutionLive(execution);
   const result = execution?.result ?? null;
-  const canOpenLive = Boolean(isLive && execution?.has_browser_session);
+  const isRemovable =
+    runCase.status === "pending" && runCase.attempt_count === 0 && !execution;
 
   return (
     <li className="flex flex-wrap items-start gap-4 bg-white px-6 py-4">
@@ -901,15 +1178,6 @@ function RunCaseRow({
           </Button>
         )}
 
-        {canOpenLive && execution && (
-          <Link
-            to={`/projects/${projectId}/automation/executions/${execution.id}/live`}
-            className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 transition hover:bg-slate-50"
-          >
-            Live view
-          </Link>
-        )}
-
         {!isAutomated && (
           <select
             value={runCase.status}
@@ -923,6 +1191,18 @@ function RunCaseRow({
               </option>
             ))}
           </select>
+        )}
+
+        {isRemovable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRemove}
+            disabled={isMutating}
+            title="Remove this case from the run"
+          >
+            Remove
+          </Button>
         )}
       </div>
     </li>

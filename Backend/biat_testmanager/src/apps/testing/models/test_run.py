@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 
-from .choices import TestRunStatus, TestRunTriggerType
+from .choices import TestRunKind, TestRunStatus, TestRunTriggerType
 
 
 class TestRun(models.Model):
@@ -31,6 +31,12 @@ class TestRun(models.Model):
         max_length=20,
         choices=TestRunTriggerType.choices,
         default=TestRunTriggerType.MANUAL,
+    )
+    run_kind = models.CharField(
+        max_length=20,
+        choices=TestRunKind.choices,
+        default=TestRunKind.PLANNED,
+        db_index=True,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

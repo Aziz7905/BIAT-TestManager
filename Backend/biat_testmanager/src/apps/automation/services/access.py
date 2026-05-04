@@ -92,6 +92,7 @@ def get_test_execution_queryset_for_actor(actor):
         "test_case__scenario__section__suite",
         "test_case__scenario__section__suite__project",
         "run_case",
+        "run_case__run",
         "run_case__test_case_revision",
         "environment",
         "script",
