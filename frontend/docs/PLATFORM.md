@@ -1,105 +1,73 @@
 # BIAT TestManager — Frontend Documentation
 
-**Last updated:** 2026-04-26
-**Scope:** What the frontend is right now. Single source of truth. Other frontend `.md` files (`frontend-current-state.md`, `frontend-plan.md`) are historical phase notes; read this first.
+**Last updated:** 2026-05-08
+**Status:** Single source of truth for the frontend application
 
 ---
 
-## 1. Frontend in one paragraph
+## What this document is
 
-The frontend is a Vite + React 19 + TypeScript SPA that consumes the Django REST + WebSocket backend. It implements authentication, an admin section (users / teams), a projects list, and a project workspace where the user navigates the test repository tree and works inside dedicated panels: repository (suites → cases), specifications, automation (live execution + noVNC browser streaming), and test runs. The UI is intentionally workspace-first — most real work happens inside `/projects/:id` rather than across many top-level pages.
+This is the **master document** for the frontend SPA. Read this first. It explains:
+
+1. What the frontend is and what it shouldn't try to be
+2. The IA (Information Architecture) — workspace-first, not page-sprawl
+3. Where to find detailed documentation for each surface
+4. The current state and the next steps
+
+For the backend's perspective, see `Backend/biat_testmanager/docs/PLATFORM.md`.
 
 ---
 
-## 2. Stack
+## 1. The frontend in one paragraph
+
+A Vite + React 19 + TypeScript SPA that consumes the Django REST + WebSocket backend. It implements authentication, an admin section (users / teams), a projects list, and a **workspace-first** project view where most of the actual work happens. Inside `/projects/:id`, the user navigates a four-tab workspace: **Repository** (test cases), **Specifications** (requirements), **Test Runs** (planning + execution), and **Automation** (live execution + AI agent sessions). The frontend is workspace-first by design — top-level pages are kept minimal and the rich functionality lives inside the project workspace.
+
+---
+
+## 2. The product principle that drives the IA
+
+The platform is the bank's QA workflow. A QA team member spends **most of their time inside one project**. The IA must make that natural — not forcing them to navigate across many top-level pages.
+
+**Workspace-first means:**
+- Top-level pages: login, projects list, profile, admin
+- Everything else: lives inside `/projects/:id` as tabs, panels, and modals
+- Cross-project navigation: switch projects via a project picker, not a top-level "Test Cases" page
+
+This is intentional. It maps to how the user thinks: *"I'm working on the Banking App today"* — not *"I'm using the Test Cases module across all projects."*
+
+---
+
+## 3. Stack
 
 - **Vite** + **React 19** + **TypeScript**
-- **Tailwind CSS v4** (via `@tailwindcss/vite` — no PostCSS)
+- **Tailwind CSS v4** (via `@tailwindcss/vite` plugin — no PostCSS)
 - **React Router v7** (BrowserRouter)
-- **Zustand v5** (auth + execution stores)
+- **Zustand v5** (auth + execution stores only — no global app state)
 - **Axios v1** with JWT interceptor + silent refresh
-- **noVNC RFB** (direct WebSocket browser pixel streaming)
+- **noVNC RFB** library for direct WebSocket browser pixel streaming
 - **Plus Jakarta Sans** typeface
 
----
-
-## 3. Directory layout
-
-```
-frontend/src/
-├─ main.tsx                  # React entry
-├─ App.tsx                   # bootstraps authStore, mounts AppRouter
-├─ index.css                 # Tailwind + CSS custom-property tokens
-│
-├─ api/
-│   ├─ client.ts             # Axios + JWT request/refresh interceptors
-│   ├─ accounts/             # auth, profile, users, teams
-│   ├─ projects/             # projects, project tree, members
-│   ├─ specs/                # source intake, specification CRUD, indexing
-│   ├─ automation/           # scripts, executions, stream tickets, checkpoints
-│   ├─ runs.ts               # plans, runs, run-cases, expansion
-│   ├─ specs.ts              # legacy module (kept while specs/ namespace stabilises)
-│   └─ testing.ts            # legacy module (kept while api/testing/ stabilises)
-│
-├─ store/
-│   ├─ authStore.ts          # bootstrap, hasHydrated, sessionExpired, login/logout
-│   └─ executionStore.ts     # live execution snapshot + WebSocket event merge
-│
-├─ router/
-│   ├─ AppRouter.tsx         # Routes + role-aware redirects
-│   └─ ProtectedRoute.tsx    # hydration-aware guard, AdminRoute
-│
-├─ pages/
-│   ├─ LoginPage.tsx
-│   ├─ ProjectsPage.tsx
-│   ├─ ProjectWorkspacePage.tsx     # tabbed workspace (Repository / Specs / Automation / Runs)
-│   ├─ AutomationLivePage.tsx       # full-screen live execution (steps + noVNC)
-│   ├─ DashboardPage.tsx            # reporting overview (skeleton)
-│   ├─ ProfilePage.tsx
-│   └─ admin/                       # UsersPage, TeamsPage
-│
-├─ components/
-│   ├─ ui/                          # Button, Input, Modal, PageHeader, EmptyState, …
-│   ├─ project/
-│   │   ├─ ProjectTree.tsx          # full repository tree, lazy case loading
-│   │   ├─ RepositoryDetailPane.tsx # entity-aware right panel
-│   │   ├─ ProjectMembersModal.tsx
-│   │   ├─ tree/                    # tree CRUD widgets
-│   │   ├─ case-editor/             # structured steps, preconditions, expected result
-│   │   ├─ repository/              # suite/section/scenario detail panels
-│   │   ├─ specs/                   # specs intake + record review
-│   │   ├─ automation/
-│   │   │   ├─ ProjectAutomationWorkspace.tsx
-│   │   │   ├─ NoVncViewer.tsx      # RFB direct WebSocket viewer
-│   │   │   └─ …                    # script editor, execution sidebar, step timeline
-│   │   └─ test-runs/
-│   │       └─ ProjectTestRunsWorkspace.tsx  # plans / runs / run-cases panes
-│   │
-└─ types/                          # auth, accounts, testing, automation, specs
-```
+**No:**
+- Redux / RTK / TanStack Query — overengineering for this scope
+- Component library (MUI, Chakra) — Tailwind v4 + custom components is enough
+- SSR / Next — pure SPA, JWT-authenticated, served as static assets
 
 ---
 
-## 4. Authentication
+## 4. Apps and surfaces
 
-- Token storage: `localStorage` keys `biat_access` / `biat_refresh`.
-- Login → `POST /api/login/` with `{ identifier, password }` (identifier accepts email **or** username).
-- Axios request interceptor adds `Authorization: Bearer <access>`.
-- 401 → response interceptor calls `POST /api/refresh/` once, retries the original request. Failure clears tokens + emits `biat-auth-expired` → `/login` with `state.reason="expired"`.
-- `authStore` state: `user`, `accessToken`, `isAuthenticated`, `hasHydrated`, `sessionExpired`.
-- `App.tsx` calls `bootstrap()` on mount; `ProtectedRoute` and `AdminRoute` wait for hydration before deciding.
+The frontend covers four backend layers (mapped to the three-layer backend architecture):
 
-### Role-based redirects
-
-| `organization_role` | Post-login destination |
-|---|---|
-| `platform_owner` | `/admin/users` |
-| `org_admin` | `/admin/users` |
-| `member` | `/projects` |
+| Frontend surface | Backend layer | What it does |
+|---|---|---|
+| **Auth + Profile + Admin** | Layer 1 (accounts) | Login, password change, user management, team management |
+| **Projects** + **Repository tab** + **Test Runs tab** + **Specifications tab** | Layer 1 (data management) | TestRail-style: organize, plan, manage. Also: ingest results from external CI / IDE via the hybrid path. |
+| **Automation tab** + **AutomationLivePage** | Layer 2 (regression + interactive execution) | Run scripts, watch executions on opt-in basis, debug failures via debug rerun |
+| **AI surfaces** (Phase E + D) — planned | Layer 3 (AI agent) | KaneAI-style: generate tests, agent sessions (always-on noVNC), review queue, RCA |
 
 ---
 
-## 5. Routes
+## 5. Top-level routes
 
 | Path | Page | Guard |
 |---|---|---|
@@ -108,161 +76,157 @@ frontend/src/
 | `/projects/:id` | ProjectWorkspacePage | Protected |
 | `/projects/:id/automation/executions/:executionId/live` | AutomationLivePage | Protected |
 | `/profile` | ProfilePage | Protected |
-| `/admin/users` | admin/UsersPage | AdminRoute |
-| `/admin/teams` | admin/TeamsPage | AdminRoute |
+| `/admin/users` | UsersPage | AdminRoute |
+| `/admin/teams` | TeamsPage | AdminRoute |
+| (planned) `/projects/:id/ai/review-queue` | AIReviewQueuePage | Protected |
+
+The list is intentionally short. **No "all test cases across all projects" page. No "all executions" page. No "all specs" page.** Everything is per-project.
+
+### 5.1 Role-based redirects after login
+| `organization_role` | Post-login destination |
+|---|---|
+| `platform_owner` | `/admin/users` |
+| `org_admin` | `/admin/users` |
+| `member` | `/projects` |
 
 ---
 
-## 6. Project workspace (the core of the product)
+## 6. The project workspace (the heart of the product)
 
-`ProjectWorkspacePage` is a tabbed workspace, not a multi-page section. The same project header stays in place; tabs swap the body.
+`ProjectWorkspacePage` is a **tabbed workspace**. The same project header stays in place; tabs swap the body.
 
-### Tabs
+```
+┌─────────────────────────────────────────────────────────────┐
+│  TopNav                                                     │
+├─────────────────────────────────────────────────────────────┤
+│  Project header: name, status, members, actions            │
+│  ┌───────────────────────────────────────────────────────┐ │
+│  │ [Repository] [Specifications] [Test Runs] [Automation]│ │
+│  └───────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│                     ACTIVE TAB CONTENT                      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
-1. **Repository** — `ProjectTree` (suite → section → scenario → case) on the left, `RepositoryDetailPane` on the right (entity-aware: shows the right detail card for whatever the user clicked). Test cases open a structured editor with revisable design fields. Tree CRUD widgets live in `components/project/tree/`.
+### 6.1 Repository tab
+- **Left:** `ProjectTree` (suite → section → scenario → case) with lazy case loading and full CRUD
+- **Right:** `RepositoryDetailPane` — entity-aware, shows the right detail card for whatever the user clicked
+- **Test cases** open a structured editor modal (steps, preconditions, expected result, linked specs)
+- Tree CRUD widgets in `components/project/tree/`
 
-2. **Specifications** — source intake (file / URL), parsed source-record review queue, imported `Specification` browser, traceability links from chunks back to scenarios / cases.
+### 6.2 Specifications tab
+- Source intake (file upload, URL, Jira link)
+- Parsed source-record review queue (approve/edit/reject)
+- Imported `Specification` browser
+- Traceability links from chunks back to scenarios/cases
 
-3. **Automation** — `ProjectAutomationWorkspace`. Three regions:
-   - Execution sidebar (list of recent executions, status badges).
-   - Browser panel (`NoVncViewer` — RFB direct WebSocket to Selenium Grid node noVNC). "Start" button + "Full screen" button always visible side by side. Full screen opens `AutomationLivePage`.
-   - Step timeline + result panel (live updates from the WebSocket stream).
+### 6.3 Test Runs tab
+- Three panes: **Plans** · **Runs** · **Run Cases**
+- Plans group runs into milestones / sprints
+- Runs show their `run_kind` badge (planned / standalone / system_generated)
+- Run Cases show pinned `test_case_revision` and current status
+- Default filter: hide `system_generated` runs (they pollute the view; they're for AI agent ad-hoc executions)
 
-4. **Test Runs** — `ProjectTestRunsWorkspace`. Three panes: Plans · Runs · Run Cases. Each run-case shows the pinned `test_case_revision` and a status. Currently disconnected from execution results — that integration is the next planned change (see §11).
+### 6.4 Automation tab
+- **Execution sidebar:** list of recent executions, status badges. Filtered with `exclude_user_runs=true` so only ad-hoc / interactive / diagnostic executions show — Test Runs executions stay in their own tab.
+- **Browser panel:** `NoVncViewer` — RFB direct WebSocket to the noVNC consumer. Opens only when `execution.stream_enabled=True`.
+- **Step timeline + result panel:** live updates from the execution stream
+- "Watch this run" button — opt-in live streaming for regression / interactive runs
+- "Debug Rerun" button on failed runs — creates a new `interactive`-queue execution with `stream_enabled=True`
+- Full screen button → `AutomationLivePage`
 
----
-
-## 7. Live execution streaming
-
-Two viewing surfaces share one transport:
-
-| Surface | Where | When used |
-|---|---|---|
-| Inline workspace | `ProjectAutomationWorkspace` browser panel | Default — user picks an execution from the sidebar |
-| Full-screen | `AutomationLivePage` | "Full screen" button or direct link |
-
-### How it works
-
-1. User triggers execution → backend creates `TestExecution`, returns id.
-2. Frontend calls `POST /api/test-executions/{id}/stream-ticket/` → short-lived signed ticket.
-3. Frontend opens `ws/executions/{id}/?ticket=…`. `executionStore` merges the initial snapshot with subsequent events:
-   - `status` — execution lifecycle (queued / running / paused / passed / failed / error / cancelled)
-   - `step` — `ExecutionStep` upserts (step_index, action, status, screenshot URL, error)
-   - `artifact` — new `TestArtifact` rows
-   - `checkpoint` — `requested` / `resolved` / `expired` (drives the resume modal)
-   - `result` — final `TestResult`
-4. Browser pixel stream: `NoVncViewer` opens an RFB direct WebSocket to a backend consumer, which proxies to the Grid node's noVNC endpoint. `scaleViewport=true` fits the canvas to the panel.
-5. `dispatchEvent(new Event("resize"))` is fired ~1s after RFB connect to force a rescale (rescue path for late layout).
-
-### Checkpoints (human-in-the-loop)
-When the worker emits `require_human_action`, an `ExecutionCheckpoint` event arrives → modal shows title + instructions → user clicks Resume → `POST /api/test-executions/{eid}/checkpoints/{cid}/resume/` → worker continues.
-
----
-
-## 8. State
-
-### `authStore` (Zustand)
-`user`, `accessToken`, `isAuthenticated`, `hasHydrated`, `sessionExpired`, `bootstrap()`, `login()` (throws on failure — caller handles), `logout()`, `clearSession()`, `syncCurrentUserProfile()`.
-
-### `executionStore` (Zustand)
-Holds the merged live snapshot for the currently-watched execution. Reducer-style merge of incoming WS events. Components subscribe to slices (steps, status, checkpoints, artifacts) to avoid full-tree re-renders.
-
-There is intentionally **no global app-wide store** beyond auth + execution. Repository / specs / runs data is fetched per-route via Axios and held locally — keeping the architecture honest about what is actually shared state vs. transient view data.
+### 6.5 AI tab (planned, Phase E first, then D)
+- **Agent session launcher** (Step 5): prompt + spec doc + URL + optional screenshot/context → starts a LangGraph session. Always-on noVNC viewer + agent reasoning stream side by side.
+- **Review queue** for AI-generated candidates (`TestCase` drafts, `AutomationScript` candidates) — promote / edit / reject before they enter the canonical repository.
+- **RCA viewer** for failed runs (Step 7): renders `TestResult.ai_failure_analysis`.
+- **Amendment review** during agent sessions: accept/reject scenarios discovered live by the DOMInspector.
 
 ---
 
-## 9. Design system
+## 7. Where to find the details
 
-Custom Tailwind v4 tokens defined as CSS custom properties in `index.css`:
+| Document | What it covers |
+|---|---|
+| [`architecture/01-stack-and-structure.md`](architecture/01-stack-and-structure.md) | Stack details, directory layout, file conventions |
+| [`architecture/02-routing-and-auth.md`](architecture/02-routing-and-auth.md) | React Router setup, JWT flow, hydration, role-based redirects |
+| [`architecture/03-workspace-pattern.md`](architecture/03-workspace-pattern.md) | The tabbed workspace pattern, tree + detail panel, modal vs route decisions |
+| [`architecture/04-live-execution-ux.md`](architecture/04-live-execution-ux.md) | Stream policy in the UI, debug rerun, noVNC, full-screen mode, checkpoint modals |
+| [`architecture/05-ai-ux.md`](architecture/05-ai-ux.md) | AI test generation UI, review queues, agent live view (Phase D + E) |
+| [`architecture/06-design-system.md`](architecture/06-design-system.md) | Tailwind tokens, component conventions, typography |
 
-| Token | RGB | Use |
-|---|---|---|
-| `primary` | 37 99 235 | CTA, links (blue-600) |
-| `primary-light` | 219 234 254 | subtle backgrounds |
-| `surface` | 255 255 255 | cards, panels |
-| `bg` | 248 250 252 | page background |
-| `warm` | 234 88 12 | warnings (orange-600) |
-| `text` | 15 23 42 | body |
-| `muted` | 100 116 139 | secondary text |
-| `border` | 226 232 240 | borders |
+Plus:
 
-Font: Plus Jakarta Sans (declared in `tailwind.config.ts`, falls back to system-ui).
-
----
-
-## 10. API contracts the frontend depends on
-
-### Pagination
-DRF returns `{ count, next, previous, results[] }`. The `Array.isArray(data) ? data : data.results` guard is used throughout.
-
-### Type contract drift to watch
-- `UserProfile` includes `organization_role`, `team_memberships[]`, `team` (uuid), `team_name`, `notification_provider`, `notifications_enabled`. Legacy `primary_team` / `role` fields have been removed backend-side.
-- `TestCase` list responses use the **summary** serializer (no `gherkin_preview`, no `version_history`, no `latest_result_status`) to avoid N+1. Full payload only on detail.
-- Run expansion is filtered to `design_status=approved` — drafts are silently excluded.
-- `TestExecution.trigger_type` is the canonical source-of-launch field. There is **no** `execution_mode` field — don't introduce one.
+| Document | What it covers |
+|---|---|
+| [`roadmap.md`](roadmap.md) | The frontend build order, aligned with backend phases |
 
 ---
 
-## 11. What works vs what's pending
+## 8. State management
 
-### ✅ Working
-- Auth, hydration, silent refresh, role-based redirects
-- Admin: users + teams CRUD with paginated lists
-- Project list + create
-- Project workspace shell + tab routing
-- Repository tree (read + most CRUD), test case editor with structured steps
-- Spec intake / record review / specification browser (functional, UX still rough)
-- Automation workspace: trigger execution, live step timeline, noVNC browser stream, full-screen live page, checkpoint resume modal
-- Test runs workspace: plans / runs / run-cases panels (read + manual status)
+The frontend has only **two Zustand stores**:
 
-### 🟡 In progress / known issues
-- noVNC canvas sizing: works for manual browser sessions, still inconsistent for script executions (sizing/scaling mismatch).
-- Test Runs workspace is **not yet linked to execution results** — `TestRunCase` shows manual status only. Next change: backend exposes the linked `TestExecution`, frontend renders pass/fail + artifacts inline when present, manual dropdown stays as fallback for non-automated cases.
-- Reporting page (`DashboardPage`) is a skeleton — endpoints exist (`/reporting/overview`, `/pass-rate-trend`, `/failure-hotspots`), UI not built.
-- `run_kind` filter (planned vs standalone vs system_generated) — depends on backend migration; once shipped, Test Runs tab hides `system_generated` by default.
+### 8.1 `authStore`
+- `user`, `accessToken`, `isAuthenticated`, `hasHydrated`, `sessionExpired`
+- `bootstrap()` — restores from localStorage
+- `login()` (throws on failure — caller handles error display)
+- `logout()`, `clearSession()`, `syncCurrentUserProfile()`
 
-### ❌ Not started
-- AI test generation UI (Phase D backend) — prompt + spec + URL composer, reviewed candidate diff view.
-- LangGraph live agent UI (Phase E) — agent step authoring panel à la KaneAI.
-- Self-healing reviewer queue (Phase F).
+### 8.2 `executionStore`
+- The merged live snapshot for the currently-watched execution
+- Reducer-style merge of incoming WebSocket events (status, step, artifact, checkpoint, result)
+- Components subscribe to slices to avoid full-tree re-renders
+
+### 8.3 Why no global app store
+Repository data, specs data, runs data — all of it is fetched per-route via Axios and held locally in component state. Nothing is "global" except auth and the one execution being watched.
+
+This is **intentional**. A global store for repository data would create stale-data problems (which case is the "current" one? what happens when another user edits it?) and force every page to manage cache invalidation. Per-route fetching is simpler, correct, and fast enough.
 
 ---
 
-## 12. Build order from here
+## 9. The hard rules (don't relitigate)
 
-1. **noVNC sizing fix** — make script executions render at correct dimensions (parity with manual browser sessions).
-2. **Test Runs ↔ Execution wiring** — surface `TestExecution` results inside `TestRunCase` rows.
-3. **`run_kind` filter** — once backend ships, default Test Runs tab to `planned` + `standalone`.
-4. **Reporting dashboard UI** — connect to existing reporting endpoints.
-5. **Specs UX polish** — traceability-first detail panels.
-6. **Phase D — Reviewed AI generation UI** — composer + diff review before commit.
-7. **Phase E — Live AI agent UI** — KaneAI-style authoring + live browser; reuse the existing noVNC stack.
-
----
-
-## 13. Hard rules (don't relitigate)
-
-- Workspace-first IA. Don't add top-level pages for things that belong inside a project.
-- The non-AI product must be complete before AI surfaces are added. AI features sit on top, not mixed in.
-- Read-first on the right panel. Editors open as modals or dedicated routes, not as inline replacements of the read view.
-- Follow backend response shapes exactly. Field renames in serializers must propagate to types in the same PR.
-- One execution stream consumer per execution at a time. Don't open multiple WebSockets to the same execution.
-- The noVNC RFB path is primary. The iframe fallback was removed — if RFB fails, show an error, don't silently fall back.
+1. **Workspace-first IA.** Don't add top-level pages for things that belong inside a project.
+2. **The non-AI product must be complete before AI surfaces are added.** AI features sit on top — see [`05-ai-ux.md`](architecture/05-ai-ux.md).
+3. **Read-first on the right panel.** Editors open as modals or dedicated routes, never as inline replacements of the read view.
+4. **Follow backend response shapes exactly.** Field renames in serializers must propagate to types in the same PR.
+5. **One execution stream consumer per execution at a time.** Don't open multiple WebSockets to the same execution.
+6. **Live noVNC is opt-in for regression and interactive, always-on for AI agent sessions.** Default to no stream; require explicit `stream_enabled=True` (debug rerun, "Watch this run", or AI agent session).
+7. **The noVNC RFB path is primary.** No iframe fallback — if RFB fails, show an error, don't silently fall back.
+8. **Pre-signed URLs for artifacts.** Never proxy artifact downloads through Django.
+9. **No global app state beyond auth + execution.** Page-local state for everything else.
+10. **AI agent sessions have two WebSockets, not one.** `/ws/ai-sessions/{id}/browser/` for noVNC pixels, `/ws/ai-sessions/{id}/agent/` for reasoning events. Don't multiplex.
 
 ---
 
-## 14. Where to look in code
+## 10. Where to look in code
 
 | Concern | Path |
 |---|---|
-| Routing + guards | `router/AppRouter.tsx`, `router/ProtectedRoute.tsx` |
-| Auth flow | `store/authStore.ts`, `api/client.ts`, `api/accounts/auth.ts` |
-| Workspace shell | `pages/ProjectWorkspacePage.tsx` |
-| Repository tree | `components/project/ProjectTree.tsx` + `tree/`, `repository/` |
-| Test case editor | `components/project/case-editor/` |
-| Specs UI | `components/project/specs/`, `api/specs/` |
-| Automation UI | `components/project/automation/` |
-| Live execution | `pages/AutomationLivePage.tsx`, `components/project/automation/NoVncViewer.tsx`, `store/executionStore.ts` |
-| Test Runs UI | `components/project/test-runs/` |
-| Shared UI primitives | `components/ui/` |
+| Routing + guards | `src/router/AppRouter.tsx`, `src/router/ProtectedRoute.tsx` |
+| Auth flow | `src/store/authStore.ts`, `src/api/client.ts`, `src/api/accounts/auth.ts` |
+| Workspace shell | `src/pages/ProjectWorkspacePage.tsx` |
+| Repository tree | `src/components/project/ProjectTree.tsx` + `tree/`, `repository/` |
+| Test case editor | `src/components/project/case-editor/` |
+| Specs UI | `src/components/project/specs/`, `src/api/specs/` |
+| Automation UI | `src/components/project/automation/` |
+| Live execution | `src/pages/AutomationLivePage.tsx`, `src/components/project/automation/NoVncViewer.tsx`, `src/store/executionStore.ts` |
+| Test Runs UI | `src/components/project/test-runs/` |
+| Shared UI primitives | `src/components/ui/` |
 | Design tokens | `src/index.css`, `tailwind.config.ts` |
+| Type definitions | `src/types/` |
+
+---
+
+## 11. Reading order for someone new
+
+1. **This document** — get the big picture
+2. [`architecture/01-stack-and-structure.md`](architecture/01-stack-and-structure.md) — learn the layout
+3. [`architecture/02-routing-and-auth.md`](architecture/02-routing-and-auth.md) — understand how requests flow
+4. [`architecture/03-workspace-pattern.md`](architecture/03-workspace-pattern.md) — internalize the workspace-first pattern
+5. [`architecture/04-live-execution-ux.md`](architecture/04-live-execution-ux.md) — understand streaming and noVNC
+6. [`roadmap.md`](roadmap.md) — see what's next
+
+[`05-ai-ux.md`](architecture/05-ai-ux.md) and [`06-design-system.md`](architecture/06-design-system.md) are reference material.
