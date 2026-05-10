@@ -15,17 +15,17 @@ from apps.integrations.views import (
 
 urlpatterns = [
     path(
-        "integrations/teams/<uuid:team_pk>/<str:provider_slug>/config/",
+        "integrations/teams/<uuid:team_pk>/<str:provider>/config/",
         TeamIntegrationConfigView.as_view(),
         name="team-integration-config",
     ),
     path(
-        "integrations/projects/<uuid:project_pk>/<str:provider_slug>/config/",
+        "integrations/projects/<uuid:project_pk>/<str:provider>/config/",
         ProjectIntegrationConfigView.as_view(),
         name="project-integration-config",
     ),
     path(
-        "integrations/me/credentials/<str:provider_slug>/",
+        "integrations/me/credentials/<str:provider>/",
         MyIntegrationCredentialView.as_view(),
         name="my-integration-credential",
     ),
@@ -40,7 +40,7 @@ urlpatterns = [
         name="repository-binding-detail",
     ),
     path(
-        "integrations/webhooks/<str:provider_slug>/",
+        "integrations/webhooks/<str:provider>/",
         WebhookIngestView.as_view(),
         name="webhook-ingest",
     ),

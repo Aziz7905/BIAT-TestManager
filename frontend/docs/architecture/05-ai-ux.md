@@ -20,6 +20,8 @@ The AI features map onto frontend surfaces:
 
 All AI surfaces live inside the project workspace as a new **AI tab** plus inline affordances on existing tabs.
 
+The UX should stay honest about scope: the KaneAI-like experience is for browser E2E authoring first. Other test categories can be represented in planning, traceability, and ingested results, but the UI should not present performance/security/API/unit/integration execution as first-party BIAT automation until backend engines exist.
+
 ---
 
 ## 2. RCA panel (the smallest, ships first)
@@ -131,7 +133,7 @@ Inside the Test Case editor, after the case is approved:
 [Generate Selenium script from this case]
 ```
 
-Same flow — generates an `AutomationScript` candidate, lands in review queue.
+Same flow — generates an `AutomationScript` candidate, lands in review queue. The default target is Selenium Java for bank-facing E2E suites; Selenium Python remains selectable for prototypes and existing scripts.
 
 ### 4.3 From a Jira ticket (Phase D, simple) or the agent (Phase E, live)
 Two paths:

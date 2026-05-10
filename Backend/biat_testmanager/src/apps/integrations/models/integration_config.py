@@ -20,7 +20,12 @@ class IntegrationConfig(models.Model):
         null=True,
         blank=True,
     )
-    provider_slug = models.CharField(max_length=50)
+    provider = models.ForeignKey(
+        "integrations.IntegrationProvider",
+        to_field="slug",
+        on_delete=models.PROTECT,
+        related_name="configs",
+    )
     config_json_encrypted = EncryptedTextField(default="{}", blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -28,15 +33,15 @@ class IntegrationConfig(models.Model):
 
     class Meta:
         db_table = "integrations_integration_config"
-        ordering = ["team__name", "provider_slug"]
+        ordering = ["team__name", "provider"]
         constraints = [
             models.UniqueConstraint(
-                fields=["team", "provider_slug"],
+                fields=["team", "provider"],
                 condition=Q(project__isnull=True),
                 name="integrations_unique_team_provider_config",
             ),
             models.UniqueConstraint(
-                fields=["team", "project", "provider_slug"],
+                fields=["team", "project", "provider"],
                 condition=Q(project__isnull=False),
                 name="integrations_unique_project_provider_config",
             ),
@@ -44,7 +49,7 @@ class IntegrationConfig(models.Model):
 
     def __str__(self) -> str:
         target = self.project.name if self.project else self.team.name
-        return f"{target} / {self.provider_slug}"
+        return f"{target} / {self.provider_id}"
 
     @property
     def config_data(self) -> dict:

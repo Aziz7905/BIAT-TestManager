@@ -6,23 +6,19 @@ from apps.accounts.models import (
     AIProvider,
     Organization,
     OrganizationRole,
-    Team,
     TeamAIConfig,
     UserProfile,
 )
 from apps.accounts.serializers.profiles import MyProfileSerializer, UpdateMyProfileSerializer
 from apps.accounts.serializers.teams import TeamSerializer
-from apps.accounts.services.team_ai import sync_team_ai_config_from_legacy
 from apps.integrations.models import IntegrationConfig, UserIntegrationCredential
-from apps.integrations.services import (
-    get_team_integration_values,
-    sync_team_integrations_from_legacy,
-)
 
 User = get_user_model()
 
 
 class Batch2ConfigTests(TestCase):
+    """AI config, integration config, and personal credentials live separately."""
+
     def setUp(self):
         self.factory = APIRequestFactory()
         self.organization = Organization.objects.create(
@@ -61,43 +57,6 @@ class Batch2ConfigTests(TestCase):
             organization_role=OrganizationRole.MEMBER,
         )
 
-    def test_legacy_team_ai_and_integration_settings_can_backfill_new_models(self):
-        team = Team.objects.create(
-            organization=self.organization,
-            name="Quality",
-            manager=self.team_manager,
-            ai_provider=self.provider,
-            ai_api_key="groq-secret",
-            ai_model="llama-3.3-70b-versatile",
-            monthly_token_budget=250000,
-            jira_base_url="https://jira.example.com",
-            jira_project_key="BANK",
-            github_org="biat",
-            github_repo="test-manager",
-            jenkins_url="https://jenkins.example.com",
-        )
-
-        ai_config = sync_team_ai_config_from_legacy(team)
-        sync_team_integrations_from_legacy(team)
-        integration_values = get_team_integration_values(team)
-
-        self.assertEqual(ai_config.provider, self.provider)
-        self.assertEqual(ai_config.api_key, "groq-secret")
-        self.assertEqual(ai_config.monthly_budget, 250000)
-        self.assertEqual(
-            ai_config.default_model_profile.model_name,
-            "llama-3.3-70b-versatile",
-        )
-        self.assertEqual(
-            integration_values["jira_base_url"],
-            "https://jira.example.com",
-        )
-        self.assertEqual(integration_values["github_org"], "biat")
-        self.assertEqual(
-            IntegrationConfig.objects.filter(team=team).count(),
-            3,
-        )
-
     def test_team_serializer_persists_new_ai_and_integration_config_tables(self):
         request = self.factory.post("/api/accounts/teams/")
         request.user = self.org_admin
@@ -111,11 +70,17 @@ class Batch2ConfigTests(TestCase):
                 "ai_api_key": "configured-secret",
                 "ai_model": "llama-3.3-70b-versatile",
                 "monthly_token_budget": 500000,
-                "jira_base_url": "https://jira.biat.tn",
-                "jira_project_key": "QABANK",
-                "github_org": "biat-org",
-                "github_repo": "qa-platform",
-                "jenkins_url": "https://jenkins.biat.tn",
+                "integrations": {
+                    "jira": {
+                        "base_url": "https://jira.biat.tn",
+                        "project_key": "QABANK",
+                    },
+                    "github": {
+                        "org": "biat-org",
+                        "repo": "qa-platform",
+                    },
+                    "jenkins": {"url": "https://jenkins.biat.tn"},
+                },
             },
             context={"request": request},
         )
@@ -134,7 +99,30 @@ class Batch2ConfigTests(TestCase):
         )
         self.assertEqual(payload["ai_provider"], str(self.provider.id))
         self.assertEqual(payload["ai_model"], "llama-3.3-70b-versatile")
-        self.assertEqual(payload["jira_project_key"], "QABANK")
+        self.assertEqual(payload["integrations"]["jira"]["project_key"], "QABANK")
+        self.assertTrue(payload["has_ai_api_key"])
+
+        # Three IntegrationConfig rows: jira, github, jenkins
+        self.assertEqual(IntegrationConfig.objects.filter(team=team).count(), 3)
+
+    def test_team_response_omits_deprecated_token_counter(self):
+        request = self.factory.get("/api/accounts/teams/")
+        request.user = self.org_admin
+
+        serializer = TeamSerializer(
+            data={
+                "organization": str(self.organization.id),
+                "name": "Platform QA",
+                "manager": self.team_manager.id,
+                "ai_provider": self.provider.id,
+            },
+            context={"request": request},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        team = serializer.save()
+
+        payload = TeamSerializer(team, context={"request": request}).data
+        self.assertNotIn("tokens_used_this_month", payload)
 
     def test_profile_updates_store_personal_tokens_in_user_credentials(self):
         serializer = UpdateMyProfileSerializer(
@@ -152,11 +140,11 @@ class Batch2ConfigTests(TestCase):
 
         jira_credential = UserIntegrationCredential.objects.get(
             user_profile=self.team_manager_profile,
-            provider_slug="jira",
+            provider_id="jira",
         )
         github_credential = UserIntegrationCredential.objects.get(
             user_profile=self.team_manager_profile,
-            provider_slug="github",
+            provider_id="github",
         )
 
         self.assertEqual(

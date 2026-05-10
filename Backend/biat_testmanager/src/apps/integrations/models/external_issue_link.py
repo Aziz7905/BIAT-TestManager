@@ -13,7 +13,12 @@ class ExternalIssueLink(models.Model):
         on_delete=models.CASCADE,
         related_name="external_issue_links",
     )
-    provider_slug = models.CharField(max_length=50)
+    provider = models.ForeignKey(
+        "integrations.IntegrationProvider",
+        to_field="slug",
+        on_delete=models.PROTECT,
+        related_name="external_issue_links",
+    )
     external_key = models.CharField(max_length=100)
     external_url = models.URLField(blank=True)
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
@@ -33,12 +38,12 @@ class ExternalIssueLink(models.Model):
 
     class Meta:
         db_table = "integrations_external_issue_link"
-        ordering = ["project__name", "provider_slug", "external_key"]
+        ordering = ["project__name", "provider", "external_key"]
         constraints = [
             models.UniqueConstraint(
                 fields=[
                     "project",
-                    "provider_slug",
+                    "provider",
                     "external_key",
                     "content_type",
                     "object_id",
@@ -48,7 +53,7 @@ class ExternalIssueLink(models.Model):
         ]
         indexes = [
             models.Index(
-                fields=["project", "provider_slug", "external_key"],
+                fields=["project", "provider", "external_key"],
                 name="int_issue_project_idx",
             ),
             models.Index(
@@ -58,4 +63,4 @@ class ExternalIssueLink(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.project.name} / {self.provider_slug}:{self.external_key}"
+        return f"{self.project.name} / {self.provider_id}:{self.external_key}"

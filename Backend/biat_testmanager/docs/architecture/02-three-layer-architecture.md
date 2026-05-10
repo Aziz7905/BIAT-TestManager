@@ -59,7 +59,7 @@ A QA tester reading a test case and marking it manually pass/fail in the UI is a
 ## 3. Layer 2 — Regression Execution
 
 ### 3.1 Purpose
-Run **deterministic Selenium scripts** against a Docker browser pool, capture results, write artifacts. The HyperExecute equivalent at small scale.
+Run **deterministic Selenium browser E2E scripts** against a Docker browser pool, capture results, write artifacts. The HyperExecute equivalent at small scale, scoped to browser automation.
 
 ### 3.2 Core flow
 ```
@@ -67,11 +67,11 @@ Layer 1 says: "execute test case X under plan Y"
          ↓
 TestExecution created (status=queued)
          ↓
-Celery task enqueued on regression_queue
+Celery task enqueued on `regression`
          ↓
 Worker picks up task → spawns Docker runner container
          ↓
-Runner container connects to Selenium Grid → drives a Chrome node
+Runner container connects to Selenoid/Grid → drives a Chrome browser
          ↓
 Script runs, emits __BIAT_EVENT__ events to stdout
          ↓
@@ -92,15 +92,16 @@ A script in `AutomationScript` can come from any of three places:
 
 Layer 2 does not care about the origin. It runs whatever's in `AutomationScript.script_content`.
 
-### 3.4 The two queues — why
-Layer 2 has **two Celery queues**, not one:
+### 3.4 The three workload queues — why
+The execution layer has **three Celery queues**, not one:
 
-- `regression_queue` — for Layer 2 work (Selenium scripts on the Grid)
-- `agent_queue` — for Layer 3 work (AI agent sessions on Selenoid)
+- `regression` — bulk saved-script browser E2E execution
+- `interactive` — single executions, debug reruns, and manual browser sessions
+- `ai_agent` — long-lived LangGraph/Playwright MCP browser authoring sessions
 
-Why split? Because an AI agent session can take 5–15 minutes. A regression run is a few minutes per test. If both share a queue and a worker pool, one slow agent session blocks 30 regression tests.
+Why split? Because an AI agent session can take 5–15 minutes, a regression burst can contain many cases, and an interactive debug run has a human waiting. If they share a queue and worker pool, one workload can starve the others.
 
-Workers are started with `-Q regression` or `-Q agent` to lock them to their layer. Capacity is independent.
+Workers are started with `-Q regression`, `-Q interactive`, or `-Q ai_agent` to lock them to their workload. Capacity is independent.
 
 ### 3.5 What Layer 2 explicitly does NOT do
 - Does not generate scripts
@@ -142,7 +143,7 @@ LangGraph agent (the orchestrator)
   └─ Tool: AutomationScript writer (output → AutomationScript candidate)
 ```
 
-The agent runs as a Celery task on `agent_queue`. The LangGraph graph defines the steps the agent goes through (analyze, plan, execute, observe, decide). The graph nodes can call tools. Tools are explicit — no surprise external calls.
+The agent runs as a Celery task on `ai_agent`. The LangGraph graph defines the steps the agent goes through (analyze, plan, execute, observe, decide). The graph nodes can call tools. Tools are explicit — no surprise external calls.
 
 ### 4.3 The browser
 Layer 3 uses **Selenoid**, not Selenium Grid. Why?
@@ -221,7 +222,7 @@ A human reviews. Approves or rejects. Only on approval does the candidate become
 "Here is a candidate test case / candidate script / candidate bug analysis." Layer 3 writes drafts back to Layer 1. A human reviews. On approval, the draft becomes canonical.
 
 ### 5.5 Layer 3 → Layer 2
-"Run this script I just wrote, on the agent_queue." Layer 3 can trigger Layer 2 executions. The execution runs through Layer 2's normal pipeline — Layer 2 doesn't know it was an AI agent that asked.
+"Run this script I just wrote." Layer 3 can trigger Layer 2 executions. The execution runs through Layer 2's normal `regression` or `interactive` pipeline — Layer 2 doesn't know it was an AI agent that asked.
 
 ### 5.6 Layer 2 → Layer 3
 Nothing direct. Layer 2 doesn't know Layer 3 exists. Layer 3 *observes* Layer 2 results by reading Layer 1's data store.
@@ -240,7 +241,7 @@ These pieces are used by multiple layers but conceptually belong to the platform
 | **Redis** | Layer 2 (Celery broker, channel layer, control signals), Layer 3 (Celery broker) | Task queue + pub/sub |
 | **MinIO** | Layer 2 (artifacts), Layer 3 (recorded videos) | Object storage |
 | **Django Channels / Daphne** | Layer 2 (execution streams), Layer 3 (agent live view) | WebSocket transport |
-| **Celery workers** | Layer 2 (regression queue), Layer 3 (agent queue) | Task runners (separate worker pools) |
+| **Celery workers** | Layer 2 (`regression`, `interactive`), Layer 3 (`ai_agent`) | Task runners (separate worker pools) |
 
 When we say "shared," we mean it physically. Logically, each layer's use of these resources is namespaced (separate queues, separate Redis keys, separate MinIO bucket prefixes, separate channel groups).
 
@@ -293,13 +294,13 @@ Each layer can be tested in isolation. Layer 1 is just Django ORM tests. Layer 2
   ┌───────────┐            ┌──────────────┐
   │  LAYER 2  │            │   LAYER 3    │
   │ (Celery + │            │ (Celery +    │
-  │  Selenium │            │  LangGraph + │
+  │  Selenoid/│            │  LangGraph + │
   │  Grid)    │            │  Selenoid)   │
   └─────┬─────┘            └──────┬───────┘
         │                         │
         ▼                         ▼
- [Selenium Grid]            [Selenoid]
- [Chrome nodes]             [Browser containers]
+ [Selenoid/Grid]            [Selenoid]
+ [Chrome browser]           [Browser containers]
         │                         │
         └────────┬────────────────┘
                  ▼
@@ -307,4 +308,4 @@ Each layer can be tested in isolation. Layer 1 is just Django ORM tests. Layer 2
         (artifacts, videos)
 ```
 
-Two queues, two browser farms, one shared object store, one shared database, one Django app. That's the whole shape.
+Three workload queues, one near-term browser backend direction (Selenoid), one shared object store, one shared database, one Django app. That's the whole shape.

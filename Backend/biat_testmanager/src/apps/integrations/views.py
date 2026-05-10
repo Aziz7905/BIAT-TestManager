@@ -43,26 +43,26 @@ class TeamIntegrationConfigView(APIView):
             pk=self.kwargs["team_pk"],
         )
 
-    def get(self, request, team_pk, provider_slug):
+    def get(self, request, team_pk, provider):
         team = self.get_team()
         if not can_manage_team_integrations(request.user, team):
             raise PermissionDenied("You do not have permission to view this team integration.")
         config = get_object_or_404(
-            IntegrationConfig.objects.select_related("team", "project"),
+            IntegrationConfig.objects.select_related("team", "project", "provider"),
             team=team,
             project=None,
-            provider_slug=provider_slug,
+            provider_id=provider,
         )
         return Response(IntegrationConfigSerializer(config).data)
 
-    def put(self, request, team_pk, provider_slug):
+    def put(self, request, team_pk, provider):
         team = self.get_team()
         serializer = IntegrationConfigWriteSerializer(
             data=request.data,
             context={
                 "request": request,
                 "team": team,
-                "provider_slug": provider_slug,
+                "provider_key": provider,
             },
         )
         serializer.is_valid(raise_exception=True)
@@ -79,25 +79,25 @@ class ProjectIntegrationConfigView(APIView):
             pk=self.kwargs["project_pk"],
         )
 
-    def get(self, request, project_pk, provider_slug):
+    def get(self, request, project_pk, provider):
         project = self.get_project()
         if not can_manage_project_integrations(request.user, project):
             raise PermissionDenied("You do not have permission to view this project integration.")
         config = get_object_or_404(
-            IntegrationConfig.objects.select_related("team", "project"),
+            IntegrationConfig.objects.select_related("team", "project", "provider"),
             project=project,
-            provider_slug=provider_slug,
+            provider_id=provider,
         )
         return Response(IntegrationConfigSerializer(config).data)
 
-    def put(self, request, project_pk, provider_slug):
+    def put(self, request, project_pk, provider):
         project = self.get_project()
         serializer = IntegrationConfigWriteSerializer(
             data=request.data,
             context={
                 "request": request,
                 "project": project,
-                "provider_slug": provider_slug,
+                "provider_key": provider,
             },
         )
         serializer.is_valid(raise_exception=True)
@@ -108,21 +108,22 @@ class ProjectIntegrationConfigView(APIView):
 class MyIntegrationCredentialView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, provider_slug):
+    def get(self, request, provider):
         credential = get_object_or_404(
             UserIntegrationCredential.objects.select_related(
+                "provider",
                 "user_profile",
                 "user_profile__user",
             ),
             user_profile=request.user.profile,
-            provider_slug=provider_slug,
+            provider_id=provider,
         )
         return Response(UserIntegrationCredentialSerializer(credential).data)
 
-    def put(self, request, provider_slug):
+    def put(self, request, provider):
         serializer = UserIntegrationCredentialWriteSerializer(
             data=request.data,
-            context={"request": request, "provider_slug": provider_slug},
+            context={"request": request, "provider_key": provider},
         )
         serializer.is_valid(raise_exception=True)
         credential = serializer.save()
@@ -145,8 +146,9 @@ class RepositoryBindingListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("You do not have permission to view repository bindings.")
         return RepositoryBinding.objects.select_related(
             "project",
+            "provider",
             "created_by",
-        ).filter(project=project).order_by("provider_slug", "repo_identifier")
+        ).filter(project=project).order_by("provider", "repo_identifier")
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -168,6 +170,7 @@ class RepositoryBindingDetailView(generics.RetrieveUpdateDestroyAPIView):
         project_qs = get_project_queryset_for_actor(self.request.user)
         return RepositoryBinding.objects.select_related(
             "project",
+            "provider",
             "created_by",
         ).filter(project__in=project_qs)
 
@@ -187,11 +190,11 @@ class RepositoryBindingDetailView(generics.RetrieveUpdateDestroyAPIView):
 class WebhookIngestView(APIView):
     permission_classes = [AllowAny]
 
-    def post(self, request, provider_slug):
+    def post(self, request, provider):
         raw_body = request.body
         payload_json = request.data if isinstance(request.data, dict) else {}
         binding = verify_webhook_signature(
-            provider_slug=provider_slug,
+            provider_key=provider,
             payload_json=payload_json,
             raw_body=raw_body,
             headers=request.headers,
@@ -214,7 +217,7 @@ class WebhookIngestView(APIView):
         }
         headers_json["signature_verified"] = True
         event, created = process_webhook_event(
-            provider_slug=provider_slug,
+            provider_key=provider,
             event_type=event_type,
             external_id=external_id,
             payload_json=payload_json,
@@ -233,11 +236,12 @@ class WebhookEventListView(generics.ListAPIView):
         project_qs = get_project_queryset_for_actor(self.request.user)
         queryset = WebhookEvent.objects.select_related(
             "project",
+            "provider",
             "repository_binding",
         ).filter(project__in=project_qs)
-        provider_slug = self.request.query_params.get("provider")
-        if provider_slug:
-            queryset = queryset.filter(provider_slug=provider_slug)
+        provider_key = self.request.query_params.get("provider")
+        if provider_key:
+            queryset = queryset.filter(provider_id=provider_key)
         return queryset.order_by("-received_at")
 
 
@@ -249,6 +253,7 @@ class WebhookEventDetailView(generics.RetrieveAPIView):
         project_qs = get_project_queryset_for_actor(self.request.user)
         return WebhookEvent.objects.select_related(
             "project",
+            "provider",
             "repository_binding",
         ).filter(project__in=project_qs)
 
@@ -269,6 +274,7 @@ class ExternalIssueLinkListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("You do not have permission to view external issue links.")
         return ExternalIssueLink.objects.select_related(
             "project",
+            "provider",
             "content_type",
             "created_by",
         ).filter(project=project)
@@ -294,9 +300,10 @@ class IntegrationActionLogListView(generics.ListAPIView):
         queryset = IntegrationActionLog.objects.select_related(
             "team",
             "project",
+            "provider",
             "actor_user",
         ).filter(project__in=project_qs)
-        provider_slug = self.request.query_params.get("provider")
-        if provider_slug:
-            queryset = queryset.filter(provider_slug=provider_slug)
+        provider_key = self.request.query_params.get("provider")
+        if provider_key:
+            queryset = queryset.filter(provider_id=provider_key)
         return queryset.order_by("-created_at")

@@ -289,6 +289,36 @@ CELERY_TASK_EAGER_PROPAGATES = config(
     default=True,
     cast=bool,
 )
+
+# Three queues, one per workload. See docs/roadmap.md Step 1 and
+# docs/PLATFORM.md hard rule 9.
+#   ai_agent    — long-lived LangGraph sessions (gevent worker recommended)
+#   regression  — bulk dispatch of saved scripts from planned/standalone runs
+#   interactive — single executions, debug rerun, manual browser sessions
+try:
+    from kombu import Queue as _KombuQueue
+    CELERY_TASK_QUEUES = (
+        _KombuQueue("ai_agent", routing_key="ai_agent"),
+        _KombuQueue("regression", routing_key="regression"),
+        _KombuQueue("interactive", routing_key="interactive"),
+    )
+except ModuleNotFoundError:  # pragma: no cover - environment without celery
+    CELERY_TASK_QUEUES = ()
+
+CELERY_TASK_DEFAULT_QUEUE = "regression"
+CELERY_TASK_DEFAULT_ROUTING_KEY = "regression"
+CELERY_TASK_ROUTES = {
+    "automation.run_test_execution": {"queue": "regression"},
+    "automation.run_manual_browser_session": {"queue": "interactive"},
+    "automation.expire_stale_execution_checkpoints": {"queue": "regression"},
+    # Future tasks (not yet implemented — listed for traceability):
+    # "ai.run_agent_session": {"queue": "ai_agent"},
+    # "ai.generate_failure_rca": {"queue": "ai_agent"},
+    # "ai.generate_tests_from_spec": {"queue": "ai_agent"},
+    # "automation.run_single_execution": {"queue": "interactive"},
+    # "automation.debug_rerun": {"queue": "interactive"},
+}
+
 CELERY_BEAT_SCHEDULE = {
     "expire-stale-execution-checkpoints": {
         "task": "automation.expire_stale_execution_checkpoints",

@@ -60,7 +60,7 @@ Frontend POST /api/projects/<id>/ai/generate-tests/  body: {ticket_id: ...}
        ↓
 Django view authorizes (Ahmed has project access)
        ↓
-Celery task enqueued on agent_queue (or a dedicated ai_queue if separated later)
+Celery task enqueued on `ai_agent`
        ↓
 Worker runs:
   1. Read TeamAIConfig for Ahmed's team
@@ -157,6 +157,8 @@ Cheap operations stay local. Heavy reasoning goes to the cloud model. The team's
 
 The AI work is sequenced into three phases. They build on each other.
 
+The AI layer's near-term product focus is browser E2E. It can generate structured test suites/cases/steps from requirements and then author Selenium browser automation by driving a live browser. It is not expected to author native performance, security, API, unit, or integration runtime infrastructure in this phase; those test categories stay on the management/results-ingest path until explicitly added later.
+
 ### 4.1 Phase D — Offline AI test generation
 
 **What it is:** the user gives the platform a spec or a Jira ticket; the platform generates candidate test cases.
@@ -167,7 +169,7 @@ The AI work is sequenced into three phases. They build on each other.
 ```
 1. User opens a Specification in the platform
 2. User clicks "Generate tests from this spec"
-3. Backend Celery task on agent_queue:
+3. Backend Celery task on `ai_agent`:
    a. Retrieves the spec's chunks (RAG context)
    b. Retrieves nearby existing TestCases (avoid duplication)
    c. Builds a prompt: "given this spec, generate 5 test cases in this JSON schema..."
@@ -189,7 +191,7 @@ The AI work is sequenced into three phases. They build on each other.
 3. Backend Celery task:
    a. Reads the TestCase's structured steps
    b. Reads any existing AutomationScript for similar cases (style precedent)
-   c. Calls LLM with the prompt: "write a Selenium Python script that..."
+   c. Calls LLM with the prompt: "write a Selenium Java test that..." by default, or Selenium Python when selected by the script/environment
    d. Validates: parse the script, run script_validation
    e. Creates AutomationScript row with is_active=False, generated_by='ai_offline'
 4. User reviews the script in the editor
@@ -241,7 +243,7 @@ Agent (in Selenoid container):
   3. Plans the test scenarios needed
   4. Opens the bank's app in the browser
   5. For each scenario: drives the app, records the steps
-  6. Translates recorded actions → Selenium Python script
+  6. Translates recorded actions → Selenium Java/Python script
   7. Writes candidate TestCase + AutomationScript
        ↓
 User watches via noVNC stream

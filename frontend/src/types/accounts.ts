@@ -115,13 +115,22 @@ export interface Team {
   has_ai_api_key: boolean;
   ai_model: string;
   monthly_token_budget: number;
-  tokens_used_this_month: number;
-  jira_base_url: string | null;
-  jira_project_key: string | null;
-  github_org: string | null;
-  github_repo: string | null;
-  jenkins_url: string | null;
+  integrations: TeamIntegrations;
   created_at: string;
+}
+
+export interface TeamIntegrations {
+  jira: {
+    base_url: string | null;
+    project_key: string | null;
+  };
+  github: {
+    org: string | null;
+    repo: string | null;
+  };
+  jenkins: {
+    url: string | null;
+  };
 }
 
 export interface CreateTeamPayload {
@@ -130,11 +139,7 @@ export interface CreateTeamPayload {
   ai_api_key?: string;
   ai_model?: string;
   monthly_token_budget?: number;
-  jira_base_url?: string;
-  jira_project_key?: string;
-  github_org?: string;
-  github_repo?: string;
-  jenkins_url?: string;
+  integrations?: TeamIntegrations;
 }
 
 export interface UpdateTeamPayload {
@@ -143,11 +148,7 @@ export interface UpdateTeamPayload {
   ai_api_key?: string;
   ai_model?: string;
   monthly_token_budget?: number;
-  jira_base_url?: string;
-  jira_project_key?: string;
-  github_org?: string;
-  github_repo?: string;
-  jenkins_url?: string;
+  integrations?: TeamIntegrations;
 }
 
 export interface TeamMember {

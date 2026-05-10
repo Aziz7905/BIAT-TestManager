@@ -22,10 +22,18 @@ If you only have time for one document, read this one. Then drill into `architec
 
 BIAT TestManager is a self-hosted AI-native QA platform for a Tunisian bank (BIAT). It combines three things in one product:
 - a TestRail-style **test management** layer (specs, plans, runs, cases, results)
-- a small **regression execution engine** (Selenium scripts dispatched to a Docker-based Selenium Grid — a "HyperExecute lite")
+- a small **regression execution engine** (Selenium scripts dispatched to a Docker-based browser backend — Selenoid target, Selenium Grid today)
 - a **KaneAI-equivalent AI agent** (LangGraph + Playwright MCP, running in Selenoid containers, that explores apps, generates tests from Jira tickets and GitHub PRs, drives a browser live, and self-heals broken selectors)
 
 The platform is bank-scale and on-premise. It is **not** trying to be LambdaTest's HyperExecute — no 3000+ browsers, no device farms, no global cloud. It is trying to be the smallest correct version of KaneAI that a single engineering team can build and run inside a bank's network.
+
+### Product scope boundary
+
+The near-term owned execution path is **browser E2E testing**. BIAT can deeply author, run, debug, and report Selenium browser regressions inside its own infrastructure.
+
+Other test types — performance, security, API, unit, integration, and future mobile automation — can still exist in the platform as managed test assets and ingested results, but BIAT is **not** building native runtime infrastructure for them in this phase. Jenkins, GitHub Actions, a bank-owned lab, or another existing tool can run those tests; BIAT consumes their outputs through the Results Ingest API and gives teams one place to plan, trace, review, and report.
+
+For bank-facing Selenium browser work, the default runner target should be **Java**. Python remains useful for development, prototypes, and existing scripts, but Java runner support is part of making the platform realistic for teams whose automation stack is already Java.
 
 ---
 
@@ -41,7 +49,7 @@ The platform is **three layers stacked**. Each layer is independently useful. Ea
 │    • Reads Jira tickets → generates E2E test cases                │
 │    • Reads GitHub PR diffs → selects/generates regression tests   │
 │    • Explores the app live → records actions                      │
-│    • Translates recordings → Selenium Python script               │
+│    • Translates recordings → Selenium Java/Python script          │
 │    • Self-heals broken selectors                                  │
 │    • Posts RCA + results back to GitHub PRs / Jira issues         │
 │                                                                   │
@@ -106,7 +114,7 @@ The product philosophy is strict: **the non-AI core must be stable and complete 
 ### Execution infrastructure
 - **Selenoid** (Aerokube — isolated Docker browser containers) — single browser backend for Layers 2 and 3 (planned, replaces Selenium Grid)
 - **Selenium Grid** (Docker Compose — Hub + Chrome nodes + noVNC) — current implementation; phased out in Step 3 of the roadmap
-- **Docker runner containers** — script execution environment isolation (planned)
+- **Docker runner containers** — language-specific script execution isolation (planned): Java Selenium runner for bank/enterprise E2E, Python runner for dev/prototypes and existing scripts
 - **MinIO** (S3-compatible self-hosted object storage) — artifacts (planned)
 - **Moon** (Aerokube K8s-native) — future migration target when single-host capacity is exhausted
 
@@ -218,12 +226,14 @@ These are the rules we don't relitigate. They have been decided. Each rule has a
 11. **Artifacts go to MinIO, not the local filesystem.** Database stores keys, not blobs.
 12. **Single source of truth per concern.** AI config lives in `TeamAIConfig` only (not `Team`). App-level integration config lives in `IntegrationConfig` only (not `Team`). User-owned credentials live in `UserIntegrationCredential` only (not `UserProfile`).
 13. **AI agents call resolvers, never read fields directly.** `IntegrationResolverService` returns the right credentials for `act_as_user` vs `act_as_app` modes.
+14. **Native execution is browser E2E first.** Performance, security, API, unit, and integration tests are managed and ingested, not executed by first-party BIAT infrastructure in the current scope.
+15. **Regression execution is not a CI replacement.** Jenkins/GitHub Actions/other bank infrastructure can still own scheduling and non-browser engines; BIAT provides management, traceability, reporting, AI authoring, and one native browser E2E execution lane.
 
 ---
 
 ## 8. The current build state in one paragraph
 
-Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, integration foundation. Layer 2 (regression execution) is **mostly complete**: Celery + Selenium Grid + WebSocket streaming + checkpoints all work, but it currently runs scripts as subprocesses on the worker host (no Docker runner containers), uses a single Celery queue (no `ai_agent` / `regression` / `interactive` separation), writes artifacts to the local filesystem (no MinIO), and runs against Selenium Grid (Selenoid migration is pending in roadmap Step 3). The Results Ingest API for the hybrid path is also not built yet. Layer 3 (AI agent) is **not started**: `TeamAIConfig`, `ModelProfile`, and `AIProvider` are wired into the data model but no LLM call is made anywhere in the codebase. Schema consolidation (removing duplicated AI config from `Team` and integration credentials from `Team`/`UserProfile`) is pending in roadmap Step 2. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
+Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, and integration foundation. Layer 2 (browser E2E regression execution) is **mostly complete but still being hardened**: Celery + Selenium Grid + WebSocket streaming + checkpoints work, and the queue/schema-cleanup work is being brought into the codebase, but scripts still run as host subprocesses instead of isolated Java/Python runner containers, artifacts still use the local filesystem instead of MinIO, and Selenoid is still the near-term browser backend migration target. The Results Ingest API for external CI/IDE/lab results is not built yet. Layer 3 (AI browser E2E authoring) is **not started** beyond configuration models: `TeamAIConfig`, `ModelProfile`, and `AIProvider` are wired, but no LLM/LangGraph/Playwright MCP loop exists yet. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
 
 ---
 

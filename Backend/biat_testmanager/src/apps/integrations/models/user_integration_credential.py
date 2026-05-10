@@ -12,7 +12,12 @@ class UserIntegrationCredential(models.Model):
         on_delete=models.CASCADE,
         related_name="integration_credentials",
     )
-    provider_slug = models.CharField(max_length=50)
+    provider = models.ForeignKey(
+        "integrations.IntegrationProvider",
+        to_field="slug",
+        on_delete=models.PROTECT,
+        related_name="user_credentials",
+    )
     credential_json_encrypted = EncryptedTextField(default="{}", blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -20,11 +25,11 @@ class UserIntegrationCredential(models.Model):
 
     class Meta:
         db_table = "integrations_user_integration_credential"
-        ordering = ["user_profile__user__username", "provider_slug"]
-        unique_together = [("user_profile", "provider_slug")]
+        ordering = ["user_profile__user__username", "provider"]
+        unique_together = [("user_profile", "provider")]
 
     def __str__(self) -> str:
-        return f"{self.user_profile.user.username} / {self.provider_slug}"
+        return f"{self.user_profile.user.username} / {self.provider_id}"
 
     @property
     def credential_data(self) -> dict:

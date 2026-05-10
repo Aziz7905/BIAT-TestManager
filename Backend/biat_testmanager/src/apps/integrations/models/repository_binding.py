@@ -11,7 +11,12 @@ class RepositoryBinding(models.Model):
         on_delete=models.CASCADE,
         related_name="repository_bindings",
     )
-    provider_slug = models.CharField(max_length=50)
+    provider = models.ForeignKey(
+        "integrations.IntegrationProvider",
+        to_field="slug",
+        on_delete=models.PROTECT,
+        related_name="repository_bindings",
+    )
     repo_identifier = models.CharField(max_length=255)
     default_branch = models.CharField(max_length=150, default="main")
     metadata_json = models.JSONField(default=dict, blank=True)
@@ -28,16 +33,16 @@ class RepositoryBinding(models.Model):
 
     class Meta:
         db_table = "integrations_repository_binding"
-        ordering = ["project__name", "provider_slug", "repo_identifier"]
+        ordering = ["project__name", "provider", "repo_identifier"]
         constraints = [
             models.UniqueConstraint(
-                fields=["project", "provider_slug", "repo_identifier"],
+                fields=["project", "provider", "repo_identifier"],
                 name="integrations_unique_project_repository_binding",
             ),
         ]
         indexes = [
             models.Index(
-                fields=["provider_slug", "repo_identifier"],
+                fields=["provider", "repo_identifier"],
                 name="int_repo_provider_idx",
             ),
             models.Index(
@@ -47,4 +52,4 @@ class RepositoryBinding(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.project.name} / {self.provider_slug}:{self.repo_identifier}"
+        return f"{self.project.name} / {self.provider_id}:{self.repo_identifier}"

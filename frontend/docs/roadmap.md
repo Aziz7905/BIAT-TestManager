@@ -29,7 +29,7 @@ Steps are sequenced by priority + backend dependency. Don't ship a frontend feat
 
 ### Known issues
 - noVNC canvas sizing inconsistent for script executions (vs manual browser sessions)
-- Test Runs workspace not yet linked to execution results — `TestRunCase` shows manual status only
+- Test Runs ↔ Execution wiring is partially present, but the run-case status/navigation flow still needs verification and polish
 - Reporting dashboard is a skeleton (endpoints exist, UI doesn't)
 - `run_kind` filter not yet wired in Test Runs tab
 
@@ -45,6 +45,7 @@ Steps are sequenced by priority + backend dependency. Don't ship a frontend feat
 ## The build order
 
 ```
+Step 0 — Restore Teams admin page API compatibility (done in current branch)
 Step 1 — noVNC sizing fix
 Step 2 — Test Runs ↔ Execution wiring
 Step 3 — run_kind filter
@@ -56,6 +57,23 @@ Step 8 — AI test generation review queue (Phase D)
 Step 9 — Live agent view (Phase E)
 Step 10 — Healing review queue (Phase F)
 ```
+
+---
+
+## Step 0 — Restore Teams admin page API compatibility
+
+**Status:** done in the current branch; `Team` types and the Teams admin detail panel no longer read removed `Team.tokens_used_this_month`.
+
+### Why now
+This was a regression from the backend schema cleanup. The Teams admin page expected fields that were moved out of `Team`, so admin/team configuration work could be blocked before the AI configuration surfaces were reachable.
+
+### What changes
+- Update frontend `Team` types to match the current backend serializer
+- Remove direct reads of deprecated fields such as `tokens_used_this_month`
+- If token budget usage is still needed in the UI, read it from the dedicated team AI configuration endpoint/shape instead of `Team`
+
+### Definition of done
+`/admin/teams` loads again, team details render without runtime crashes, and the page no longer depends on removed `Team` fields.
 
 ---
 
@@ -143,7 +161,7 @@ A QA tester can ingest a 50-page PDF spec and review records end-to-end without 
 ## Step 6 — Stream policy in UI
 
 ### Why now
-Backend Step 2 (Selenoid + runners + MinIO + stream policy) introduces `stream_enabled` and `debug_rerun` fields. Frontend needs to expose them.
+Backend Step 3 (Selenoid + runners + MinIO + stream policy) introduces `stream_enabled` and `debug_rerun` fields. Frontend needs to expose them.
 
 ### What changes
 
@@ -173,7 +191,7 @@ Backend Step 2 (Selenoid + runners + MinIO + stream policy) introduces `stream_e
 ## Step 7 — RCA panel (Phase D — first AI feature on the frontend)
 
 ### Why now
-Backend Step 5 (Phase D — RCA) ships first. Smallest AI feature, biggest immediate user value. Prepares the team's AI plumbing.
+Backend Step 7 (Phase D — RCA/offline generation) ships this capability. Smallest AI feature, biggest immediate user value. Prepares the team's AI plumbing.
 
 ### What changes
 - Add a markdown renderer dependency (likely `react-markdown`)
@@ -190,13 +208,13 @@ A user looking at a failed execution sees a human-readable AI explanation of why
 ## Step 8 — AI test generation review queue (Phase D)
 
 ### Why now
-Backend Step 5 (Phase D) ships test generation and script generation. Frontend needs to expose the triggers and the review flow.
+Backend Step 7 (Phase D) ships test generation and script generation. Frontend needs to expose the triggers and the review flow.
 
 ### What changes
 
 **Triggers (in-context):**
 - "Generate tests from this spec" button on the Specifications tab
-- "Generate Selenium script from this case" button in the Test Case editor
+- "Generate Selenium script from this case" button in the Test Case editor. Default generated script target is Selenium Java; Selenium Python remains selectable for prototypes/existing scripts.
 - "Generate from Jira ticket" button on the Specifications tab (offline mode)
 
 **Review queue (new AI tab):**
@@ -226,7 +244,7 @@ A user can:
 ## Step 9 — Live agent view (Phase E)
 
 ### Why now
-Backend Step 6 (Phase E — LangGraph live agent) ships. The headline product experience.
+Backend Step 5 (Phase E — LangGraph live agent) ships. The headline product experience.
 
 ### What changes
 
@@ -275,6 +293,7 @@ When a regression run fails on a selector and the agent's proposed fix is below 
 | Cross-project analytics dashboard | Workspace-first IA; per-project dashboards are sufficient |
 | Real-time collaboration (multiple users editing the same case) | Bank workflows are mostly sequential; not worth the complexity |
 | Notification center / inbox | Email/Slack/Teams already configured per user; in-app inbox would duplicate |
+| Native performance/security/API runner UIs | Browser E2E is the owned execution lane; other categories stay managed/ingested until backend engines exist |
 
 These are not "future phases" — they're decisions to not pursue them within the current product vision.
 

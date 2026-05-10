@@ -1,10 +1,13 @@
 from .configurations import (
     get_team_integration_values,
     get_user_integration_token,
-    sync_team_integrations_from_legacy,
-    sync_user_credentials_from_legacy,
     update_team_integrations,
     update_user_integration_token,
+)
+from .resolver import (
+    IntegrationCredentialBundle,
+    IntegrationResolutionMode,
+    resolve_integration_credentials,
 )
 from .workflows import (
     configure_project_integration,
@@ -20,6 +23,8 @@ from .workflows import (
 )
 
 __all__ = [
+    "IntegrationCredentialBundle",
+    "IntegrationResolutionMode",
     "configure_project_integration",
     "configure_team_integration",
     "create_repository_binding_for_project",
@@ -29,9 +34,8 @@ __all__ = [
     "mark_webhook_event_processed",
     "process_webhook_event",
     "record_integration_action_result",
+    "resolve_integration_credentials",
     "store_user_integration_credential",
-    "sync_team_integrations_from_legacy",
-    "sync_user_credentials_from_legacy",
     "update_team_integrations",
     "update_user_integration_token",
     "update_repository_binding",

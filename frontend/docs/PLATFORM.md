@@ -1,6 +1,6 @@
 # BIAT TestManager — Frontend Documentation
 
-**Last updated:** 2026-05-08
+**Last updated:** 2026-05-09
 **Status:** Single source of truth for the frontend application
 
 ---
@@ -21,6 +21,8 @@ For the backend's perspective, see `Backend/biat_testmanager/docs/PLATFORM.md`.
 ## 1. The frontend in one paragraph
 
 A Vite + React 19 + TypeScript SPA that consumes the Django REST + WebSocket backend. It implements authentication, an admin section (users / teams), a projects list, and a **workspace-first** project view where most of the actual work happens. Inside `/projects/:id`, the user navigates a four-tab workspace: **Repository** (test cases), **Specifications** (requirements), **Test Runs** (planning + execution), and **Automation** (live execution + AI agent sessions). The frontend is workspace-first by design — top-level pages are kept minimal and the rich functionality lives inside the project workspace.
+
+The first polished product target is **browser E2E test management and AI authoring**: users manage requirements and test cases, run Selenium browser regressions, watch/debug selected executions, and later use a KaneAI-style live browser agent to author cases and scripts. Performance, security, API, unit, and integration tests can appear in the UI as managed assets and ingested results, but the frontend should not imply that BIAT owns native execution infrastructure for those categories yet.
 
 ---
 
@@ -63,7 +65,7 @@ The frontend covers four backend layers (mapped to the three-layer backend archi
 | **Auth + Profile + Admin** | Layer 1 (accounts) | Login, password change, user management, team management |
 | **Projects** + **Repository tab** + **Test Runs tab** + **Specifications tab** | Layer 1 (data management) | TestRail-style: organize, plan, manage. Also: ingest results from external CI / IDE via the hybrid path. |
 | **Automation tab** + **AutomationLivePage** | Layer 2 (regression + interactive execution) | Run scripts, watch executions on opt-in basis, debug failures via debug rerun |
-| **AI surfaces** (Phase E + D) — planned | Layer 3 (AI agent) | KaneAI-style: generate tests, agent sessions (always-on noVNC), review queue, RCA |
+| **AI surfaces** (Phase E + D) — planned | Layer 3 (AI agent) | KaneAI-style browser E2E authoring: generate cases/steps, live agent sessions (always-on noVNC), review queue, RCA |
 
 ---
 
@@ -140,6 +142,7 @@ The list is intentionally short. **No "all test cases across all projects" page.
 ### 6.5 AI tab (planned, Phase E first, then D)
 - **Agent session launcher** (Step 5): prompt + spec doc + URL + optional screenshot/context → starts a LangGraph session. Always-on noVNC viewer + agent reasoning stream side by side.
 - **Review queue** for AI-generated candidates (`TestCase` drafts, `AutomationScript` candidates) — promote / edit / reject before they enter the canonical repository.
+- **Script review target:** default generated automation is Selenium Java for bank-facing E2E suites; Selenium Python remains selectable for prototypes/existing scripts.
 - **RCA viewer** for failed runs (Step 7): renders `TestResult.ai_failure_analysis`.
 - **Amendment review** during agent sessions: accept/reject scenarios discovered live by the DOMInspector.
 
@@ -198,6 +201,7 @@ This is **intentional**. A global store for repository data would create stale-d
 8. **Pre-signed URLs for artifacts.** Never proxy artifact downloads through Django.
 9. **No global app state beyond auth + execution.** Page-local state for everything else.
 10. **AI agent sessions have two WebSockets, not one.** `/ws/ai-sessions/{id}/browser/` for noVNC pixels, `/ws/ai-sessions/{id}/agent/` for reasoning events. Don't multiplex.
+11. **Do not over-promise native execution types.** Browser E2E is the owned execution lane. Other test categories are managed/ingested until backend support explicitly exists.
 
 ---
 

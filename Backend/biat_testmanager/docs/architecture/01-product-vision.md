@@ -46,7 +46,7 @@ We are not trying to compete with any of them on scale. We are trying to assembl
 1. The user types a test in natural language: *"log in, navigate to transfers, send 100 TND, verify the receipt page"*.
 2. The agent translates that into structured steps.
 3. The agent drives a browser live (the user watches via noVNC) to record actions for ambiguous steps.
-4. The recording is translated into a Selenium Python script.
+4. The recording is translated into a Selenium script: Java by default for bank-facing suites, Python when selected for dev/prototype scripts.
 5. The script is saved as an `AutomationScript` candidate, reviewed, approved.
 
 ### 3.4 KaneAI's self-healing
@@ -83,9 +83,11 @@ We have a **handful of Docker Chrome nodes** on the bank's network. That's the r
 - No Smart UI visual regression with pixel-perfect baselines
 - No real-device fingerprinting
 - No accessibility-checking AI
-- No performance/load testing
-- No API testing (out of scope until much later — and only via spec ingestion, not as a runtime engine)
-- No security testing (DAST/SAST)
+- No native performance/load test engine
+- No native API/unit/integration runtime engine
+- No native security testing engine (DAST/SAST)
+
+Those test categories can still be represented as managed test assets and ingested results. The boundary is runtime ownership: existing bank infrastructure can run them, BIAT can consume and report their outputs.
 
 ### 4.3 We are not a CI/CD replacement
 Engineers who write Selenium scripts in their IDE and run them via Jenkins keep doing that. The platform's Selenium Grid URL is reachable from Jenkins — it's just a remote driver endpoint. We don't replace anyone's pipeline. We integrate with it (see [`08-integrations.md`](08-integrations.md)).
@@ -113,7 +115,7 @@ AutomationScript stored in DB
          ↓
 Tester triggers run from UI
          ↓
-Celery dispatches to Selenium Grid (or Selenoid for AI agent)
+Celery dispatches to Selenoid (or Selenium Grid until the migration is complete)
          ↓
 Script runs in a Docker runner container
          ↓
@@ -128,14 +130,14 @@ Commits to GitHub
          ↓
 GitHub Actions / Jenkins runs the suite
          ↓
-Script points at the platform's Selenium Grid URL as remote driver
+Script points at the platform's browser backend as remote driver, or runs entirely on existing CI/lab infrastructure
          ↓
 Grid executes it
          ↓
 Results reported back to platform via API
 ```
 
-Both paths feed the same `TestResult` records. The platform is **either** the orchestrator (Path A) **or** just a results sink and a remote browser farm (Path B). The engineer chooses per script.
+Both paths feed the same `TestResult` records. The platform is **either** the orchestrator (Path A) **or** a results sink plus, optionally, a remote browser farm (Path B). The engineer chooses per script.
 
 The AI agent's output (Layer 3) goes through Path A by definition — generated scripts are saved as `AutomationScript` candidates and run on the platform.
 
@@ -161,7 +163,7 @@ The platform is built for three roles inside the bank's QA function:
 |---|---|
 | **QA Manager** | Configures the team's AI provider, integrations, project membership. Reads dashboards. Approves AI-generated test candidates. Sets concurrency budgets per project. |
 | **QA Engineer (manual)** | Writes test cases, organizes them in suites/sections/scenarios, plans runs. Marks manual test executions pass/fail. Reviews AI-generated tests. |
-| **QA Engineer (automation)** | Writes Selenium scripts — either in the platform editor or in their IDE. Triggers regression runs. Debugs failures. Maintains the regression suite. |
+| **QA Engineer (automation)** | Writes Selenium Java/Python scripts — either in the platform editor or in their IDE. Triggers regression runs. Debugs failures. Maintains the regression suite. |
 
 There is **no** "developer" role on the platform. Developers interact with the platform indirectly through GitHub PRs and Jira tickets — the AI agent reads from those interfaces. Developers never log into the platform.
 

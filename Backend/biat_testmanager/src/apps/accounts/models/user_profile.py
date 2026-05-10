@@ -3,7 +3,6 @@ import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from encrypted_model_fields.fields import EncryptedCharField
 
 from .choices import (
     NotificationProvider,
@@ -43,8 +42,8 @@ class UserProfile(models.Model):
         default=OrganizationRole.MEMBER,
     )
 
-    jira_token = EncryptedCharField(max_length=512, null=True, blank=True)
-    github_token = EncryptedCharField(max_length=512, null=True, blank=True)
+    # Personal Jira/GitHub credentials moved to UserIntegrationCredential
+    # in roadmap Step 2.
 
     notification_provider = models.CharField(
         max_length=20,

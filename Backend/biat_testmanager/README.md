@@ -138,13 +138,37 @@ docker start biat-redis
 
 ## Start Celery
 
+The platform uses **three queues**, one per workload:
+
+- `ai_agent` — long-lived LangGraph sessions (Phase E, planned)
+- `regression` — bulk dispatch of saved scripts from planned/standalone runs
+- `interactive` — single executions, debug rerun, manual browser sessions
+
 From `Backend/biat_testmanager/src`:
 
-```powershell
-uv run celery -A biat_testmanager worker -l info --pool=solo
+**Linux production** — one worker process per queue with the right pool:
+
+```bash
+uv run celery -A biat_testmanager worker -Q ai_agent    --pool=gevent  -c 20 -l info
+uv run celery -A biat_testmanager worker -Q regression  --pool=prefork -c 4  -l info
+uv run celery -A biat_testmanager worker -Q interactive --pool=prefork -c 2  -l info
 ```
 
-Use `--pool=solo` on Windows. `prefork` is not reliable there for this project.
+The `ai_agent` queue uses **gevent** because agent loops are I/O-bound (LLM calls + browser actions); one process serves up to 20 concurrent sessions. The `regression` and `interactive` queues use **prefork** because they spawn subprocess runners.
+
+**Windows development** — `prefork` is unreliable on Windows; use `solo`:
+
+```powershell
+uv run celery -A biat_testmanager worker -Q ai_agent    --pool=solo -l info
+uv run celery -A biat_testmanager worker -Q regression  --pool=solo -l info
+uv run celery -A biat_testmanager worker -Q interactive --pool=solo -l info
+```
+
+For a single-worker dev shortcut (consumes all three queues, one task at a time):
+
+```powershell
+uv run celery -A biat_testmanager worker -Q ai_agent,regression,interactive --pool=solo -l info
+```
 
 ## Playwright Setup
 

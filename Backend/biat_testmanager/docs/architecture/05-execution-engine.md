@@ -1,23 +1,23 @@
 # 05 — Execution Engine
 
-**The two queues. Selenium Grid. Selenoid. Docker runner containers. The `__BIAT_EVENT__` protocol. Checkpoint resume. Manual browser sessions.**
+**The execution queues. Selenium Grid/Selenoid. Language-specific Docker runner containers. The `__BIAT_EVENT__` protocol. Checkpoint resume. Manual browser sessions.**
 
 ---
 
 ## 1. The big picture
 
-The execution engine is **two parallel pipelines** — one for Layer 2 (regression), one for Layer 3 (AI agent). They share infrastructure but never share queues or workers.
+The execution engine is **two parallel pipelines** — one for Layer 2 browser E2E regression, one for Layer 3 AI browser authoring — backed by **three workload queues**: `regression`, `interactive`, and `ai_agent`. They share infrastructure but never share queue ownership.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                     THE EXECUTION ENGINE                           │
 │                                                                    │
 │  ┌──────────────────────┐         ┌─────────────────────────┐      │
-│  │  regression_queue    │         │     agent_queue         │      │
+│  │  regression queue    │         │     ai_agent queue      │      │
 │  │  (Layer 2)           │         │     (Layer 3)           │      │
 │  │                      │         │                         │      │
 │  │  Celery workers      │         │  Celery workers         │      │
-│  │  -Q regression -c 3  │         │  -Q agent -c 2          │      │
+│  │  -Q regression -c 4  │         │  -Q ai_agent -c 20      │      │
 │  └──────────┬───────────┘         └────────────┬────────────┘      │
 │             │                                  │                   │
 │             ▼                                  ▼                   │
@@ -29,7 +29,7 @@ The execution engine is **two parallel pipelines** — one for Layer 2 (regressi
 │             │                                  │                   │
 │             ▼                                  ▼                   │
 │  ┌──────────────────────┐         ┌─────────────────────────┐      │
-│  │   Selenium Grid      │         │       Selenoid          │      │
+│  │   Selenoid/Grid      │         │       Selenoid          │      │
 │  │   Hub + Chrome nodes │         │  Disposable containers  │      │
 │  └──────────────────────┘         └─────────────────────────┘      │
 │                                                                    │
@@ -38,39 +38,48 @@ The execution engine is **two parallel pipelines** — one for Layer 2 (regressi
 
 ---
 
-## 2. The two Celery queues
+## 2. The three Celery queues
 
 ### 2.1 Why split, conceptually
 - A regression run takes 30s–5min, deterministic, parallelizable across many cases
+- An interactive/debug run is a single human-facing execution and should not wait behind a bulk regression
 - An AI agent session takes 5–20 min, single-threaded, exploratory, can pause for LLM calls
 
-If both share a queue and worker pool, one slow agent session can starve 30 regression tests waiting in line. That's unacceptable.
+If these share a queue and worker pool, one slow agent session can starve 30 regression tests, or one bulk regression can block a debug rerun while a human is waiting. That's unacceptable.
 
 ### 2.2 Configuration in `settings.py`
 
 ```python
 CELERY_TASK_ROUTES = {
     "automation.run_test_execution": {"queue": "regression"},
-    "automation.run_manual_browser_session": {"queue": "regression"},
+    "automation.run_manual_browser_session": {"queue": "interactive"},
     "automation.expire_stale_execution_checkpoints": {"queue": "regression"},
-    "automation.run_agent_session": {"queue": "agent"},  # planned
+    "automation.run_single_execution": {"queue": "interactive"},  # planned
+    "automation.debug_rerun": {"queue": "interactive"},  # planned
+    "ai.run_agent_session": {"queue": "ai_agent"},  # planned
 }
 
 CELERY_TASK_DEFAULT_QUEUE = "regression"
 CELERY_TASK_QUEUES = (
+    Queue("ai_agent", routing_key="ai_agent"),
     Queue("regression", routing_key="regression"),
-    Queue("agent", routing_key="agent"),
+    Queue("interactive", routing_key="interactive"),
 )
 ```
 
 ### 2.3 Worker startup commands
 
 ```bash
-# Regression worker pool — sized for Selenium Grid capacity
-celery -A biat_testmanager worker -Q regression -c 3 --pool=solo  # solo on Windows
+# Regression worker pool — bulk browser E2E dispatch
+celery -A biat_testmanager worker -Q regression --pool=prefork -c 4
 
-# Agent worker pool — sized for Selenoid capacity + LLM concurrency
-celery -A biat_testmanager worker -Q agent -c 2 --pool=solo
+# Interactive worker pool — manual sessions and debug reruns
+celery -A biat_testmanager worker -Q interactive --pool=prefork -c 2
+
+# Agent worker pool — I/O-bound LLM + browser sessions
+celery -A biat_testmanager worker -Q ai_agent --pool=gevent -c 20
+
+# Windows dev: use --pool=solo for each queue
 ```
 
 Each worker locks itself to its queue with `-Q`. Capacity is independent.
@@ -102,13 +111,13 @@ Future agent-related schedules (e.g., periodic GitHub PR scans) will go here too
    - Checks Project.max_concurrent_executions cap
    - If at cap: leaves task queued, will retry later
 3. TestExecution row created with status='queued'
-4. Celery task enqueued on regression_queue
+4. Celery task enqueued on `regression`
 5. Worker picks up the task
 6. Worker calls run_execution(execution_id)
 7. acquire_run_case_lease() — claims the run-case
 8. Status flips to 'running'
 9. Worker spawns a Docker runner container (planned: replaces today's subprocess)
-10. Runner container connects to Selenium Grid via RemoteWebDriver
+10. Runner container connects to the browser backend (Selenoid after Step 3; Selenium Grid today) via RemoteWebDriver
 11. Script runs, emits __BIAT_EVENT__ events to stdout
 12. Worker streams container logs, parses events
 13. Each event creates/updates ExecutionStep, TestArtifact, ExecutionCheckpoint
@@ -123,10 +132,10 @@ Future agent-related schedules (e.g., periodic GitHub PR scans) will go here too
 
 ### 3.2 Today vs. planned
 
-| Step | Today | Planned (Step 2 in roadmap) |
+| Step | Today | Planned (Step 3 in roadmap) |
 |---|---|---|
 | Script execution | Subprocess on Celery worker host | Docker runner container |
-| Python deps | Whatever's installed on the worker | Per-script via image, or `requirements` field |
+| Script dependencies | Whatever's installed on the worker | Per-language runner image, or script/team-owned custom image |
 | Artifacts | Local filesystem under `artifact_dir/` | MinIO via boto3 |
 | Worker→runner data | Direct disk access | Shared Docker volume + MinIO |
 | Cleanup | Manual (and risky on crash) | Automatic via `--rm` |
@@ -157,7 +166,7 @@ The `apps.automation.services.grid` module:
 1. User clicks "Start KaneAI session" on a TestCase or Jira ticket
 2. Backend creates a TestExecution with trigger_type='agent'
    - Or a new dedicated AgentSession model — TBD during implementation
-3. Celery task enqueued on agent_queue
+3. Celery task enqueued on `ai_agent`
 4. Worker picks up the task
 5. Worker initializes the LangGraph agent
    - Loads relevant SpecChunks via pgvector (RAG)
@@ -227,7 +236,7 @@ This is **not in scope yet**. Current target: single-host Docker Compose with Se
 
 ### 5.1 The problem
 Today, scripts run as subprocesses on the Celery worker host. Two problems:
-1. **Dependency hell** — if a script needs `pandas` or `requests` that the worker doesn't have, it fails. Installing dependencies per script via `pip install` in a virtualenv is slow and leaves zombie files.
+1. **Dependency hell** — if a script needs Java/Maven tooling, Python packages, or a bank-owned dependency set that the worker doesn't have, it fails. Installing dependencies per script on the worker is slow and leaves zombie files.
 2. **Filesystem coupling** — scripts write artifacts to the worker's local disk. When we move to containerized Selenium Grid (already done) or Selenoid, the filesystem isn't shared.
 
 ### 5.2 The solution: a runner container per execution
@@ -240,37 +249,40 @@ Celery worker
        -e BIAT_SELENIUM_GRID_URL=http://selenium-hub:4444
        -e BIAT_EXECUTION_ID=<id>
        -v <script-dir>:/app/script
-       biat-script-runner:latest
-       python /app/script/test.py
+       biat-selenium-java-runner:latest
+       mvn test
    ↓ Streams container logs in real time
    ↓ Parses __BIAT_EVENT__ lines from stdout
    ↓ Persists ExecutionStep / TestArtifact rows
    ↓ Container exits → Docker removes it (--rm)
 ```
 
-### 5.3 The pre-built runner image
-`biat-script-runner:latest` is a Docker image we build once:
+### 5.3 The pre-built runner images
+Runner images are language-specific. The first-class bank target is Java Selenium; Python stays supported for prototypes and existing scripts.
 
 ```dockerfile
+# Java E2E runner, simplified
+FROM maven:3.9-eclipse-temurin-21
+RUN mkdir -p /opt/biat
+COPY biat-event-helper.jar /opt/biat/
+```
+
+```dockerfile
+# Python E2E runner, simplified
 FROM python:3.11-slim
-RUN pip install \
-    selenium \
-    playwright \
-    pytest \
-    boto3 \
-    requests
+RUN pip install selenium boto3 requests
 COPY biat_event_helper.py /usr/local/lib/biat/
 ENV PYTHONPATH=/usr/local/lib/biat
 ```
 
-For most scripts, this is enough. The image has the standard Selenium + helper utilities.
+For most browser E2E scripts, one of these images is enough. The runner selected for an execution comes from `AutomationScript.language` first, then the execution environment default.
 
 ### 5.4 Custom dependencies
-For scripts that need unusual libraries, `AutomationScript` gets two optional fields:
-- `requirements` — pip-format dependency list
-- `docker_image` — custom image override (engineer's own image with their stack)
+For scripts that need unusual libraries, `AutomationScript` can use optional fields:
+- `requirements` — dependency list for the language-specific runner where supported
+- `docker_image` — custom image override, usually a team-owned Java/Python image with bank-specific dependencies
 
-If `docker_image` is set, the worker uses that image. If `requirements` is set, the runner does `pip install -r ...` at start (fast — image already has the heavy deps cached). If neither is set, the base image is used.
+If `docker_image` is set, the worker uses that image. If `requirements` is set, the runner installs the supported dependencies at start. If neither is set, the base runner for the script language is used.
 
 ### 5.5 Why skip per-script virtualenvs
 
@@ -317,7 +329,7 @@ A line beginning with `__BIAT_EVENT__` followed by a JSON object. The worker rea
 | `agent_decision` (Layer 3) | Agent chose an action | `ExecutionStep` (special type) |
 
 ### 6.3 Helper API
-A Python helper library (`biat_event_helper.py`) gives scripts ergonomic functions:
+Each supported runner language gets a tiny helper library that emits the same stdout protocol. Python uses `biat_event_helper.py`; Java should use an equivalent `biat-event-helper` package/JAR.
 
 ```python
 from biat import (
@@ -335,7 +347,7 @@ report_step_passed(index=1)
 artifact_created(path="/tmp/screenshot.png", artifact_type="screenshot", step_index=1)
 ```
 
-The helper writes the JSON-encoded line to stdout with the `__BIAT_EVENT__` prefix. Authors don't deal with the wire format.
+The helper writes the JSON-encoded line to stdout with the `__BIAT_EVENT__` prefix. Authors don't deal with the wire format, and the worker parser stays language-agnostic.
 
 ### 6.4 Why this protocol
 - **Language-agnostic** — anything that can write to stdout can emit events
@@ -461,7 +473,7 @@ A QA engineer wants to open a browser **without running a test** — just to ins
 ### 10.2 Implementation
 - A `TestExecution` is created with `trigger_type='diagnostic'`
 - No `AutomationScript` is attached
-- A worker (on regression_queue) connects to the Grid, opens a fresh Chrome session, navigates to the target URL
+- A worker (on `interactive`) connects to the browser backend, opens a fresh Chrome session, navigates to the target URL
 - The session stays alive until the user closes it or a TTL expires
 - The user interacts with the browser via the noVNC stream (mouse and keyboard work — RFB is bidirectional)
 
@@ -484,8 +496,8 @@ This abstraction is **why** Layer 3's Playwright MCP usage doesn't pollute Layer
 
 | Concern | Layer 2 (regression) | Layer 3 (AI agent) |
 |---|---|---|
-| Queue | `regression_queue` | `agent_queue` |
-| Browser farm | Selenium Grid (3 Chrome nodes) | Selenoid (disposable containers) |
+| Queue | `regression` for bulk runs, `interactive` for debug/manual | `ai_agent` |
+| Browser farm | Selenoid after Step 3 (Selenium Grid today) | Selenoid (disposable containers) |
 | Driver protocol | Selenium WebDriver | Playwright MCP → CDP |
 | Script source | Stored `AutomationScript` content | Generated by LangGraph at runtime |
 | Live stream | Opt-in (default off) | Always on |

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.accounts.models import (
+    AIProvider,
     OrganizationRole,
     Team,
     TeamMembership,
@@ -26,7 +27,10 @@ from apps.accounts.services.team_ai import (
 )
 from apps.accounts.services.team_management import sync_manager_profile_with_team
 from apps.accounts.services.validation import validate_manager_for_organization
-from apps.integrations.services import get_team_integration_values, update_team_integrations
+from apps.integrations.services import (
+    get_team_integration_values,
+    update_team_integrations,
+)
 
 User = get_user_model()
 
@@ -45,12 +49,14 @@ class TeamSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    # AI configuration is read/written through TeamAIConfig; these are
+    # serializer-level fields, not Team model fields.
     ai_provider = serializers.PrimaryKeyRelatedField(
-        queryset=Team._meta.get_field("ai_provider").remote_field.model.objects.all(),
+        queryset=AIProvider.objects.all(),
         required=False,
         allow_null=True,
     )
-    ai_provider_name = serializers.CharField(source="ai_provider.name", read_only=True)
+    ai_provider_name = serializers.SerializerMethodField()
     has_ai_api_key = serializers.SerializerMethodField()
     ai_api_key = serializers.CharField(
         required=False,
@@ -60,11 +66,9 @@ class TeamSerializer(serializers.ModelSerializer):
     )
     ai_model = serializers.CharField(required=False, allow_blank=True)
     monthly_token_budget = serializers.IntegerField(required=False)
-    jira_base_url = serializers.URLField(required=False, allow_blank=True, allow_null=True)
-    jira_project_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    github_org = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    github_repo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    jenkins_url = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+
+    # Integration configuration is read/written through IntegrationConfig.
+    integrations = serializers.JSONField(required=False)
 
     class Meta:
         model = Team
@@ -83,15 +87,14 @@ class TeamSerializer(serializers.ModelSerializer):
             "has_ai_api_key",
             "ai_model",
             "monthly_token_budget",
-            "tokens_used_this_month",
-            "jira_base_url",
-            "jira_project_key",
-            "github_org",
-            "github_repo",
-            "jenkins_url",
+            "integrations",
             "created_at",
         ]
-        read_only_fields = ["tokens_used_this_month", "created_at"]
+        read_only_fields = ["created_at"]
+
+    def get_ai_provider_name(self, obj):
+        provider = get_effective_ai_provider(obj)
+        return provider.name if provider else None
 
     def get_manager_name(self, obj):
         if not obj.manager:
@@ -118,16 +121,10 @@ class TeamSerializer(serializers.ModelSerializer):
         payload = super().to_representation(instance)
         provider = get_effective_ai_provider(instance)
         payload["ai_provider"] = str(provider.id) if provider else None
-        payload["ai_provider_name"] = provider.name if provider else None
         payload["ai_model"] = get_effective_ai_model(instance)
         payload["monthly_token_budget"] = get_effective_monthly_budget(instance)
 
-        integration_values = get_team_integration_values(instance)
-        payload["jira_base_url"] = integration_values["jira_base_url"]
-        payload["jira_project_key"] = integration_values["jira_project_key"]
-        payload["github_org"] = integration_values["github_org"]
-        payload["github_repo"] = integration_values["github_repo"]
-        payload["jenkins_url"] = integration_values["jenkins_url"]
+        payload["integrations"] = get_team_integration_values(instance)
         return payload
 
     def validate(self, attrs):
@@ -177,11 +174,7 @@ class TeamSerializer(serializers.ModelSerializer):
                     "ai_api_key",
                     "ai_model",
                     "monthly_token_budget",
-                    "jira_base_url",
-                    "jira_project_key",
-                    "github_org",
-                    "github_repo",
-                    "jenkins_url",
+                    "integrations",
                 }
             }
             if forbidden_fields:
@@ -205,11 +198,7 @@ class TeamSerializer(serializers.ModelSerializer):
         ai_api_key = validated_data.pop("ai_api_key", None)
         ai_model = validated_data.pop("ai_model", None)
         monthly_token_budget = validated_data.pop("monthly_token_budget", None)
-        jira_base_url = validated_data.pop("jira_base_url", None)
-        jira_project_key = validated_data.pop("jira_project_key", None)
-        github_org = validated_data.pop("github_org", None)
-        github_repo = validated_data.pop("github_repo", None)
-        jenkins_url = validated_data.pop("jenkins_url", None)
+        integrations = validated_data.pop("integrations", None)
 
         team = Team.objects.create(**validated_data)
         update_fields: list[str] = []
@@ -226,16 +215,10 @@ class TeamSerializer(serializers.ModelSerializer):
             model_name=ai_model or "gpt-4o-mini",
             monthly_budget=monthly_token_budget
             if isinstance(monthly_token_budget, int)
-            else 100000,
+            else UNSET,
         )
-        update_team_integrations(
-            team=team,
-            jira_base_url=jira_base_url,
-            jira_project_key=jira_project_key,
-            github_org=github_org,
-            github_repo=github_repo,
-            jenkins_url=jenkins_url,
-        )
+        if integrations is not None:
+            update_team_integrations(team=team, integrations=integrations)
 
         sync_manager_profile_with_team(manager_user, team)
         return team
@@ -248,11 +231,7 @@ class TeamSerializer(serializers.ModelSerializer):
         ai_api_key = validated_data.pop("ai_api_key", serializers.empty)
         ai_model = validated_data.pop("ai_model", serializers.empty)
         monthly_token_budget = validated_data.pop("monthly_token_budget", serializers.empty)
-        jira_base_url = validated_data.pop("jira_base_url", serializers.empty)
-        jira_project_key = validated_data.pop("jira_project_key", serializers.empty)
-        github_org = validated_data.pop("github_org", serializers.empty)
-        github_repo = validated_data.pop("github_repo", serializers.empty)
-        jenkins_url = validated_data.pop("jenkins_url", serializers.empty)
+        integrations = validated_data.pop("integrations", serializers.empty)
 
         has_ai_updates = any(
             value is not serializers.empty
@@ -289,23 +268,10 @@ class TeamSerializer(serializers.ModelSerializer):
                 ),
             )
 
-        if any(
-            value is not serializers.empty
-            for value in [
-                jira_base_url,
-                jira_project_key,
-                github_org,
-                github_repo,
-                jenkins_url,
-            ]
-        ):
+        if integrations is not serializers.empty:
             update_team_integrations(
                 team=instance,
-                jira_base_url=jira_base_url,
-                jira_project_key=jira_project_key,
-                github_org=github_org,
-                github_repo=github_repo,
-                jenkins_url=jenkins_url,
+                integrations=integrations,
             )
 
         sync_manager_profile_with_team(instance.manager, instance)

@@ -32,7 +32,7 @@ The integration foundation is in place. See [`03-domain-model.md`](03-domain-mod
 | `ExternalIssueLink` | Connects Jira/GitHub issues to project objects |
 | `IntegrationActionLog` | Append-only audit trail of every external API call |
 
-What's NOT yet built: the **reactive logic** that consumes these records. Webhooks are stored, but nothing reacts to them yet. This is Step 4 in the roadmap.
+What's NOT yet built: the **reactive logic** that consumes these records. Webhooks are stored, but nothing reacts to them yet. Results ingest, GitHub sync, and AI-powered Jira/GitHub flows are sequenced separately in the roadmap.
 
 ---
 
@@ -84,7 +84,7 @@ Treat GitHub as the canonical source for any script that has a `RepositoryBindin
 class AutomationScript(models.Model):
     # ... existing fields ...
 
-    # NEW (planned, Step 4 in roadmap):
+    # NEW (planned, Step 8 in roadmap):
     source_repo_binding = models.ForeignKey(
         RepositoryBinding,
         null=True, blank=True,
@@ -201,7 +201,7 @@ GitHub issue_comment webhook fires → /webhooks/github/
        ↓
 Backend webhook consumer detects the trigger phrase
        ↓
-Celery task on agent_queue:
+Celery task on `ai_agent`:
    1. Read PR diff via GitHub API
    2. RAG-search the test repository:
       - Which tests cover the modified components?
@@ -241,7 +241,7 @@ This is the moment the product proves its worth: **a developer opens a PR and th
 **Outbound (BIAT → Jenkins):** Out of scope for the foreseeable future. Triggering Jenkins jobs from BIAT would invert the integration — Jenkins is meant to drive automation, not be driven.
 
 ### 7.3 The realistic Jenkins scenario
-Most likely: Jenkins runs a Selenium test suite, the suite points its `RemoteWebDriver` at the BIAT Selenium Grid URL, and the suite reports results back via the BIAT REST API. This needs a small "results ingestion" endpoint:
+Most likely: Jenkins runs an existing test suite and reports results back via the BIAT REST API. For browser E2E, the suite may point its `RemoteWebDriver` at the BIAT browser backend; for performance, security, API, unit, and integration tests, Jenkins or another bank-owned tool remains the runtime engine and BIAT is the management/results layer.
 
 ```
 POST /api/test-results/external/
@@ -327,14 +327,14 @@ This separation means: if Jira ever breaks or BIAT switches to a different ticke
 
 ## 11. The current state vs the next state
 
-| Capability | Today | Next (Step 4 in roadmap) |
+| Capability | Today | Next roadmap step |
 |---|---|---|
 | Webhook ingestion + HMAC | Built | (no change needed) |
 | `IntegrationConfig`, `RepositoryBinding`, etc. | Built | (no change needed) |
-| GitHub push → AutomationScript sync | Not wired | **Wire it** |
-| Jira ticket → AI test generation | Not wired | Wire it (depends on Phase D AI) |
-| GitHub PR → AI validation | Not wired | Wire it (depends on Phase E agent) |
-| Jenkins external result ingestion | Not built | Add when needed |
+| GitHub push → AutomationScript sync | Not wired | Step 8 |
+| Jira ticket → AI test generation | Not wired | Step 9 after Phase D/E AI plumbing |
+| GitHub PR → AI validation | Not wired | Step 9 after Phase E agent |
+| Jenkins/external result ingestion | Not built | Step 6 |
 | Cross-provider audit log | Built | (no change needed) |
 
-The infrastructure is solid. The reactive consumers are what's missing. They're sequenced in the roadmap to align with AI phases — the GitHub sync can ship before AI (Step 4 in the roadmap), but the AI-powered Jira/GitHub features require Phase D / E to be online.
+The infrastructure is solid. The reactive consumers are what's missing. They're sequenced in the roadmap to align with execution and AI phases: Results Ingest first, GitHub source sync later, then AI-powered Jira/GitHub features once Phase D/E are online.

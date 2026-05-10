@@ -23,6 +23,7 @@ SENSITIVE_CONFIG_KEYS = {"api_key", "password", "secret", "token", "webhook_secr
 
 
 class IntegrationConfigSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField(source="provider_id", read_only=True)
     config_data = serializers.SerializerMethodField()
     team_name = serializers.CharField(source="team.name", read_only=True)
     project_name = serializers.CharField(source="project.name", read_only=True)
@@ -35,7 +36,7 @@ class IntegrationConfigSerializer(serializers.ModelSerializer):
             "team_name",
             "project",
             "project_name",
-            "provider_slug",
+            "provider",
             "config_data",
             "is_active",
             "created_at",
@@ -56,7 +57,7 @@ class IntegrationConfigWriteSerializer(serializers.Serializer):
 
     def save(self, **kwargs):
         request = self.context["request"]
-        provider_slug = self.context["provider_slug"]
+        provider_key = self.context["provider_key"]
         config_data = self._preserve_redacted_secrets(
             self.validated_data.get("config_data") or {}
         )
@@ -66,7 +67,7 @@ class IntegrationConfigWriteSerializer(serializers.Serializer):
             return configure_team_integration(
                 actor=request.user,
                 team=team,
-                provider_slug=provider_slug,
+                provider_key=provider_key,
                 config_data=config_data,
                 is_active=is_active,
             )
@@ -74,7 +75,7 @@ class IntegrationConfigWriteSerializer(serializers.Serializer):
         return configure_project_integration(
             actor=request.user,
             project=self.context["project"],
-            provider_slug=provider_slug,
+            provider_key=provider_key,
             config_data=config_data,
             is_active=is_active,
         )
@@ -92,27 +93,28 @@ class IntegrationConfigWriteSerializer(serializers.Serializer):
         return merged_data
 
     def _get_existing_config(self):
-        provider_slug = self.context["provider_slug"]
+        provider_key = self.context["provider_key"]
         if team := self.context.get("team"):
             return IntegrationConfig.objects.filter(
                 team=team,
                 project=None,
-                provider_slug=provider_slug,
+                provider_id=provider_key,
             ).first()
         return IntegrationConfig.objects.filter(
             project=self.context["project"],
-            provider_slug=provider_slug,
+            provider_id=provider_key,
         ).first()
 
 
 class UserIntegrationCredentialSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField(source="provider_id", read_only=True)
     has_credential = serializers.SerializerMethodField()
 
     class Meta:
         model = UserIntegrationCredential
         fields = [
             "id",
-            "provider_slug",
+            "provider",
             "has_credential",
             "is_active",
             "created_at",
@@ -132,13 +134,14 @@ class UserIntegrationCredentialWriteSerializer(serializers.Serializer):
         request = self.context["request"]
         return store_user_integration_credential(
             profile=request.user.profile,
-            provider_slug=self.context["provider_slug"],
+            provider_key=self.context["provider_key"],
             credential_data=self.validated_data.get("credential_data") or {},
             is_active=self.validated_data.get("is_active", True),
         )
 
 
 class RepositoryBindingSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField()
     project_name = serializers.CharField(source="project.name", read_only=True)
     created_by_name = serializers.SerializerMethodField()
 
@@ -148,7 +151,7 @@ class RepositoryBindingSerializer(serializers.ModelSerializer):
             "id",
             "project",
             "project_name",
-            "provider_slug",
+            "provider",
             "repo_identifier",
             "default_branch",
             "metadata_json",
@@ -177,7 +180,7 @@ class RepositoryBindingSerializer(serializers.ModelSerializer):
         return create_repository_binding_for_project(
             actor=self.context["request"].user,
             project=self.context["project"],
-            provider_slug=validated_data["provider_slug"],
+            provider_key=validated_data["provider"],
             repo_identifier=validated_data["repo_identifier"],
             default_branch=validated_data.get("default_branch", "main"),
             metadata_json=validated_data.get("metadata_json") or {},
@@ -194,6 +197,7 @@ class RepositoryBindingSerializer(serializers.ModelSerializer):
 
 
 class WebhookEventListSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField(source="provider_id", read_only=True)
     project_name = serializers.CharField(source="project.name", read_only=True)
     repository = serializers.CharField(
         source="repository_binding.repo_identifier",
@@ -207,7 +211,7 @@ class WebhookEventListSerializer(serializers.ModelSerializer):
             "project",
             "project_name",
             "repository",
-            "provider_slug",
+            "provider",
             "event_type",
             "external_id",
             "status",
@@ -226,6 +230,7 @@ class WebhookEventDetailSerializer(WebhookEventListSerializer):
 
 
 class ExternalIssueLinkSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField()
     target_type = serializers.SerializerMethodField(read_only=True)
     target_type_input = serializers.CharField(write_only=True)
     object_id = serializers.CharField()
@@ -236,7 +241,7 @@ class ExternalIssueLinkSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "project",
-            "provider_slug",
+            "provider",
             "external_key",
             "external_url",
             "target_type",
@@ -281,7 +286,7 @@ class ExternalIssueLinkSerializer(serializers.ModelSerializer):
         return link_external_issue_to_object(
             actor=self.context["request"].user,
             project=self.context["project"],
-            provider_slug=validated_data["provider_slug"],
+            provider_key=validated_data["provider"],
             external_key=validated_data["external_key"],
             external_url=validated_data.get("external_url", ""),
             content_object=content_object,
@@ -314,6 +319,7 @@ class ExternalIssueLinkSerializer(serializers.ModelSerializer):
 
 
 class IntegrationActionLogSerializer(serializers.ModelSerializer):
+    provider = serializers.CharField(source="provider_id", read_only=True)
     project_name = serializers.CharField(source="project.name", read_only=True)
     team_name = serializers.CharField(source="team.name", read_only=True)
     actor_username = serializers.CharField(source="actor_user.username", read_only=True)
@@ -326,7 +332,7 @@ class IntegrationActionLogSerializer(serializers.ModelSerializer):
             "team_name",
             "project",
             "project_name",
-            "provider_slug",
+            "provider",
             "action_type",
             "actor_user",
             "actor_username",

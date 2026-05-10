@@ -22,7 +22,12 @@ class IntegrationActionLog(models.Model):
         null=True,
         blank=True,
     )
-    provider_slug = models.CharField(max_length=50)
+    provider = models.ForeignKey(
+        "integrations.IntegrationProvider",
+        to_field="slug",
+        on_delete=models.PROTECT,
+        related_name="action_logs",
+    )
     action_type = models.CharField(max_length=100)
     actor_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -47,7 +52,7 @@ class IntegrationActionLog(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(
-                fields=["provider_slug", "action_type", "status"],
+                fields=["provider", "action_type", "status"],
                 name="int_action_provider_idx",
             ),
             models.Index(
@@ -57,4 +62,4 @@ class IntegrationActionLog(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.provider_slug} / {self.action_type} / {self.status}"
+        return f"{self.provider_id} / {self.action_type} / {self.status}"

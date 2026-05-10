@@ -26,6 +26,7 @@ import type {
   CreateTeamPayload,
   PaginatedResponse,
   Team,
+  TeamIntegrations,
   TeamMember,
   TeamMembershipRole,
   UpdateTeamPayload,
@@ -36,6 +37,22 @@ const TEAM_ROLE_OPTIONS = [
   { value: "viewer", label: "Viewer" },
   { value: "manager", label: "Manager" },
 ];
+
+function normalizeTeamIntegrations(integrations?: TeamIntegrations): TeamIntegrations {
+  return {
+    jira: {
+      base_url: integrations?.jira?.base_url ?? null,
+      project_key: integrations?.jira?.project_key ?? null,
+    },
+    github: {
+      org: integrations?.github?.org ?? null,
+      repo: integrations?.github?.repo ?? null,
+    },
+    jenkins: {
+      url: integrations?.jenkins?.url ?? null,
+    },
+  };
+}
 
 function extractError(err: unknown): string {
   if (typeof err === "object" && err !== null && "response" in err) {
@@ -101,7 +118,7 @@ function TeamCard({
           onClick={onSelect}
           className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
         >
-          Manage
+          {isSelected ? "Selected" : "Open details"}
         </button>
         {isAdmin && (
           <button
@@ -211,11 +228,7 @@ export default function TeamsPage() {
       manager: selectedTeam.manager ?? undefined,
       ai_model: selectedTeam.ai_model,
       monthly_token_budget: selectedTeam.monthly_token_budget,
-      jira_base_url: selectedTeam.jira_base_url ?? "",
-      jira_project_key: selectedTeam.jira_project_key ?? "",
-      github_org: selectedTeam.github_org ?? "",
-      github_repo: selectedTeam.github_repo ?? "",
-      jenkins_url: selectedTeam.jenkins_url ?? "",
+      integrations: normalizeTeamIntegrations(selectedTeam.integrations),
     });
     setEditAiKey("");
     setSettingsError("");
@@ -231,6 +244,13 @@ export default function TeamsPage() {
   function selectTeam(team: Team) {
     setSelectedTeam(team);
     setMembersPageNumber(1);
+  }
+
+  function updateIntegrationSettings(nextIntegrations: TeamIntegrations) {
+    setEditForm((currentForm) => ({
+      ...currentForm,
+      integrations: normalizeTeamIntegrations(nextIntegrations),
+    }));
   }
 
   async function handleCreate() {
@@ -544,12 +564,6 @@ export default function TeamsPage() {
                       />
                     </div>
 
-                    <p className="mt-4 text-xs text-slate-500">
-                      Tokens used this month:{" "}
-                      <span className="font-semibold text-slate-700">
-                        {selectedTeam.tokens_used_this_month.toLocaleString()}
-                      </span>
-                    </p>
                   </section>
 
                   <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -558,57 +572,62 @@ export default function TeamsPage() {
                       <Input
                         id="team-jira-base-url"
                         label="Jira base URL"
-                        value={editForm.jira_base_url ?? ""}
-                        onChange={(event) =>
-                          setEditForm((currentForm) => ({
-                            ...currentForm,
-                            jira_base_url: event.target.value,
-                          }))
-                        }
+                        value={editForm.integrations?.jira.base_url ?? ""}
+                        onChange={(event) => {
+                          const integrations = normalizeTeamIntegrations(editForm.integrations);
+                          updateIntegrationSettings({
+                            ...integrations,
+                            jira: { ...integrations.jira, base_url: event.target.value },
+                          });
+                        }}
                       />
                       <Input
                         id="team-jira-project-key"
                         label="Jira project key"
-                        value={editForm.jira_project_key ?? ""}
-                        onChange={(event) =>
-                          setEditForm((currentForm) => ({
-                            ...currentForm,
-                            jira_project_key: event.target.value,
-                          }))
-                        }
+                        value={editForm.integrations?.jira.project_key ?? ""}
+                        onChange={(event) => {
+                          const integrations = normalizeTeamIntegrations(editForm.integrations);
+                          updateIntegrationSettings({
+                            ...integrations,
+                            jira: { ...integrations.jira, project_key: event.target.value },
+                          });
+                        }}
                       />
                       <Input
                         id="team-github-org"
                         label="GitHub org"
-                        value={editForm.github_org ?? ""}
-                        onChange={(event) =>
-                          setEditForm((currentForm) => ({
-                            ...currentForm,
-                            github_org: event.target.value,
-                          }))
-                        }
+                        value={editForm.integrations?.github.org ?? ""}
+                        onChange={(event) => {
+                          const integrations = normalizeTeamIntegrations(editForm.integrations);
+                          updateIntegrationSettings({
+                            ...integrations,
+                            github: { ...integrations.github, org: event.target.value },
+                          });
+                        }}
                       />
                       <Input
                         id="team-github-repo"
                         label="GitHub repo"
-                        value={editForm.github_repo ?? ""}
-                        onChange={(event) =>
-                          setEditForm((currentForm) => ({
-                            ...currentForm,
-                            github_repo: event.target.value,
-                          }))
-                        }
+                        value={editForm.integrations?.github.repo ?? ""}
+                        onChange={(event) => {
+                          const integrations = normalizeTeamIntegrations(editForm.integrations);
+                          updateIntegrationSettings({
+                            ...integrations,
+                            github: { ...integrations.github, repo: event.target.value },
+                          });
+                        }}
                       />
                       <Input
                         id="team-jenkins-url"
                         label="Jenkins URL"
-                        value={editForm.jenkins_url ?? ""}
-                        onChange={(event) =>
-                          setEditForm((currentForm) => ({
-                            ...currentForm,
-                            jenkins_url: event.target.value,
-                          }))
-                        }
+                        value={editForm.integrations?.jenkins.url ?? ""}
+                        onChange={(event) => {
+                          const integrations = normalizeTeamIntegrations(editForm.integrations);
+                          updateIntegrationSettings({
+                            ...integrations,
+                            jenkins: { ...integrations.jenkins, url: event.target.value },
+                          });
+                        }}
                       />
                     </div>
                   </section>

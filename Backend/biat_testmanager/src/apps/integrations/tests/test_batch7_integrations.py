@@ -97,7 +97,7 @@ class Batch7IntegrationModelTests(Batch7IntegrationSetupMixin, TestCase):
     def test_repository_binding_is_unique_per_project_provider_and_repo(self):
         RepositoryBinding.objects.create(
             project=self.project,
-            provider_slug="github",
+            provider_id="github",
             repo_identifier="biat/test-manager",
             created_by=self.admin,
         )
@@ -105,7 +105,7 @@ class Batch7IntegrationModelTests(Batch7IntegrationSetupMixin, TestCase):
         with self.assertRaises(IntegrityError):
             RepositoryBinding.objects.create(
                 project=self.project,
-                provider_slug="github",
+                provider_id="github",
                 repo_identifier="biat/test-manager",
                 created_by=self.admin,
             )
@@ -114,7 +114,7 @@ class Batch7IntegrationModelTests(Batch7IntegrationSetupMixin, TestCase):
         link = link_external_issue_to_object(
             actor=self.admin,
             project=self.project,
-            provider_slug="jira",
+            provider_key="jira",
             external_key="BANK-123",
             content_object=self.project,
             metadata_json={"source": "manual"},
@@ -130,7 +130,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
         config = configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="jira",
+            provider_key="jira",
             config_data={"base_url": "https://jira.biat.tn", "project_key": "BANK"},
         )
 
@@ -142,13 +142,13 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
         first = configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"org": "biat", "repo": "old"},
         )
         second = configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"org": "biat", "repo": "new"},
         )
 
@@ -157,7 +157,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
         self.assertEqual(
             IntegrationConfig.objects.filter(
                 project=self.project,
-                provider_slug="github",
+                provider_id="github",
             ).count(),
             1,
         )
@@ -165,7 +165,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
     def test_store_user_integration_credential_keeps_payload_encrypted_in_model(self):
         credential = store_user_integration_credential(
             profile=self.admin.profile,
-            provider_slug="github",
+            provider_key="github",
             credential_data={"token": "ghp_test"},
         )
 
@@ -173,7 +173,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
         self.assertTrue(
             UserIntegrationCredential.objects.filter(
                 user_profile=self.admin.profile,
-                provider_slug="github",
+                provider_id="github",
                 is_active=True,
             ).exists()
         )
@@ -183,7 +183,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
             create_repository_binding_for_project(
                 actor=self.viewer,
                 project=self.project,
-                provider_slug="github",
+                provider_key="github",
                 repo_identifier="biat/test-manager",
             )
 
@@ -191,7 +191,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
 
@@ -199,20 +199,31 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
             create_repository_binding_for_project(
                 actor=self.admin,
                 project=self.project,
-                provider_slug="github",
+                provider_key="github",
                 repo_identifier="biat/test-manager",
             )
+
+    def test_unknown_provider_is_rejected_before_creating_repository_binding(self):
+        with self.assertRaises(ValidationError) as context:
+            create_repository_binding_for_project(
+                actor=self.admin,
+                project=self.project,
+                provider_key="unknown",
+                repo_identifier="biat/test-manager",
+            )
+
+        self.assertIn("provider", context.exception.detail)
 
     def test_process_github_webhook_attaches_matching_repository_binding(self):
         binding = create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
 
         event, created = process_webhook_event(
-            provider_slug="github",
+            provider_key="github",
             event_type="push",
             external_id="delivery-1",
             payload_json={"repository": {"full_name": "biat/test-manager"}},
@@ -224,13 +235,13 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
 
     def test_process_webhook_event_is_idempotent_by_external_id(self):
         first, created = process_webhook_event(
-            provider_slug="github",
+            provider_key="github",
             event_type="push",
             external_id="delivery-2",
             payload_json={},
         )
         second, duplicate_created = process_webhook_event(
-            provider_slug="github",
+            provider_key="github",
             event_type="push",
             external_id="delivery-2",
             payload_json={},
@@ -243,7 +254,7 @@ class Batch7IntegrationServiceTests(Batch7IntegrationSetupMixin, TestCase):
 
     def test_record_integration_action_result_is_append_only_audit(self):
         log = record_integration_action_result(
-            provider_slug="jira",
+            provider_key="jira",
             action_type="update_issue",
             status=IntegrationActionStatus.SUCCESS,
             actor_user=self.admin,
@@ -278,12 +289,12 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["provider_slug"], "jira")
+        self.assertEqual(response.data["provider"], "jira")
         self.assertEqual(response.data["config_data"]["project_key"], "BANK")
         self.assertTrue(
             IntegrationConfig.objects.filter(
                 project=self.project,
-                provider_slug="jira",
+                provider_id="jira",
             ).exists()
         )
 
@@ -308,7 +319,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={
                 "org": "biat",
                 "repo": "test-manager",
@@ -332,7 +343,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         config = IntegrationConfig.objects.get(
             project=self.project,
-            provider_slug="github",
+            provider_id="github",
         )
         self.assertEqual(config.config_data["repo"], "renamed")
         self.assertEqual(config.config_data["webhook_secret"], "original-secret")
@@ -352,7 +363,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         response = self.client.post(
             f"/api/integrations/projects/{self.project.id}/repository-bindings/",
             {
-                "provider_slug": "github",
+                "provider": "github",
                 "repo_identifier": "biat/test-manager",
                 "default_branch": "main",
             },
@@ -368,7 +379,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         response = self.client.post(
             f"/api/integrations/projects/{self.project.id}/repository-bindings/",
             {
-                "provider_slug": "github",
+                "provider": "github",
                 "repo_identifier": "biat/forbidden",
             },
             format="json",
@@ -381,13 +392,13 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={
                 "org": "biat",
                 "repo": "test-manager",
@@ -415,13 +426,13 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"webhook_secret": "github-webhook-secret"},
         )
         self.client.force_authenticate(user=None)
@@ -441,13 +452,13 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"webhook_secret": "github-webhook-secret"},
         )
         payload = {"repository": {"full_name": "biat/test-manager"}}
@@ -471,13 +482,13 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"webhook_secret": secret},
         )
         payload = {"repository": {"full_name": "biat/unknown"}}
@@ -501,13 +512,13 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
         configure_project_integration(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             config_data={"webhook_secret": secret},
         )
         payload = {"repository": {"full_name": "biat/test-manager"}}
@@ -539,7 +550,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
 
@@ -556,7 +567,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         binding = create_repository_binding_for_project(
             actor=self.admin,
             project=self.project,
-            provider_slug="github",
+            provider_key="github",
             repo_identifier="biat/test-manager",
         )
 
@@ -570,7 +581,7 @@ class Batch7IntegrationAPITests(Batch7IntegrationSetupMixin, TestCase):
         response = self.client.post(
             f"/api/integrations/projects/{self.project.id}/external-issue-links/",
             {
-                "provider_slug": "jira",
+                "provider": "jira",
                 "external_key": "BANK-42",
                 "target_type_input": "projects.project",
                 "object_id": str(self.project.id),

@@ -21,6 +21,7 @@ from apps.integrations.models import (
     IntegrationActionLog,
     IntegrationActionStatus,
     IntegrationConfig,
+    IntegrationProvider,
     RepositoryBinding,
     UserIntegrationCredential,
     WebhookEvent,
@@ -36,19 +37,20 @@ def configure_team_integration(
     *,
     actor: User,
     team: Team,
-    provider_slug: str,
+    provider_key: str,
     config_data: dict[str, Any],
     is_active: bool = True,
 ) -> IntegrationConfig:
     """Configure shared integration settings for a team."""
     if not can_manage_team_integrations(actor, team):
         raise PermissionDenied("You do not have permission to manage this team's integrations.")
+    _validate_active_provider(provider_key)
 
     serialized_config = json.dumps(config_data or {})
     config, _ = IntegrationConfig.objects.update_or_create(
         team=team,
         project=None,
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         defaults={
             "config_json_encrypted": serialized_config,
             "is_active": bool(is_active and config_data),
@@ -61,19 +63,20 @@ def configure_project_integration(
     *,
     actor: User,
     project: Project,
-    provider_slug: str,
+    provider_key: str,
     config_data: dict[str, Any],
     is_active: bool = True,
 ) -> IntegrationConfig:
     """Configure project-level integration settings that override team defaults."""
     if not can_manage_project_integrations(actor, project):
         raise PermissionDenied("You do not have permission to manage this project's integrations.")
+    _validate_active_provider(provider_key)
 
     serialized_config = json.dumps(config_data or {})
     config, _ = IntegrationConfig.objects.update_or_create(
         team=project.team,
         project=project,
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         defaults={
             "config_json_encrypted": serialized_config,
             "is_active": bool(is_active and config_data),
@@ -85,15 +88,17 @@ def configure_project_integration(
 def store_user_integration_credential(
     *,
     profile: UserProfile,
-    provider_slug: str,
+    provider_key: str,
     credential_data: dict[str, Any],
     is_active: bool = True,
 ) -> UserIntegrationCredential:
     """Store an acting-as-user credential without exposing its encrypted payload."""
+    _validate_active_provider(provider_key)
+
     serialized_credential = json.dumps(credential_data or {})
     credential, _ = UserIntegrationCredential.objects.update_or_create(
         user_profile=profile,
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         defaults={
             "credential_json_encrypted": serialized_credential,
             "is_active": bool(is_active and credential_data),
@@ -106,7 +111,7 @@ def create_repository_binding_for_project(
     *,
     actor: User,
     project: Project,
-    provider_slug: str,
+    provider_key: str,
     repo_identifier: str,
     default_branch: str = "main",
     metadata_json: dict[str, Any] | None = None,
@@ -114,11 +119,12 @@ def create_repository_binding_for_project(
     """Bind a project to a source repository so webhooks can be scoped."""
     if not can_manage_project_integrations(actor, project):
         raise PermissionDenied("You do not have permission to bind repositories for this project.")
+    _validate_active_provider(provider_key)
 
     try:
         return RepositoryBinding.objects.create(
             project=project,
-            provider_slug=provider_slug,
+            provider_id=provider_key,
             repo_identifier=repo_identifier.strip(),
             default_branch=(default_branch or "main").strip(),
             metadata_json=metadata_json or {},
@@ -158,7 +164,7 @@ def update_repository_binding(
 
 def process_webhook_event(
     *,
-    provider_slug: str,
+    provider_key: str,
     event_type: str,
     external_id: str | None,
     payload_json: dict[str, Any],
@@ -166,21 +172,23 @@ def process_webhook_event(
     repository_binding: RepositoryBinding | None = None,
 ) -> tuple[WebhookEvent, bool]:
     """Persist a webhook delivery and attach it to a repository binding when possible."""
+    _validate_active_provider(provider_key)
+
     if external_id:
         existing = WebhookEvent.objects.filter(
-            provider_slug=provider_slug,
+            provider_id=provider_key,
             external_id=external_id,
         ).first()
         if existing:
             return existing, False
 
-    binding = repository_binding or _find_repository_binding(provider_slug, payload_json)
+    binding = repository_binding or _find_repository_binding(provider_key, payload_json)
     try:
         with transaction.atomic():
             event = WebhookEvent.objects.create(
                 repository_binding=binding,
                 project=binding.project if binding else None,
-                provider_slug=provider_slug,
+                provider_id=provider_key,
                 event_type=event_type,
                 external_id=external_id or None,
                 payload_json=payload_json,
@@ -188,7 +196,7 @@ def process_webhook_event(
             )
     except IntegrityError:
         event = WebhookEvent.objects.get(
-            provider_slug=provider_slug,
+            provider_id=provider_key,
             external_id=external_id,
         )
         return event, False
@@ -198,24 +206,24 @@ def process_webhook_event(
 
 def verify_webhook_signature(
     *,
-    provider_slug: str,
+    provider_key: str,
     payload_json: dict[str, Any],
     raw_body: bytes,
     headers,
 ) -> RepositoryBinding:
     """Verify a webhook HMAC signature and return the matched repository binding."""
-    binding = _find_repository_binding(provider_slug, payload_json)
+    binding = _find_repository_binding(provider_key, payload_json)
     if binding is None:
         raise PermissionDenied("Webhook repository binding was not found.")
 
     secret = _get_webhook_secret(
-        provider_slug=provider_slug,
+        provider_key=provider_key,
         project=binding.project,
     )
     if not secret:
         raise PermissionDenied("Webhook secret is not configured.")
 
-    signature = _get_signature_header(provider_slug, headers)
+    signature = _get_signature_header(provider_key, headers)
     if not signature:
         raise PermissionDenied("Webhook signature is missing.")
 
@@ -241,7 +249,7 @@ def link_external_issue_to_object(
     *,
     actor: User,
     project: Project,
-    provider_slug: str,
+    provider_key: str,
     external_key: str,
     content_object: object,
     external_url: str = "",
@@ -250,6 +258,7 @@ def link_external_issue_to_object(
     """Link a Jira/GitHub issue to a project-owned domain object."""
     if not can_manage_project_integrations(actor, project):
         raise PermissionDenied("You do not have permission to link external issues for this project.")
+    _validate_active_provider(provider_key)
 
     object_project = _resolve_project_for_content_object(content_object)
     if object_project is None or object_project.id != project.id:
@@ -259,7 +268,7 @@ def link_external_issue_to_object(
     try:
         return ExternalIssueLink.objects.create(
             project=project,
-            provider_slug=provider_slug,
+            provider_id=provider_key,
             external_key=external_key.strip(),
             external_url=external_url or "",
             content_type=content_type,
@@ -275,7 +284,7 @@ def link_external_issue_to_object(
 
 def record_integration_action_result(
     *,
-    provider_slug: str,
+    provider_key: str,
     action_type: str,
     status: str,
     actor_user: User | None = None,
@@ -286,11 +295,13 @@ def record_integration_action_result(
     error_message: str = "",
 ) -> IntegrationActionLog:
     """Append an audit record for an external integration operation."""
+    _validate_active_provider(provider_key)
+
     completed_at = timezone.now() if status != IntegrationActionStatus.PENDING else None
     return IntegrationActionLog.objects.create(
         team=team or (project.team if project else None),
         project=project,
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         action_type=action_type,
         actor_user=actor_user,
         request_json=request_json or {},
@@ -301,23 +312,28 @@ def record_integration_action_result(
     )
 
 
+def _validate_active_provider(provider_key: str) -> None:
+    if not IntegrationProvider.objects.filter(slug=provider_key, is_active=True).exists():
+        raise ValidationError({"provider": "Unknown integration provider."})
+
+
 def _find_repository_binding(
-    provider_slug: str,
+    provider_key: str,
     payload_json: dict[str, Any],
 ) -> RepositoryBinding | None:
-    repo_identifier = _extract_repo_identifier(provider_slug, payload_json)
+    repo_identifier = _extract_repo_identifier(provider_key, payload_json)
     if not repo_identifier:
         return None
     return RepositoryBinding.objects.select_related("project", "project__team").filter(
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         repo_identifier=repo_identifier,
         is_active=True,
     ).first()
 
 
-def _get_webhook_secret(*, provider_slug: str, project: Project) -> str:
+def _get_webhook_secret(*, provider_key: str, project: Project) -> str:
     project_config = IntegrationConfig.objects.filter(
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         is_active=True,
         project=project,
     ).first()
@@ -327,7 +343,7 @@ def _get_webhook_secret(*, provider_slug: str, project: Project) -> str:
             return str(secret)
 
     team_config = IntegrationConfig.objects.filter(
-        provider_slug=provider_slug,
+        provider_id=provider_key,
         is_active=True,
         team=project.team,
         project__isnull=True,
@@ -339,8 +355,8 @@ def _get_webhook_secret(*, provider_slug: str, project: Project) -> str:
     return ""
 
 
-def _get_signature_header(provider_slug: str, headers) -> str:
-    if provider_slug == "github":
+def _get_signature_header(provider_key: str, headers) -> str:
+    if provider_key == "github":
         return str(headers.get("X-Hub-Signature-256") or "")
     return str(headers.get(GENERIC_SIGNATURE_HEADER) or "")
 
@@ -359,13 +375,13 @@ def _is_valid_hmac_signature(*, secret: str, raw_body: bytes, signature: str) ->
 
 
 def _extract_repo_identifier(
-    provider_slug: str,
+    provider_key: str,
     payload_json: dict[str, Any],
 ) -> str:
-    if provider_slug == "github":
+    if provider_key == "github":
         repository = payload_json.get("repository") or {}
         return str(repository.get("full_name") or "").strip()
-    if provider_slug == "jenkins":
+    if provider_key == "jenkins":
         return str(
             payload_json.get("job_name")
             or payload_json.get("repository")

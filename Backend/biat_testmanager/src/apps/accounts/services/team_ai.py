@@ -1,3 +1,10 @@
+"""TeamAIConfig is the single source of truth for team-level AI configuration.
+
+The deprecated `Team.ai_provider`, `Team.ai_api_key`, `Team.ai_model`,
+`Team.monthly_token_budget`, `Team.tokens_used_this_month` fields were removed
+in roadmap Step 2. All AI configuration now lives in `TeamAIConfig` +
+`ModelProfile`.
+"""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -5,44 +12,13 @@ from decimal import Decimal
 from apps.accounts.models import AIProvider, ModelProfile, Team, TeamAIConfig
 
 DEFAULT_MODEL_PROFILE_SLUG = "default"
+DEFAULT_MODEL_NAME = "gpt-4o-mini"
+DEFAULT_MONTHLY_BUDGET = 1000000
 UNSET = object()
 
 
 def get_or_create_team_ai_config(team: Team) -> TeamAIConfig:
-    config, _ = TeamAIConfig.objects.get_or_create(
-        team=team,
-        defaults={
-            "provider": team.ai_provider,
-            "api_key": team.ai_api_key,
-            "monthly_budget": team.monthly_token_budget,
-        },
-    )
-    return config
-
-
-def sync_team_ai_config_from_legacy(team: Team) -> TeamAIConfig:
-    config = get_or_create_team_ai_config(team)
-
-    update_fields: list[str] = []
-    if config.provider_id is None and team.ai_provider_id is not None:
-        config.provider = team.ai_provider
-        update_fields.append("provider")
-
-    if not config.api_key and team.ai_api_key:
-        config.api_key = team.ai_api_key
-        update_fields.append("api_key")
-
-    if config.monthly_budget == 100000 and team.monthly_token_budget != 100000:
-        config.monthly_budget = team.monthly_token_budget
-        update_fields.append("monthly_budget")
-
-    if update_fields:
-        config.save(update_fields=update_fields)
-
-    ensure_default_model_profile(
-        config,
-        model_name=team.ai_model or "gpt-4o-mini",
-    )
+    config, _ = TeamAIConfig.objects.get_or_create(team=team)
     return config
 
 
@@ -123,8 +99,6 @@ def update_team_ai_settings(
         effective_model_name = model_name.strip()
     elif config.default_model_profile:
         effective_model_name = config.default_model_profile.model_name
-    elif team.ai_model:
-        effective_model_name = team.ai_model
 
     if effective_model_name:
         ensure_default_model_profile(config, model_name=effective_model_name)
@@ -134,27 +108,27 @@ def update_team_ai_settings(
 
 def get_effective_ai_provider(team: Team):
     ai_config = getattr(team, "ai_config", None)
-    if ai_config and ai_config.provider_id:
+    if ai_config:
         return ai_config.provider
-    return team.ai_provider
+    return None
 
 
 def get_effective_ai_api_key(team: Team) -> str | None:
     ai_config = getattr(team, "ai_config", None)
-    if ai_config and ai_config.api_key:
+    if ai_config:
         return ai_config.api_key
-    return team.ai_api_key
+    return None
 
 
 def get_effective_ai_model(team: Team) -> str:
     ai_config = getattr(team, "ai_config", None)
     if ai_config and ai_config.default_model_profile_id:
         return ai_config.default_model_profile.model_name
-    return team.ai_model
+    return DEFAULT_MODEL_NAME
 
 
 def get_effective_monthly_budget(team: Team) -> int:
     ai_config = getattr(team, "ai_config", None)
     if ai_config:
         return ai_config.monthly_budget
-    return team.monthly_token_budget
+    return DEFAULT_MONTHLY_BUDGET

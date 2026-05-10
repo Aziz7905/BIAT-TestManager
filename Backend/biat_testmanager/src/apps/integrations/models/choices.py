@@ -1,12 +1,6 @@
 from django.db import models
 
 
-class IntegrationProviderSlug(models.TextChoices):
-    JIRA = "jira", "Jira"
-    GITHUB = "github", "GitHub"
-    JENKINS = "jenkins", "Jenkins"
-
-
 class WebhookEventStatus(models.TextChoices):
     RECEIVED = "received", "Received"
     PROCESSED = "processed", "Processed"

@@ -93,7 +93,7 @@ The principle: **the data layer enforces isolation; the view layer is just a con
 This is the **gap relative to LambdaTest** that needs to be closed.
 
 ### 4.1 The problem
-Today the platform has 3 Selenium Grid Chrome nodes and a single shared `regression_queue`. If Project A launches 3 concurrent runs, Project B waits. There's no fairness mechanism.
+Browser capacity is shared. Even with separate `regression`, `interactive`, and `ai_agent` queues, one busy team or project can still consume the available Selenoid/Grid sessions unless admission control caps are enforced.
 
 ### 4.2 The LambdaTest pattern
 LambdaTest organizes users into **Groups**. Each group has a max concurrent session cap. The org's total concurrency (e.g., 10 sessions) is divided among groups (e.g., 6 for Project A, 4 for Project B). One group can never starve another.
@@ -131,15 +131,15 @@ For now, `max_concurrent_executions=None` (no cap). When two projects start cont
 
 ---
 
-## 5. The two-queue model and tenancy
+## 5. The workload queue model and tenancy
 
 ### 5.1 The queues are layer-driven, not tenant-driven
-`regression_queue` and `agent_queue` are split by **execution layer**, not by project or team. All projects share both queues.
+`regression`, `interactive`, and `ai_agent` are split by **workload**, not by project or team. All projects share those queues.
 
 ### 5.2 Why this is correct
-A project's regression run and another project's regression run are doing the same kind of work — deterministic scripts on Selenium Grid. Splitting them by tenant adds no value.
+A project's regression run and another project's regression run are doing the same kind of work — deterministic browser E2E scripts. Splitting them by tenant adds no value at this stage.
 
-What matters is splitting **regression** (Layer 2) from **AI agent** (Layer 3) so that long-running agent sessions can't starve regression runs.
+What matters is splitting **regression** from **interactive/debug** from **AI agent** so that long-running agent sessions cannot starve regressions, and bulk regressions cannot block a human waiting on a debug rerun.
 
 ### 5.3 Where tenancy intersects
 Tenancy intersects with concurrency at the **per-project quota** level (section 4 above). The queue is shared; the slot inside the queue is gated per project.
@@ -160,7 +160,7 @@ Organization: BIAT
     │   ├── Members: Ahmed, Sana, Youssef, Lina, Karim
     │   └── max_concurrent_executions = 2
     │
-    └── Project B — Mobile App
+    └── Project B — Payments App
         ├── Members: Mariem, Nour, Tarek, Ines, Zied
         └── max_concurrent_executions = 1
 ```
@@ -188,7 +188,7 @@ Morning:
 Afternoon:
   Ahmed reviews the generated scripts, edits one, approves all
   Triggers a regression run on the 3 cases
-  Goes through regression_queue → 2 start (cap=2), 1 queues
+  Goes through `regression` → 2 start (cap=2), 1 queues
   Ahmed clicks "Watch this run" → noVNC stream opens for one of them
   Run finishes → TestResults stored under Project A
 ```
@@ -209,14 +209,14 @@ Same afternoon:
 ### 6.4 Two AI agent sessions running concurrently
 ```
 10:00 — Ahmed triggers KaneAI session on Project A
-  → agent_queue picks it up
+  → `ai_agent` picks it up
   → Selenoid spins up Container #1
   → LangGraph drives Playwright in Container #1
   → noVNC stream auto-opens (always-on for agent)
   → Ahmed watches
 
 10:02 — Mariem triggers KaneAI session on Project B
-  → agent_queue picks it up (different worker)
+  → `ai_agent` picks it up (different worker)
   → Selenoid spins up Container #2
   → LangGraph drives Playwright in Container #2
   → noVNC stream auto-opens for Mariem
@@ -240,8 +240,8 @@ Zero data crossing. Zero stream visibility crossing. The only shared resource wa
 
 ```
 SHARED (infrastructure layer):
-├── Selenium Grid (3 Chrome nodes, regression_queue first-come-first-served)
-├── Selenoid (agent_queue, fresh container per session)
+├── Selenoid/Grid browser capacity (shared, gated by caps)
+├── Celery queues (`regression`, `interactive`, `ai_agent`)
 ├── MinIO bucket (artifacts under project-scoped key prefixes)
 ├── Redis (Celery broker; channel groups are execution-scoped)
 └── PostgreSQL (one DB; rows scoped by FK)

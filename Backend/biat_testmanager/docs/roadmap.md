@@ -2,7 +2,7 @@
 
 **The build order. What is done, what is next, in what sequence and why.**
 
-**Last updated:** 2026-05-08
+**Last updated:** 2026-05-09
 
 ---
 
@@ -37,7 +37,7 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 - Manual browser sessions ✓
 
 **Gaps:**
-- Single Celery queue (no `ai_agent` / `regression` / `interactive` separation)
+- Three Celery queues are configured in the current branch (`ai_agent` / `regression` / `interactive`); production worker startup and end-to-end queue behavior still need final verification
 - Subprocess execution on worker host (no Docker runner containers)
 - Local filesystem artifacts (no MinIO)
 - Filesystem control signals (should move to Redis pub/sub for containerized runners)
@@ -47,11 +47,11 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 - No Results Ingest API for the hybrid path (external CI / IDE → platform)
 - Selenium Grid is the only browser backend; Selenoid migration is pending
 
-### Schema cleanup — **pending**
-- `Team` still holds AI provider/key/model fields that should live only in `TeamAIConfig`
-- `Team` still holds Jira/GitHub/Jenkins integration fields that should live only in `IntegrationConfig`
-- `UserProfile` still holds `jira_token` / `github_token` that should live only in `UserIntegrationCredential`
-- No `IntegrationResolverService` exists yet
+### Schema cleanup — **in progress**
+- Deprecated AI and integration fields are being moved out of `Team` / `UserProfile`
+- `TeamSerializer` now exposes compatibility fields through `TeamAIConfig` / `IntegrationConfig` instead of direct model fields
+- `IntegrationResolverService` exists as the seam agents and integration callers should use
+- Frontend `/admin/teams` compatibility for removed `Team.tokens_used_this_month` is repaired in the current branch
 
 ### Layer 3 — AI agent — **not started**
 - `TeamAIConfig`, `ModelProfile`, `AIProvider` models exist ✓
@@ -69,7 +69,7 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 ```
 Step 1  →  Three Celery queues (ai_agent / regression / interactive)
 Step 2  →  Schema consolidation + IntegrationResolverService
-Step 3  →  Selenoid + Docker runner + MinIO + stream policy
+Step 3  →  Selenoid + Java/Python Docker runners + MinIO + stream policy
             (also: BrowserSessionManager abstraction, drop Selenium Grid)
 Step 4  →  Per-team capacity caps + debug rerun + AIAgentSession model + LLM provider abstraction
 Step 5  →  Phase E — LangGraph live agent (THE GOAL: KaneAI core loop)
@@ -83,9 +83,19 @@ Step 11 →  Scale: Moon + Kubernetes (only when needed)
 
 The agent layer is reached after **5 steps**. Steps 6–9 enrich the platform around the agent and are reorderable.
 
+### Scope guardrail
+
+BIAT owns the full native flow for **browser E2E tests**: AI authoring, Selenium script generation, Selenoid execution, debug reruns, artifacts, and reporting.
+
+Other test categories — performance, security, API, unit, integration, and future mobile automation — are deliberately management/ingest surfaces for now. The platform can model them, attach them to plans, consume their results, and report on them, but it should not build first-party runtime infrastructure for them until the browser E2E loop is polished and reliable.
+
+This keeps the project realistic: BIAT is not replacing Jenkins, GitHub Actions, or a bank-owned test lab. It is the QA management and intelligence layer, with one native browser E2E execution lane.
+
 ---
 
 ## Step 1 — Three Celery queues
+
+**Status:** implemented in the current branch; keep this step open until `manage.py check`, routing tests, and worker startup docs are verified together.
 
 ### Why now
 Foundational. Every later step assumes workload isolation. AI agent sessions cannot share a worker pool with regression bursts or single-test executions.
@@ -143,6 +153,8 @@ Doesn't add the agent task. Doesn't change runner behavior. Just routing.
 
 ## Step 2 — Schema consolidation + IntegrationResolverService
 
+**Status:** in progress in the current branch; backend cleanup, resolver, and Teams admin API compatibility repair exist. Keep open until the branch is fully reviewed/merged.
+
 ### Why now
 Before the AI layer or any agent code, the data model needs **one source of truth per concern**. The agent will call resolvers, never read fields directly. If `Team.ai_provider` and `TeamAIConfig.provider` both exist, the resolver picks between two sources and drift starts.
 
@@ -181,7 +193,11 @@ def resolve_integration_credentials(
 - Migration removes the deprecated fields from `Team` and `UserProfile`
 - All read sites use `TeamAIConfig` / `IntegrationConfig` / `UserIntegrationCredential`
 - `IntegrationResolverService` exists with at least Jira and GitHub coverage
+- Frontend `Team` types and Teams admin UI no longer read removed fields such as `tokens_used_this_month`
 - Existing tests pass; new tests cover the resolver's `act_as_user` vs `act_as_app` paths
+
+### Compatibility note
+The Teams admin page previously expected `selectedTeam.tokens_used_this_month` after the backend cleanup removed `Team.tokens_used_this_month`. The current branch removes that frontend dependency; keep this guarded with frontend build/typecheck coverage.
 
 ### What it does not do
 Doesn't change any API contracts that don't reference the removed fields. Doesn't touch execution behavior.
@@ -208,10 +224,12 @@ The biggest single piece of work. Four changes are coupled because they all hing
 - All containers on a shared Docker network so the runner can reach Selenoid + MinIO
 - Selenium Grid Hub + nodes are removed from `docker-compose.yml`
 
-**Runner image (`Dockerfile.runner`):**
-- Base Python 3.11-slim + selenium + boto3 + biat_event_helper
-- Image built and loaded into the worker's Docker daemon
-- Optional `docker_image` field on `AutomationScript` lets a script pin a custom image
+**Runner images:**
+- `Dockerfile.runner.java`: Java + Maven/Gradle-capable Selenium runner for bank-facing browser E2E suites
+- `Dockerfile.runner.python`: Python 3.11 + selenium + boto3 + `biat_event_helper` for prototypes and existing Python scripts
+- Images built and loaded into the worker's Docker daemon
+- Optional `docker_image` field on `AutomationScript` lets a script pin a custom team-owned image
+- Runner selection comes from `AutomationScript.language` first, then the execution environment default
 
 **`BrowserSessionManager` Protocol** in `apps/automation/services/browser_sessions.py`:
 ```python
@@ -257,7 +275,8 @@ All runner code talks to the Protocol — never imports Selenoid directly.
 - Runner script subscribes (replaces filesystem polling)
 
 ### Definition of done
-- A regression run completes end-to-end in a Docker runner container connected to Selenoid
+- A Java Selenium regression run completes end-to-end in a Docker runner container connected to Selenoid
+- A Python Selenium regression run still works for existing/dev scripts
 - Artifacts upload to MinIO, downloadable via pre-signed URL
 - A run with `stream_enabled=False` cannot open a noVNC stream
 - A run with `stream_enabled=True` can open a noVNC stream
@@ -377,7 +396,7 @@ All upstream pieces are in place: queues split, Selenoid running, MinIO storing 
   - Execute via Playwright MCP, take screenshot, append to action history
   - On selector failure: vision LLM + DOM accessibility tree → corrected selector (one retry); else HUMAN GATE
 - DOMInspector runs in parallel: looks for missing scenarios (e.g. "Forgot password" link), collects `AmendmentProposal` rows
-- After the last step: serialize action history into a Selenium Python script
+- After the last step: serialize action history into a Selenium Java script by default, or Selenium Python when selected by the script/environment
 
 **Phase 3 — Refine & save**
 - Amendment proposals fed back to the LLM with the original `GenerationDraft` → updated draft
@@ -460,7 +479,7 @@ With the agent (Step 5) shipping, the LLM client and prompt machinery exist. Off
 **`apps/ai/services/generation.py`:**
 - `generate_failure_rca(execution)` — reads execution + steps + screenshots + DOM → calls LLM → updates `TestResult.ai_failure_analysis`. Triggered automatically on failed regression runs when the team has AI configured.
 - `generate_tests_from_spec(specification)` — RAG-retrieves chunks, generates `TestCase` candidates with `design_status='draft'`. Reviewed in the UI before promotion.
-- `generate_script_from_case(test_case)` — generates an `AutomationScript` candidate (`is_active=False`) for an approved test case.
+- `generate_script_from_case(test_case)` — generates an `AutomationScript` candidate (`is_active=False`) for an approved test case. Default output is Selenium Java for bank-facing suites; Selenium Python is still supported when selected by the script/environment.
 
 **WebSocket event** `rca_ready` so live UIs update without polling.
 
@@ -572,13 +591,14 @@ This is **deliberately not on the near-term roadmap.** It's documented so the pa
 | Cross-browser testing (Firefox, Safari, Edge) | Banking apps work on Chrome; expand later |
 | Real device testing (iOS, Android) | Out of scope for MVP; needs cloud device farm or real devices |
 | Visual regression / Smart UI | Different problem class; not a KaneAI core feature |
-| Performance / load testing | Different problem class |
-| API testing as runtime | Spec ingestion handles documentation; API runtime testing is its own engine |
+| Native performance / load testing engine | Existing performance infrastructure can run it; BIAT ingests and reports the result |
+| Native security testing engine | Existing scanners/tools can run it; BIAT ingests and reports the result |
+| API, unit, and integration runtime engines | Existing CI/lab infrastructure can run them; BIAT manages traceability and result ingestion |
 | Playwright runtime for regression | Selenium is the firm's engine; Playwright stays in Layer 3 only |
 | Sub-organizations | Single bank, not needed |
 | Per-user AI keys | KaneAI doesn't do this either; team-level is correct |
 | Agent-learning memory (per-user / per-project preferences) | Research-grade, deferred until after the core loop is stable |
-| Multi-framework code export (Java, JavaScript) | Marketing surface; Selenium Python covers BIAT's needs |
+| Broad multi-framework code export | Defer JavaScript/Playwright/Cypress export; first support Selenium Java as the bank default plus Selenium Python for dev/prototype scripts |
 
 These are not "future phases" — they're decisions to not pursue them within the current product vision.
 

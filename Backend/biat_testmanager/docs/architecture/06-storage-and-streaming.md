@@ -249,7 +249,7 @@ A regression run completed. 47 of 50 tests passed. 3 failed. The user wants to i
      - trigger_type = "manual"
      - debug_rerun = True   (new field)
      - stream_enabled = True
-5. Execution runs on regression_queue, just like normal
+5. Execution runs on the `interactive` queue, because a human is actively debugging
 6. Because stream_enabled=True, noVNC stream auto-opens for the user
 7. The user watches what happens — sees the failure live
 8. New result recorded under the same TestRunCase as a new attempt

@@ -31,7 +31,6 @@ from .team_ai import (
     get_effective_ai_provider,
     get_effective_monthly_budget,
     get_or_create_team_ai_config,
-    sync_team_ai_config_from_legacy,
     update_team_ai_settings,
 )
 from .team_management import sync_manager_profile_with_team
@@ -77,7 +76,6 @@ __all__ = [
     "normalize_notification_provider",
     "remove_team_membership",
     "ensure_default_model_profile",
-    "sync_team_ai_config_from_legacy",
     "sync_manager_profile_with_team",
     "sync_team_manager_membership",
     "sync_user_profile_team_from_memberships",
