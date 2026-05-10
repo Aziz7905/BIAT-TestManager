@@ -6,7 +6,7 @@
 
 ## 1. Why we don't store artifacts on the filesystem
 
-Today: `TestArtifact.file_path` points to a local directory on the worker host. Three problems:
+Previously, artifacts pointed to a local directory on the worker host. Three problems:
 
 1. **Server bloat** — at scale (10,000 executions, each with screenshots/videos), this fills disk quickly and silently
 2. **Container incompatibility** — when execution moves to a runner container (see [`05-execution-engine.md`](05-execution-engine.md)), the runner's filesystem is ephemeral. A shared volume works but is fragile
@@ -98,42 +98,22 @@ These run as MinIO lifecycle rules, not Celery tasks. The platform doesn't have 
 
 ## 4. The `TestArtifact` model migration
 
-### 4.1 Today's shape
+### 4.1 Current shape
 ```python
 class TestArtifact(models.Model):
     execution = models.ForeignKey(...)
-    step = models.ForeignKey(..., null=True)
     artifact_type = models.CharField(...)  # screenshot/video/log/...
-    file_path = models.CharField(max_length=500)  # local FS path
-    mime_type = models.CharField(...)
-    size_bytes = models.PositiveBigIntegerField(...)
-    created_at = models.DateTimeField(auto_now_add=True)
-```
-
-### 4.2 New shape (planned)
-```python
-class TestArtifact(models.Model):
-    execution = models.ForeignKey(...)
-    step = models.ForeignKey(..., null=True)
-    artifact_type = models.CharField(...)
-    storage_backend = models.CharField(  # NEW
+    storage_backend = models.CharField(
         max_length=20,
-        choices=[("minio", "MinIO"), ("local", "Local (legacy)")],
+        choices=[("minio", "MinIO"), ("local", "Local")],
         default="minio",
     )
-    storage_key = models.CharField(max_length=1024)  # NEW — the S3/MinIO object key
-    # file_path retained as nullable for migration period
-    mime_type = models.CharField(...)
-    size_bytes = models.PositiveBigIntegerField(...)
+    storage_key = models.CharField(max_length=1024)  # S3/MinIO object key
+    metadata_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 ```
 
-### 4.3 Migration plan
-1. Add `storage_backend` and `storage_key` fields with defaults
-2. Backfill: `storage_backend = 'local'`, `storage_key = file_path` for existing rows
-3. New executions write to MinIO with `storage_backend = 'minio'` and a real S3 key
-4. After 90 days (artifact lifetime), all `local` rows have aged out
-5. Drop `file_path` column
+Migration history may still mention the old local field so existing databases can migrate safely, but runtime code uses `storage_backend` and `storage_key`.
 
 ---
 
@@ -160,7 +140,7 @@ The runner container has direct access to MinIO over the Docker network. Credent
 ### 5.2 From the worker (for some artifacts produced outside the script)
 
 ```
-Worker captures something (e.g., final video from Selenium Grid recording)
+Worker captures something (e.g., final video from Selenoid recording)
    ↓
 Worker uploads to MinIO via boto3
    ↓
@@ -171,7 +151,7 @@ Worker creates TestArtifact row with the key
 ```
 User clicks an artifact in the UI
    ↓
-Frontend GET /api/test-artifacts/<id>/url/
+Frontend reads `download_url` from the result/stream artifact payload
    ↓
 Backend checks user has project access to the parent execution
    ↓
@@ -271,32 +251,29 @@ Set this from the API endpoint that triggers a rerun. It enables stream and tags
 
 ## 8. Video recording
 
-### 8.1 Selenium Grid: video per session
-The standard Selenium Grid Chrome node images support session video recording (`SE_VIDEO_RECORD=true`). Each session produces an MP4 in the node's volume.
+### 8.1 Selenoid video per session
+Selenoid supports recording for browser sessions. Each session can produce an MP4 that is uploaded to MinIO and linked to the execution.
 
 ### 8.2 Capture flow
 ```
-Session starts → Grid begins recording
+Session starts → Selenoid begins recording
        ↓
-Session ends → Grid finalizes the MP4
+Session ends → Selenoid finalizes the MP4
        ↓
-Worker: download the MP4 from the Grid node (via mounted volume or HTTP)
+Worker: collect the MP4 from Selenoid
        ↓
 Worker: upload to MinIO with key projects/<id>/executions/<eid>/videos/full-run.mp4
        ↓
 Worker: create TestArtifact(artifact_type='video', storage_key=key)
 ```
 
-### 8.3 Selenoid: built-in recording
-Selenoid has first-class video recording. The setup is similar but Selenoid produces the file directly with a known name and emits an event when ready.
-
-### 8.4 When videos are kept
+### 8.3 When videos are kept
 - Failed runs: keep the video (useful for debugging)
 - Passed runs: keep for 30 days, then auto-delete via MinIO lifecycle
 - Debug reruns: keep indefinitely (it's evidence)
 - Agent sessions: keep indefinitely (it's the agent's audit trail)
 
-### 8.5 Why video matters
+### 8.4 Why video matters
 For Layer 2 (regression), video is the **replay-without-live-stream** affordance. A test failed at 3am? You don't need to have watched it live — the video is in MinIO, indexed by execution id. Click, watch, debug.
 
 This is why the streaming policy can be "off by default" — losing the live view is fine because the video preserves the same information.
@@ -348,13 +325,13 @@ This is intentional. WebSocket delivery is a UX feature, not a correctness requi
 
 ## 11. Quick reference: storage and streaming changes
 
-| Subsystem | Today | After roadmap Step 2 |
+| Subsystem | Previous | Current Step 3 target |
 |---|---|---|
 | Artifact storage | Local filesystem | MinIO with pre-signed URLs |
-| `TestArtifact` model | `file_path` | `storage_backend` + `storage_key` |
+| `TestArtifact` model | Local path field | `storage_backend` + `storage_key` |
 | Stream-by-default | Yes (any execution) | No (opt-in via `stream_enabled`) |
 | Video recording | Captured but stored locally | Captured, uploaded to MinIO, lifecycle-managed |
 | Debug rerun | Not a distinct mode | New flag, auto-streams |
-| Filesystem coupling for control signals | Yes (control files) | Migrate to Redis pub/sub |
+| Filesystem coupling for control signals | Control files | Redis checkpoint/stop keys |
 
 These are the storage-and-streaming changes batched into Step 2 of the roadmap. They go together because they all hinge on the runner-container migration.

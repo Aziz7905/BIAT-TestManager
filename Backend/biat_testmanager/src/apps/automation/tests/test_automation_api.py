@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sys
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -20,8 +20,6 @@ from apps.testing.models import TestScenario, TestSection, TestSuite
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
 )
 class AutomationApiTests(APITestCase):
     def setUp(self):
@@ -131,6 +129,14 @@ class AutomationApiTests(APITestCase):
         payload["test_case"] = str(self.test_case.id)
         return payload
 
+    def _fake_log_artifact(self, execution, *, name, content, artifact_type, metadata=None):
+        return {
+            "type": artifact_type,
+            "storage_backend": "minio",
+            "storage_key": f"projects/{self.project.id}/executions/{execution.id}/log/{name}",
+            "metadata": metadata or {},
+        }
+
     def test_create_script_and_filter_by_test_case(self):
         create_response = self.client.post(
             reverse("automation-script-list-create"),
@@ -166,16 +172,23 @@ class AutomationApiTests(APITestCase):
     def test_create_execution_runs_and_returns_result_payload(self):
         script = AutomationScript.objects.create(**self._script_payload())
 
-        response = self.client.post(
-            reverse("test-execution-list-create"),
-            {
-                "test_case": str(self.test_case.id),
-                "script": str(script.id),
-                "browser": "chromium",
-                "platform": "desktop",
-            },
-            format="json",
-        )
+        with mock.patch(
+            "apps.automation.services.python_script_runner._run_container_with_live_events",
+            return_value=("ok\n", "", 0, False, False),
+        ), mock.patch(
+            "apps.automation.services.python_script_runner.store_text_artifact",
+            side_effect=self._fake_log_artifact,
+        ):
+            response = self.client.post(
+                reverse("test-execution-list-create"),
+                {
+                    "test_case": str(self.test_case.id),
+                    "script": str(script.id),
+                    "browser": "chromium",
+                    "platform": "desktop",
+                },
+                format="json",
+            )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         execution = TestExecution.objects.select_related("result").get(
@@ -238,16 +251,23 @@ class AutomationApiTests(APITestCase):
             )
         )
 
-        response = self.client.post(
-            reverse("test-execution-list-create"),
-            {
-                "test_case": str(self.test_case.id),
-                "script": str(script.id),
-                "browser": "chromium",
-                "platform": "desktop",
-            },
-            format="json",
-        )
+        with mock.patch(
+            "apps.automation.services.python_script_runner._run_container_with_live_events",
+            return_value=("ok\n", "", 0, False, False),
+        ), mock.patch(
+            "apps.automation.services.python_script_runner.store_text_artifact",
+            side_effect=self._fake_log_artifact,
+        ):
+            response = self.client.post(
+                reverse("test-execution-list-create"),
+                {
+                    "test_case": str(self.test_case.id),
+                    "script": str(script.id),
+                    "browser": "chromium",
+                    "platform": "desktop",
+                },
+                format="json",
+            )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         execution = TestExecution.objects.select_related("result").get(pk=response.data["id"])
@@ -281,9 +301,10 @@ class AutomationApiTests(APITestCase):
         execution.status = "running"
         execution.pause_requested = False
         execution.save(update_fields=["status", "pause_requested"])
-        stop_response = self.client.post(
-            reverse("test-execution-stop", kwargs={"pk": execution.id}),
-        )
+        with mock.patch("apps.automation.services.execution_runner.write_execution_stop_signal"):
+            stop_response = self.client.post(
+                reverse("test-execution-stop", kwargs={"pk": execution.id}),
+            )
         self.assertEqual(stop_response.status_code, status.HTTP_200_OK)
         execution.refresh_from_db()
         self.assertEqual(execution.status, "cancelled")

@@ -1,10 +1,7 @@
 from __future__ import annotations
-
-import sys
 import threading
 import time
 from datetime import timedelta
-from pathlib import Path
 from unittest import mock
 
 from asgiref.sync import async_to_sync, sync_to_async
@@ -101,10 +98,6 @@ def _make_script(test_case, script_content: str):
 
 @override_settings(
     CHANNEL_LAYERS=_IN_MEMORY_CHANNEL_LAYERS,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
-    AUTOMATION_PLAYWRIGHT_WORKDIR=str(Path(__file__).resolve().parents[3]),
-    AUTOMATION_SELENIUM_WORKDIR=str(Path(__file__).resolve().parents[3]),
 )
 class StreamTicketApiTests(APITestCase):
     def setUp(self):
@@ -174,10 +167,6 @@ class StreamTicketApiTests(APITestCase):
 
 @override_settings(
     CHANNEL_LAYERS=_IN_MEMORY_CHANNEL_LAYERS,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
-    AUTOMATION_PLAYWRIGHT_WORKDIR=str(Path(__file__).resolve().parents[3]),
-    AUTOMATION_SELENIUM_WORKDIR=str(Path(__file__).resolve().parents[3]),
 )
 class ExecutionWebSocketTests(TransactionTestCase):
     reset_sequences = True
@@ -205,6 +194,17 @@ class ExecutionWebSocketTests(TransactionTestCase):
         communicator = WebsocketCommunicator(
             application,
             f"/ws/executions/{self.execution.id}/?ticket={ticket}",
+            headers=[(b"origin", b"http://localhost:5173")],
+        )
+        connected, _ = await communicator.connect()
+        return communicator, connected
+
+    async def _connect_browser(self, *, ticket: str):
+        from biat_testmanager.asgi import application
+
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/executions/{self.execution.id}/browser-stream/?ticket={ticket}",
             headers=[(b"origin", b"http://localhost:5173")],
         )
         connected, _ = await communicator.connect()
@@ -265,13 +265,22 @@ class ExecutionWebSocketTests(TransactionTestCase):
 
         async_to_sync(scenario)()
 
+    def test_browser_stream_is_rejected_when_not_enabled(self):
+        async def scenario():
+            self.execution.selenium_session_id = "session-1"
+            await sync_to_async(self.execution.save)(
+                update_fields=["selenium_session_id"]
+            )
+            stream_ticket = issue_execution_stream_ticket(self.execution, self.user)["ticket"]
+            communicator, connected = await self._connect_browser(ticket=stream_ticket)
+            self.assertFalse(connected)
+            await communicator.disconnect()
+
+        async_to_sync(scenario)()
+
 
 @override_settings(
     CHANNEL_LAYERS=_IN_MEMORY_CHANNEL_LAYERS,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
-    AUTOMATION_PLAYWRIGHT_WORKDIR=str(Path(__file__).resolve().parents[3]),
-    AUTOMATION_SELENIUM_WORKDIR=str(Path(__file__).resolve().parents[3]),
 )
 class LiveExecutionRunnerTests(TransactionTestCase):
     reset_sequences = True
@@ -289,6 +298,111 @@ class LiveExecutionRunnerTests(TransactionTestCase):
                 return True
             time.sleep(0.1)
         return False
+
+    def _fake_log_artifact(self, execution, *, name, content, artifact_type, metadata=None):
+        return {
+            "type": artifact_type,
+            "storage_backend": "minio",
+            "storage_key": f"projects/{self.project.id}/executions/{execution.id}/log/{name}",
+            "metadata": metadata or {},
+        }
+
+    def _emit_runner_event(self, execution, workspace, event):
+        from apps.automation.services.python_script_runner import _handle_runner_event
+
+        _handle_runner_event(execution, event, workspace=workspace)
+
+    def _fake_checkpoint_container_run(self, *, execution, workspace):
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 1, "type": "step_started", "step_index": 0, "action": "Open login page"},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 2, "type": "step_passed", "step_index": 0},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {
+                "seq": 3,
+                "type": "artifact_created",
+                "artifact_type": "log",
+                "storage_backend": "minio",
+                "storage_key": f"projects/{self.project.id}/executions/{execution.id}/log/manual-note.txt",
+                "metadata": {"kind": "note"},
+            },
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 4, "type": "step_started", "step_index": 1, "action": "Approve MFA"},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {
+                "seq": 5,
+                "type": "checkpoint_requested",
+                "checkpoint_key": "checkpoint-1",
+                "step_index": 1,
+                "title": "Approve MFA",
+                "instructions": "Complete the bank MFA flow",
+            },
+        )
+        resumed = self._wait_for(
+            lambda: ExecutionCheckpoint.objects.filter(
+                execution=execution,
+                checkpoint_key="checkpoint-1",
+                status=ExecutionCheckpointStatus.RESOLVED,
+            ).exists()
+        )
+        if not resumed:
+            return "", "checkpoint was not resumed", 1, False, True
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 6, "type": "step_passed", "step_index": 1},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 7, "type": "step_started", "step_index": 2, "action": "Verify dashboard"},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 8, "type": "step_passed", "step_index": 2},
+        )
+        return "done\n", "", 0, False, True
+
+    def _fake_stop_container_run(self, *, execution, workspace):
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {"seq": 1, "type": "step_started", "step_index": 0, "action": "Wait for manual approval"},
+        )
+        self._emit_runner_event(
+            execution,
+            workspace,
+            {
+                "seq": 2,
+                "type": "checkpoint_requested",
+                "checkpoint_key": "checkpoint-1",
+                "step_index": 0,
+                "title": "Manual approval",
+                "instructions": "Do something manual",
+            },
+        )
+        cancelled = self._wait_for(
+            lambda: TestExecution.objects.filter(
+                pk=execution.pk,
+                status=ExecutionStatus.CANCELLED,
+            ).exists()
+        )
+        return "", "", 130 if cancelled else 1, False, True
 
     def test_runtime_helper_checkpoint_can_be_resumed(self):
         script = _make_script(
@@ -321,30 +435,39 @@ print("done")
             script=script,
         )
 
-        runner_thread = threading.Thread(target=run_execution, args=(str(execution.id),))
-        runner_thread.start()
+        with mock.patch(
+            "apps.automation.services.python_script_runner._run_container_with_live_events",
+            side_effect=self._fake_checkpoint_container_run,
+        ), mock.patch(
+            "apps.automation.services.python_script_runner.store_text_artifact",
+            side_effect=self._fake_log_artifact,
+        ), mock.patch(
+            "apps.automation.services.checkpoints.write_checkpoint_resume_signal",
+        ):
+            runner_thread = threading.Thread(target=run_execution, args=(str(execution.id),))
+            runner_thread.start()
 
-        checkpoint_ready = self._wait_for(
-            lambda: ExecutionCheckpoint.objects.filter(
-                execution=execution,
-                status=ExecutionCheckpointStatus.PENDING,
-            ).exists()
-        )
-        self.assertTrue(checkpoint_ready)
-        execution.refresh_from_db()
-        self.assertEqual(execution.status, ExecutionStatus.PAUSED)
-
-        checkpoint = ExecutionCheckpoint.objects.get(execution=execution)
-        response = self.client.post(
-            reverse(
-                "execution-checkpoint-resume",
-                kwargs={"execution_pk": execution.id, "checkpoint_pk": checkpoint.id},
+            checkpoint_ready = self._wait_for(
+                lambda: ExecutionCheckpoint.objects.filter(
+                    execution=execution,
+                    status=ExecutionCheckpointStatus.PENDING,
+                ).exists()
             )
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertTrue(checkpoint_ready)
+            execution.refresh_from_db()
+            self.assertEqual(execution.status, ExecutionStatus.PAUSED)
 
-        runner_thread.join(timeout=8)
-        self.assertFalse(runner_thread.is_alive())
+            checkpoint = ExecutionCheckpoint.objects.get(execution=execution)
+            response = self.client.post(
+                reverse(
+                    "execution-checkpoint-resume",
+                    kwargs={"execution_pk": execution.id, "checkpoint_pk": checkpoint.id},
+                )
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+            runner_thread.join(timeout=8)
+            self.assertFalse(runner_thread.is_alive())
         execution.refresh_from_db()
         checkpoint.refresh_from_db()
         self.assertEqual(execution.status, ExecutionStatus.PASSED)
@@ -379,20 +502,29 @@ require_human_action(title="Manual approval", instructions="Do something manual"
             platform="desktop",
             script=script,
         )
-        runner_thread = threading.Thread(target=run_execution, args=(str(execution.id),))
-        runner_thread.start()
+        with mock.patch(
+            "apps.automation.services.python_script_runner._run_container_with_live_events",
+            side_effect=self._fake_stop_container_run,
+        ), mock.patch(
+            "apps.automation.services.python_script_runner.store_text_artifact",
+            side_effect=self._fake_log_artifact,
+        ), mock.patch(
+            "apps.automation.services.execution_runner.write_execution_stop_signal",
+        ):
+            runner_thread = threading.Thread(target=run_execution, args=(str(execution.id),))
+            runner_thread.start()
 
-        checkpoint_ready = self._wait_for(
-            lambda: ExecutionCheckpoint.objects.filter(
-                execution=execution,
-                status=ExecutionCheckpointStatus.PENDING,
-            ).exists()
-        )
-        self.assertTrue(checkpoint_ready)
+            checkpoint_ready = self._wait_for(
+                lambda: ExecutionCheckpoint.objects.filter(
+                    execution=execution,
+                    status=ExecutionCheckpointStatus.PENDING,
+                ).exists()
+            )
+            self.assertTrue(checkpoint_ready)
 
-        request_execution_stop(execution)
-        runner_thread.join(timeout=8)
-        self.assertFalse(runner_thread.is_alive())
+            request_execution_stop(execution)
+            runner_thread.join(timeout=8)
+            self.assertFalse(runner_thread.is_alive())
 
         execution.refresh_from_db()
         checkpoint = ExecutionCheckpoint.objects.get(execution=execution)
@@ -412,7 +544,14 @@ require_human_action(title="Manual approval", instructions="Do something manual"
             script=script,
         )
 
-        run_execution(str(execution.id))
+        with mock.patch(
+            "apps.automation.services.python_script_runner._run_container_with_live_events",
+            return_value=("legacy runner path\n", "", 0, False, False),
+        ), mock.patch(
+            "apps.automation.services.python_script_runner.store_text_artifact",
+            side_effect=self._fake_log_artifact,
+        ):
+            run_execution(str(execution.id))
         execution.refresh_from_db()
         self.assertEqual(execution.status, ExecutionStatus.PASSED)
         self.assertEqual(execution.steps.count(), 1)
@@ -421,8 +560,6 @@ require_human_action(title="Manual approval", instructions="Do something manual"
 
 @override_settings(
     CHANNEL_LAYERS=_IN_MEMORY_CHANNEL_LAYERS,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
 )
 class CheckpointExpiryTests(TransactionTestCase):
     reset_sequences = True

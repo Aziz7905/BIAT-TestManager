@@ -1,0 +1,5 @@
+FROM maven:3.9-eclipse-temurin-21
+
+WORKDIR /workspace
+
+RUN mkdir -p /root/.m2

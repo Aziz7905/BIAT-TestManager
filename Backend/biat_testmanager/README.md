@@ -12,7 +12,9 @@ This backend powers the BIAT Test Manager platform: authentication, project acce
 - Celery
 - Redis
 - MLflow
-- Playwright
+- Docker
+- Selenoid
+- MinIO
 
 ## Backend Apps
 
@@ -24,7 +26,7 @@ This backend powers the BIAT Test Manager platform: authentication, project acce
 
 ## Current Execution Model
 
-Layer 5 is implemented as a self-hosted, manual-first execution pipeline.
+The execution layer is a self-hosted browser E2E pipeline backed by Selenoid, Docker runner containers, Celery, Redis, and MinIO.
 
 - `AutomationScript` stores runnable scripts
 - `TestExecution` stores run lifecycle and history
@@ -35,8 +37,9 @@ Layer 5 is implemented as a self-hosted, manual-first execution pipeline.
 
 Current v1 rule:
 
-- `Playwright + Python` is runnable
-- `Selenium` may be stored but is not runnable yet
+- Selenium Python and Selenium Java scripts run in Docker runner containers against Selenoid
+- Browser pixel streaming is opt-in through `stream_enabled`
+- Artifacts are stored by `storage_backend` + `storage_key`, with MinIO as the active backend
 
 ## Directory Layout
 
@@ -83,6 +86,16 @@ DB_PORT=5432
 
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+
+SELENOID_HUB_URL=http://localhost:4444/wd/hub
+SELENOID_RUNNER_HUB_URL=http://selenoid:4444/wd/hub
+SELENOID_PUBLIC_URL=http://localhost:4444
+AUTOMATION_RUNNER_DOCKER_NETWORK=biat_selenoid
+MINIO_ENDPOINT_URL=http://localhost:9000
+MINIO_RUNNER_ENDPOINT_URL=http://minio:9000
+MINIO_ACCESS_KEY=biat
+MINIO_SECRET_KEY=biat-secret
+MINIO_BUCKET_NAME=biat-artifacts
 
 SPEC_EMBEDDING_MODEL_NAME=replace-me
 SPEC_EMBEDDING_LOCAL_FILES_ONLY=True
@@ -154,7 +167,11 @@ uv run celery -A biat_testmanager worker -Q regression  --pool=prefork -c 4  -l 
 uv run celery -A biat_testmanager worker -Q interactive --pool=prefork -c 2  -l info
 ```
 
-The `ai_agent` queue uses **gevent** because agent loops are I/O-bound (LLM calls + browser actions); one process serves up to 20 concurrent sessions. The `regression` and `interactive` queues use **prefork** because they spawn subprocess runners.
+The `ai_agent` queue uses **gevent** because agent loops are I/O-bound (LLM calls + browser actions); one process serves up to 20 concurrent sessions. The `regression` and `interactive` queues use **prefork** because they coordinate Docker runner containers.
+
+### Docker socket access
+
+Execution workers spawn Java/Python runner containers through the Docker SDK. In the current single-host setup, run the Celery workers on the Docker host, or run them in a container with `/var/run/docker.sock` mounted. Keep `AUTOMATION_RUNNER_DOCKER_NETWORK=biat_selenoid` unless your Docker Compose network uses a different name; the later Moon/K8s migration removes this direct Docker socket constraint.
 
 **Windows development** — `prefork` is unreliable on Windows; use `solo`:
 

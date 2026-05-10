@@ -1,6 +1,6 @@
 # 05 — Execution Engine
 
-**The execution queues. Selenium Grid/Selenoid. Language-specific Docker runner containers. The `__BIAT_EVENT__` protocol. Checkpoint resume. Manual browser sessions.**
+**The execution queues. Selenoid. Language-specific Docker runner containers. The `__BIAT_EVENT__` protocol. Checkpoint resume. Manual browser sessions.**
 
 ---
 
@@ -29,8 +29,8 @@ The execution engine is **two parallel pipelines** — one for Layer 2 browser E
 │             │                                  │                   │
 │             ▼                                  ▼                   │
 │  ┌──────────────────────┐         ┌─────────────────────────┐      │
-│  │   Selenoid/Grid      │         │       Selenoid          │      │
-│  │   Hub + Chrome nodes │         │  Disposable containers  │      │
+│  │      Selenoid        │         │       Selenoid          │      │
+│  │ Disposable browsers  │         │  Disposable containers  │      │
 │  └──────────────────────┘         └─────────────────────────┘      │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
@@ -116,8 +116,8 @@ Future agent-related schedules (e.g., periodic GitHub PR scans) will go here too
 6. Worker calls run_execution(execution_id)
 7. acquire_run_case_lease() — claims the run-case
 8. Status flips to 'running'
-9. Worker spawns a Docker runner container (planned: replaces today's subprocess)
-10. Runner container connects to the browser backend (Selenoid after Step 3; Selenium Grid today) via RemoteWebDriver
+9. Worker spawns a Docker runner container
+10. Runner container connects to Selenoid via RemoteWebDriver
 11. Script runs, emits __BIAT_EVENT__ events to stdout
 12. Worker streams container logs, parses events
 13. Each event creates/updates ExecutionStep, TestArtifact, ExecutionCheckpoint
@@ -130,9 +130,9 @@ Future agent-related schedules (e.g., periodic GitHub PR scans) will go here too
 20. Container destroyed (--rm)
 ```
 
-### 3.2 Today vs. planned
+### 3.2 Previous vs. current
 
-| Step | Today | Planned (Step 3 in roadmap) |
+| Step | Previous | Current Step 3 |
 |---|---|---|
 | Script execution | Subprocess on Celery worker host | Docker runner container |
 | Script dependencies | Whatever's installed on the worker | Per-language runner image, or script/team-owned custom image |
@@ -140,21 +140,20 @@ Future agent-related schedules (e.g., periodic GitHub PR scans) will go here too
 | Worker→runner data | Direct disk access | Shared Docker volume + MinIO |
 | Cleanup | Manual (and risky on crash) | Automatic via `--rm` |
 
-### 3.3 Selenium Grid configuration
-Currently `docker-compose.selenium-grid.yml` defines:
-- **Hub** on `:4444` (and event bus on `:4442`/`:4443`)
-- **3 Chrome nodes** (each: 1 session max, 1920×1080, 2GB shared memory)
-- **noVNC ports**: `:7900`, `:7901`, `:7902` (one per node)
+### 3.3 Selenoid configuration
+`docker-compose.selenoid.yml` defines:
+- **Selenoid** on `:4444`
+- **Selenoid UI** on `:8080`
+- **MinIO** on `:9000` / `:9001`
 
-Scripts receive the hub URL via env var `BIAT_SELENIUM_GRID_URL` and use `selenium.webdriver.Remote(...)`.
+Scripts receive the Selenoid WebDriver URL via env var `BIAT_WEBDRIVER_URL` and use `selenium.webdriver.Remote(...)`.
 
 ### 3.4 Mapping `selenium_session_id` → noVNC URL
-The `apps.automation.services.grid` module:
-- Queries the Grid API for session info
-- Maps a session id to its node's container
-- Resolves the noVNC WebSocket URL (Docker port mapping or direct port)
-- Caches results in Redis (4-hour TTL)
-- Used for live streaming when `stream_enabled=True`
+The `apps.automation.services.browser_sessions` module is the seam:
+- Selenoid is the active backend
+- Session stream URLs are cached in Redis with the same 4-hour TTL
+- Browser pixel streaming is accepted only when `TestExecution.stream_enabled=True`
+- Moon/K8s should be added later as a new backend implementation, not by changing consumers
 
 ---
 
@@ -189,16 +188,9 @@ The `apps.automation.services.grid` module:
 11. Final session record persisted
 ```
 
-### 4.2 Why Selenoid not Selenium Grid
+### 4.2 Why Selenoid
 
-| Concern | Selenium Grid | Selenoid |
-|---|---|---|
-| Container per session | No (persistent nodes) | Yes (fresh container) |
-| State leakage between sessions | Possible | Impossible |
-| Concurrency model | Bounded by node count | Bounded only by Docker capacity |
-| Suitability for long sessions | Poor (a stuck session occupies a node) | Good (each session is its own container) |
-| API surface | WebDriver protocol | WebDriver + extra control APIs |
-| Recording | Possible but cluttered | First-class video recording per session |
+Selenoid gives the MVP one clean browser backend: a fresh disposable browser container per session, WebDriver compatibility for Selenium scripts, noVNC streaming for manual/debug/agent sessions, and built-in recording hooks for artifacts.
 
 For an AI agent that may explore for 15 minutes, leave artifacts in cookies, install extensions, or hit unexpected modals, Selenoid's per-session container is the right choice.
 
@@ -226,7 +218,7 @@ Selenoid maps each session's VNC to a host port. The platform's noVNC consumer p
 When the platform outgrows a single-host Selenoid (say, more than 5 concurrent agent sessions or more than 10 concurrent regressions), the path is:
 - **Moon** — Aerokube's K8s-native multi-tenant grid (replaces Selenoid)
 - **Kubernetes** — for general workload orchestration
-- The `services/grid.py` and `services/selenoid.py` abstractions hide the difference; only the endpoint URLs change
+- `apps.automation.services.browser_sessions` is the seam for the future swap; consumers and runners do not know about Moon/K8s
 
 This is **not in scope yet**. Current target: single-host Docker Compose with Selenoid.
 
@@ -235,9 +227,9 @@ This is **not in scope yet**. Current target: single-host Docker Compose with Se
 ## 5. Docker runner containers (the script execution environment)
 
 ### 5.1 The problem
-Today, scripts run as subprocesses on the Celery worker host. Two problems:
+Previously, scripts ran as subprocesses on the Celery worker host. Two problems:
 1. **Dependency hell** — if a script needs Java/Maven tooling, Python packages, or a bank-owned dependency set that the worker doesn't have, it fails. Installing dependencies per script on the worker is slow and leaves zombie files.
-2. **Filesystem coupling** — scripts write artifacts to the worker's local disk. When we move to containerized Selenium Grid (already done) or Selenoid, the filesystem isn't shared.
+2. **Filesystem coupling** — scripts write artifacts inside short-lived runner containers. MinIO is the durable artifact boundary; the worker should not depend on local runner files after upload.
 
 ### 5.2 The solution: a runner container per execution
 
@@ -246,7 +238,7 @@ Celery worker
    ↓ uses Docker SDK (python `docker` library)
    ↓ docker run --rm
        --network biat-network
-       -e BIAT_SELENIUM_GRID_URL=http://selenium-hub:4444
+       -e BIAT_WEBDRIVER_URL=http://selenoid:4444/wd/hub
        -e BIAT_EXECUTION_ID=<id>
        -v <script-dir>:/app/script
        biat-selenium-java-runner:latest
@@ -365,17 +357,15 @@ Script calls require_human_action(...) emitting a checkpoint event
        ↓
 Worker creates ExecutionCheckpoint(status='pending')
        ↓
-Worker writes a control file:
-    <artifact_dir>/control/checkpoint-<key>.wait.json
+Worker stores a pending checkpoint and publishes execution state
        ↓
-Script blocks waiting for the resume control file
+Script blocks waiting for the Redis resume signal
        ↓
 WebSocket broadcasts checkpoint_requested to the user
        ↓
 User clicks "Resume" in the UI (or modifies state in the browser, then clicks Resume)
        ↓
-Backend writes:
-    <artifact_dir>/control/checkpoint-<key>.resume.json (with optional payload)
+Backend writes the Redis resume signal with optional payload
        ↓
 Script wakes up, reads the resume payload, continues
        ↓
@@ -384,19 +374,16 @@ Worker updates ExecutionCheckpoint(status='resolved', resolved_by, resolved_at)
 WebSocket broadcasts checkpoint_resolved
 ```
 
-### 7.2 The control file abstraction
+### 7.2 The control signal abstraction
 
-Today: filesystem-based (`<artifact_dir>/control/...`)
-
-Future (when runner is fully containerized): **Redis pub/sub** — the worker publishes to a key, the script in the container subscribes. This removes the shared-filesystem requirement.
+Current Step 3 uses Redis keys for checkpoint resume and execution stop signals. This removes shared-filesystem control files from the runner path.
 
 ```python
-# Future
 redis.publish(f"checkpoint:{execution_id}:{checkpoint_key}", json.dumps(payload))
 ```
 
 ### 7.3 Stop signal
-`<artifact_dir>/control/execution.stop` (today, filesystem) or `redis.publish(f"execution:{id}:stop", "1")` (planned). Script polls for stop and exits cleanly.
+The backend writes a Redis stop key for the execution. The script polls for stop and exits cleanly.
 
 ### 7.4 Stale checkpoint expiry
 Beat task `automation.expire_stale_execution_checkpoints` runs every 5 min, expires checkpoints older than 60 min that are still pending. The script in the container detects the timeout and aborts.
@@ -448,14 +435,13 @@ Frontend (NoVncViewer component using the RFB library)
 WebSocket to backend Channels consumer
        ↓
 Consumer proxies to the right backend:
-   - Selenium Grid: ws://chrome-node:7900/...  (Layer 2)
-   - Selenoid:      ws://selenoid-host:<dyn>/...  (Layer 3)
+   - Selenoid: ws://selenoid-host/vnc/<session-id>
        ↓
 Browser pixels stream back to frontend
 ```
 
 ### 9.2 Why a backend proxy
-The frontend can't connect directly to the Grid node (firewall, internal network). The backend consumer is on the same network as the Grid/Selenoid and proxies the WebSocket. This also lets us enforce auth on the stream — the user's JWT and project access are checked before the proxy is established.
+The frontend can't connect directly to internal Selenoid endpoints in many deployments. The backend consumer is on the same network as Selenoid and proxies the WebSocket. This also lets us enforce auth on the stream — the user's JWT and project access are checked before the proxy is established.
 
 ### 9.3 Stream URLs
 - `ws/executions/<id>/browser/` — the noVNC pixel stream for an execution (auth + session id resolution)
@@ -486,7 +472,7 @@ A QA engineer wants to open a browser **without running a test** — just to ins
 
 `apps.automation.services.engine` defines a contract: each engine (Selenium, Playwright) has a `run(script, environment, callbacks)` method. The runner picks the engine based on `AutomationScript.framework` first, falling back to `ExecutionEnvironment.engine`.
 
-Today, both engines flow through `python_script_runner.py` which spawns the script as a subprocess. After the runner-container migration, both flow through the Docker SDK with their respective base images.
+Both engines flow through the Docker SDK with their respective base images.
 
 This abstraction is **why** Layer 3's Playwright MCP usage doesn't pollute Layer 2 — Layer 3 talks to a different engine adapter that connects to Selenoid via Playwright's CDP-over-WebDriver, not via the standard Selenium client.
 
@@ -497,7 +483,7 @@ This abstraction is **why** Layer 3's Playwright MCP usage doesn't pollute Layer
 | Concern | Layer 2 (regression) | Layer 3 (AI agent) |
 |---|---|---|
 | Queue | `regression` for bulk runs, `interactive` for debug/manual | `ai_agent` |
-| Browser farm | Selenoid after Step 3 (Selenium Grid today) | Selenoid (disposable containers) |
+| Browser farm | Selenoid (disposable containers) | Selenoid (disposable containers) |
 | Driver protocol | Selenium WebDriver | Playwright MCP → CDP |
 | Script source | Stored `AutomationScript` content | Generated by LangGraph at runtime |
 | Live stream | Opt-in (default off) | Always on |

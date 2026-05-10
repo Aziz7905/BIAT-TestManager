@@ -22,7 +22,7 @@ If you only have time for one document, read this one. Then drill into `architec
 
 BIAT TestManager is a self-hosted AI-native QA platform for a Tunisian bank (BIAT). It combines three things in one product:
 - a TestRail-style **test management** layer (specs, plans, runs, cases, results)
-- a small **regression execution engine** (Selenium scripts dispatched to a Docker-based browser backend — Selenoid target, Selenium Grid today)
+- a small **regression execution engine** (Selenium scripts dispatched to Selenoid through Docker runner containers)
 - a **KaneAI-equivalent AI agent** (LangGraph + Playwright MCP, running in Selenoid containers, that explores apps, generates tests from Jira tickets and GitHub PRs, drives a browser live, and self-heals broken selectors)
 
 The platform is bank-scale and on-premise. It is **not** trying to be LambdaTest's HyperExecute — no 3000+ browsers, no device farms, no global cloud. It is trying to be the smallest correct version of KaneAI that a single engineering team can build and run inside a bank's network.
@@ -112,8 +112,7 @@ The product philosophy is strict: **the non-AI core must be stable and complete 
 - **Django Channels** + **Daphne** (WebSocket execution streaming)
 
 ### Execution infrastructure
-- **Selenoid** (Aerokube — isolated Docker browser containers) — single browser backend for Layers 2 and 3 (planned, replaces Selenium Grid)
-- **Selenium Grid** (Docker Compose — Hub + Chrome nodes + noVNC) — current implementation; phased out in Step 3 of the roadmap
+- **Selenoid** (Aerokube — isolated Docker browser containers) — single browser backend for Layers 2 and 3
 - **Docker runner containers** — language-specific script execution isolation (planned): Java Selenium runner for bank/enterprise E2E, Python runner for dev/prototypes and existing scripts
 - **MinIO** (S3-compatible self-hosted object storage) — artifacts (planned)
 - **Moon** (Aerokube K8s-native) — future migration target when single-host capacity is exhausted
@@ -138,7 +137,7 @@ The product philosophy is strict: **the non-AI core must be stable and complete 
 | `projects` | Project model, project membership, archive/restore |
 | `specs` | `SpecificationSource`, `SpecificationSourceRecord`, `Specification`, `SpecChunk`, `EmbeddingModel`. CSV/DOCX/XLSX/PDF/URL/Jira parsers. pgvector RAG indexing with MLflow telemetry |
 | `testing` | Repository (`TestSuite` → `TestSection` → `TestScenario` → `TestCase` → `TestCaseRevision`), planning (`TestPlan`, `TestRun`, `TestRunCase`), reporting endpoints |
-| `automation` | `AutomationScript`, `TestExecution`, `ExecutionStep`, `TestResult`, `TestArtifact`, `ExecutionCheckpoint`, `ExecutionEnvironment`, `ExecutionSchedule`. Selenium Grid + Playwright runners. WebSocket streaming. Manual browser sessions |
+| `automation` | `AutomationScript`, `TestExecution`, `ExecutionStep`, `TestResult`, `TestArtifact`, `ExecutionCheckpoint`, `ExecutionEnvironment`, `ExecutionSchedule`. Selenoid + Docker runners. WebSocket streaming. Manual browser sessions |
 | `integrations` | `IntegrationConfig`, `UserIntegrationCredential`, `RepositoryBinding`, `WebhookEvent`, `ExternalIssueLink`, `IntegrationActionLog`. HMAC-signed Jira / GitHub / Jenkins webhooks |
 
 ---
@@ -153,7 +152,7 @@ This master document is intentionally short. The detailed documentation lives in
 | [`architecture/02-three-layer-architecture.md`](architecture/02-three-layer-architecture.md) | Detailed walkthrough of the three layers, what flows between them, why the separation matters |
 | [`architecture/03-domain-model.md`](architecture/03-domain-model.md) | All models, relationships, invariants. The canonical data hierarchy. `run_kind`, `TestCaseRevision`, the lease system |
 | [`architecture/04-rbac-and-multi-tenancy.md`](architecture/04-rbac-and-multi-tenancy.md) | The 3-layer authorization model, multi-tenant isolation, concurrency groups (per-project quotas), the team workflow scenario |
-| [`architecture/05-execution-engine.md`](architecture/05-execution-engine.md) | The two Celery queues, Selenium Grid, Selenoid, Docker runner containers, the `__BIAT_EVENT__` protocol, checkpoint resume |
+| [`architecture/05-execution-engine.md`](architecture/05-execution-engine.md) | The Celery queues, Selenoid, Docker runner containers, the `__BIAT_EVENT__` protocol, checkpoint resume |
 | [`architecture/06-storage-and-streaming.md`](architecture/06-storage-and-streaming.md) | MinIO for artifacts, when to stream live (and when not to), debug rerun mode, video recording strategy |
 | [`architecture/07-ai-layer.md`](architecture/07-ai-layer.md) | `TeamAIConfig`, API key management, Ollama deployment, Phase D (offline generation), Phase E (live agent), Phase F (self-healing), AI RCA |
 | [`architecture/08-integrations.md`](architecture/08-integrations.md) | GitHub source-of-truth sync, Jira ticket → test generation, webhook ingestion, HMAC signatures, action audit |
@@ -224,8 +223,8 @@ These are the rules we don't relitigate. They have been decided. Each rule has a
 9. **Three Celery queues, one per workload.** `ai_agent` (gevent, long-lived sessions), `regression` (prefork, bulk dispatch), `interactive` (prefork, single executions / debug rerun). `run_kind` is data hygiene; queue choice is workload-driven.
 10. **Live noVNC streams are always-on for AI agent sessions and opt-in for regression / interactive.** Nobody watches 1000 silent regression runs live; saved video at the end is enough.
 11. **Artifacts go to MinIO, not the local filesystem.** Database stores keys, not blobs.
-12. **Single source of truth per concern.** AI config lives in `TeamAIConfig` only (not `Team`). App-level integration config lives in `IntegrationConfig` only (not `Team`). User-owned credentials live in `UserIntegrationCredential` only (not `UserProfile`).
-13. **AI agents call resolvers, never read fields directly.** `IntegrationResolverService` returns the right credentials for `act_as_user` vs `act_as_app` modes.
+12. **Single source of truth per concern.** AI config lives in `TeamAIConfig` only (not `Team`). `IntegrationProvider` is the canonical provider catalog. App-level integration config lives in `IntegrationConfig` only (not `Team`). User-owned credentials live in `UserIntegrationCredential` only (not `UserProfile`).
+13. **Integration callers use resolvers, never read fields directly.** `IntegrationResolverService` returns the right credentials for `act_as_user` vs `act_as_app` modes; AI agents must go through it too.
 14. **Native execution is browser E2E first.** Performance, security, API, unit, and integration tests are managed and ingested, not executed by first-party BIAT infrastructure in the current scope.
 15. **Regression execution is not a CI replacement.** Jenkins/GitHub Actions/other bank infrastructure can still own scheduling and non-browser engines; BIAT provides management, traceability, reporting, AI authoring, and one native browser E2E execution lane.
 
@@ -233,7 +232,7 @@ These are the rules we don't relitigate. They have been decided. Each rule has a
 
 ## 8. The current build state in one paragraph
 
-Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, and integration foundation. Layer 2 (browser E2E regression execution) is **mostly complete but still being hardened**: Celery + Selenium Grid + WebSocket streaming + checkpoints work, and the queue/schema-cleanup work is being brought into the codebase, but scripts still run as host subprocesses instead of isolated Java/Python runner containers, artifacts still use the local filesystem instead of MinIO, and Selenoid is still the near-term browser backend migration target. The Results Ingest API for external CI/IDE/lab results is not built yet. Layer 3 (AI browser E2E authoring) is **not started** beyond configuration models: `TeamAIConfig`, `ModelProfile`, and `AIProvider` are wired, but no LLM/LangGraph/Playwright MCP loop exists yet. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
+Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, and integration foundation. Layer 2 (browser E2E regression execution) is being moved onto the target MVP infrastructure: Celery queues, Selenoid browser sessions, Docker Java/Python runners, MinIO artifact keys, WebSocket events, checkpoint control, and opt-in browser streaming. The Results Ingest API for external CI/IDE/lab results is not built yet. Layer 3 (AI browser E2E authoring) is **not started** beyond configuration models: `TeamAIConfig`, `ModelProfile`, and `AIProvider` are wired, but no LLM/LangGraph/Playwright MCP loop exists yet. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
 
 ---
 
@@ -242,7 +241,7 @@ Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project mem
 ```
 1. PostgreSQL (with pgvector extension)
 2. Redis (docker run --name biat-redis -p 6379:6379 -d redis:7)
-3. Selenium Grid (docker compose -f docker-compose.selenium-grid.yml up)
+3. Selenoid + MinIO (docker compose -f docker-compose.selenoid.yml up)
 4. Selenoid (planned, not running yet)
 5. MinIO (planned, not running yet)
 6. uv run python manage.py migrate
@@ -251,7 +250,7 @@ Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project mem
 9. Frontend: npm run dev
 ```
 
-`.env` variables of note: `DB_*`, `SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, `CELERY_BROKER_URL`, `SPEC_EMBEDDING_MODEL_NAME`, `SPEC_EMBEDDING_LOCAL_FILES_ONLY`, `MLFLOW_TRACKING_URI`, `SELENIUM_GRID_HUB_URL`. Future: `SELENOID_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`.
+`.env` variables of note: `DB_*`, `SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, `CELERY_BROKER_URL`, `SPEC_EMBEDDING_MODEL_NAME`, `SPEC_EMBEDDING_LOCAL_FILES_ONLY`, `MLFLOW_TRACKING_URI`, `SELENOID_HUB_URL`, `SELENOID_RUNNER_HUB_URL`, `SELENOID_PUBLIC_URL`, `MINIO_ENDPOINT_URL`, `MINIO_RUNNER_ENDPOINT_URL`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET_NAME`.
 
 ---
 
@@ -263,7 +262,7 @@ Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project mem
 | Business logic | `apps/<app>/services/` |
 | Engine + runners | `apps/automation/services/{engine,selenium_runner,playwright_runner,python_script_runner}.py` |
 | Live streaming | `apps/automation/consumers.py`, `services/streaming.py`, `runtime.py` |
-| Grid integration | `apps/automation/services/{grid,manual_browser}.py` |
+| Browser integration | `apps/automation/services/{browser_sessions,manual_browser}.py` |
 | Spec retrieval | `apps/specs/services/{chunking,embeddings,indexing}.py` |
 | Run lifecycle | `apps/testing/services/runs.py` |
 | Repository operations | `apps/testing/services/repository.py` |

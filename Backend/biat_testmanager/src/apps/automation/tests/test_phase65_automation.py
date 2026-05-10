@@ -10,8 +10,6 @@ Covers:
 """
 from __future__ import annotations
 
-import sys
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -182,8 +180,6 @@ class TestResultSerializerFieldTests(TestCase):
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
 )
 class ScriptActivationApiTests(APITestCase):
     def setUp(self):
@@ -253,8 +249,6 @@ class ScriptActivationApiTests(APITestCase):
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
     CELERY_TASK_EAGER_PROPAGATES=True,
-    AUTOMATION_PLAYWRIGHT_PYTHON_BIN=sys.executable,
-    AUTOMATION_SELENIUM_PYTHON_BIN=sys.executable,
 )
 class ScheduleTriggerShapeTests(APITestCase):
     def setUp(self):

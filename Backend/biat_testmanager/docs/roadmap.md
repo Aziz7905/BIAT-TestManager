@@ -2,7 +2,7 @@
 
 **The build order. What is done, what is next, in what sequence and why.**
 
-**Last updated:** 2026-05-09
+**Last updated:** 2026-05-10
 
 ---
 
@@ -28,8 +28,8 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 - Reporting: project overview, pass-rate trends, failure hotspots
 - Integrations foundation: IntegrationConfig, RepositoryBinding, WebhookEvent, ExternalIssueLink, IntegrationActionLog with HMAC-signed webhook ingestion
 
-### Layer 2 — Regression execution — **mostly complete, gaps**
-- Celery + Selenium Grid integration ✓
+### Layer 2 — Regression execution — **mostly complete, infra smoke pending**
+- Celery + Selenoid integration is the current branch target
 - WebSocket execution streaming ✓
 - Checkpoint pause/resume ✓
 - `__BIAT_EVENT__` runtime helper protocol ✓
@@ -38,14 +38,11 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 
 **Gaps:**
 - Three Celery queues are configured in the current branch (`ai_agent` / `regression` / `interactive`); production worker startup and end-to-end queue behavior still need final verification
-- Subprocess execution on worker host (no Docker runner containers)
-- Local filesystem artifacts (no MinIO)
-- Filesystem control signals (should move to Redis pub/sub for containerized runners)
+- Docker runner containers and MinIO are implemented in code/config, but still need a real Docker Compose smoke test
 - No per-team capacity caps
-- Stream is on by default (should be opt-in for regression/interactive, always-on for ai_agent)
-- No "debug rerun" mode
+- Debug rerun UX remains Step 4
 - No Results Ingest API for the hybrid path (external CI / IDE → platform)
-- Selenium Grid is the only browser backend; Selenoid migration is pending
+- Selenoid is the browser backend target in the current branch
 
 ### Schema cleanup — **in progress**
 - Deprecated AI and integration fields are being moved out of `Team` / `UserProfile`
@@ -58,9 +55,9 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 - Zero LLM calls in the codebase
 - No LangGraph
 - No Playwright MCP
-- No Selenoid running
+- No AI browser-session orchestration yet
 - No `AIAgentSession` model
-- No `BrowserSessionManager` abstraction
+- The Selenoid browser-session seam is in Step 3
 
 ---
 
@@ -70,7 +67,6 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 Step 1  →  Three Celery queues (ai_agent / regression / interactive)
 Step 2  →  Schema consolidation + IntegrationResolverService
 Step 3  →  Selenoid + Java/Python Docker runners + MinIO + stream policy
-            (also: BrowserSessionManager abstraction, drop Selenium Grid)
 Step 4  →  Per-team capacity caps + debug rerun + AIAgentSession model + LLM provider abstraction
 Step 5  →  Phase E — LangGraph live agent (THE GOAL: KaneAI core loop)
 Step 6  →  Results Ingest API (hybrid path: external CI / IDE → platform)
@@ -138,7 +134,7 @@ celery -A biat_testmanager worker -Q interactive --pool=solo
 ```
 
 The `ai_agent` queue uses **gevent** because agent loops are I/O-bound (LLM calls + browser actions). One worker process serves 20 concurrent sessions.
-The `regression` and `interactive` queues use **prefork** because they spawn subprocess runners (CPU-bound coordination).
+The `regression` and `interactive` queues use **prefork** because they coordinate Docker runner containers.
 
 ### Definition of done
 - Settings declare three queues with routing rules
@@ -204,90 +200,31 @@ Doesn't change any API contracts that don't reference the removed fields. Doesn'
 
 ---
 
-## Step 3 — Selenoid + Docker runner + MinIO + stream policy
+## Step 3 — Selenoid + Docker runners + MinIO + stream policy
 
-### Why now
-The biggest single piece of work. Four changes are coupled because they all hinge on the move from "execution lives on the worker host" to "execution lives in containers":
-1. Selenoid replaces Selenium Grid as the single browser backend (one container per execution, isolated, VNC built-in)
-2. Docker runner containers replace subprocess execution (solves dependency hell)
-3. MinIO replaces local-filesystem artifacts (solves bloat, enables horizontal workers)
-4. Stream policy: opt-in for regression/interactive, always-on for ai_agent
+**Status:** implemented in code/config, pending real Docker Compose smoke test.
 
-**`BrowserSessionManager`** abstraction is introduced here so Step 11 (Moon + K8s) is a config change, not a refactor.
+### Why next
+This moves browser E2E execution onto the target MVP infrastructure instead of keeping a temporary subprocess/local-filesystem lane.
 
 ### What changes
-
-**Infrastructure:**
-- `docker-compose.yml` — adds Selenoid (`aerokube/selenoid`), MinIO (`minio/minio`)
-- Selenoid config (`browsers.json`) for Chrome image versions
-- MinIO bucket initialization (`biat-artifacts`)
-- All containers on a shared Docker network so the runner can reach Selenoid + MinIO
-- Selenium Grid Hub + nodes are removed from `docker-compose.yml`
-
-**Runner images:**
-- `Dockerfile.runner.java`: Java + Maven/Gradle-capable Selenium runner for bank-facing browser E2E suites
-- `Dockerfile.runner.python`: Python 3.11 + selenium + boto3 + `biat_event_helper` for prototypes and existing Python scripts
-- Images built and loaded into the worker's Docker daemon
-- Optional `docker_image` field on `AutomationScript` lets a script pin a custom team-owned image
-- Runner selection comes from `AutomationScript.language` first, then the execution environment default
-
-**`BrowserSessionManager` Protocol** in `apps/automation/services/browser_sessions.py`:
-```python
-class BrowserSessionBackend(Protocol):
-    def allocate(self, *, session_id, browser, capabilities) -> BrowserSessionHandle: ...
-    def release(self, handle: BrowserSessionHandle) -> None: ...
-    def health_check(self, handle: BrowserSessionHandle) -> bool: ...
-
-class SelenoidBackend(BrowserSessionBackend): ...   # active
-class MoonBackend(BrowserSessionBackend): ...       # Step 11 only
-```
-
-All runner code talks to the Protocol — never imports Selenoid directly.
-
-**`apps/automation/services/python_script_runner.py`:**
-- Replace `subprocess.Popen(...)` with `docker.run(...)`
-- Stream container logs in real time (Docker SDK)
-- Pass execution_id, MinIO credentials, BrowserSessionManager-resolved WebDriver URL via env vars
-- Container destroyed automatically with `--rm`
-
-**`apps/automation/services/storage.py` (new):**
-- `boto3` wrapper for MinIO
-- `upload_artifact(execution_id, file_path, artifact_type)` → returns storage_key
-- `get_presigned_url(storage_key, ttl_seconds)` → returns URL
-
-**`TestArtifact` model migration:**
-- Add `storage_backend` (default `'minio'`), `storage_key` (CharField)
-- Keep `file_path` as nullable for transition; backfill existing rows
-
-**`TestExecution` model migration:**
-- Add `stream_enabled` (BooleanField, default `False`)
-- Add `debug_rerun` (BooleanField, default `False`)
-
-**Streaming policy:**
-- WebSocket consumer for noVNC stream checks `execution.stream_enabled` before accepting
-- AI agent sessions auto-set `stream_enabled=True`
-- Manual browser sessions auto-set `stream_enabled=True`
-- Default regression / interactive executions get `stream_enabled=False` unless flagged for debug rerun or "Watch this run"
-
-**Control signals (filesystem → Redis pub/sub):**
-- `apps/automation/services/control.py` rewritten to use Redis
-- Stop / checkpoint resume signals broadcast via Redis channels
-- Runner script subscribes (replaces filesystem polling)
+- Selenoid is the active browser backend for browser E2E.
+- `apps/automation/services/browser_sessions.py` is the lean browser-session seam for future Moon/K8s.
+- Java and Python scripts run in Docker runner containers.
+- New execution artifacts use `storage_backend` + `storage_key`; MinIO is the target backend.
+- Browser pixel/noVNC streaming is allowed only when `stream_enabled=True`.
+- Manual browser sessions set `stream_enabled=True`; regression runs stay silent by default.
 
 ### Definition of done
-- A Java Selenium regression run completes end-to-end in a Docker runner container connected to Selenoid
-- A Python Selenium regression run still works for existing/dev scripts
-- Artifacts upload to MinIO, downloadable via pre-signed URL
-- A run with `stream_enabled=False` cannot open a noVNC stream
-- A run with `stream_enabled=True` can open a noVNC stream
-- Selenoid spins a container per session, session id maps to a noVNC URL
-- All existing tests pass; new tests for storage adapter, runner container, stream gating
-- Selenium Grid `docker-compose` file removed
+- Java Selenium and Python Selenium runs complete in runner containers against Selenoid.
+- Artifacts upload to MinIO and are downloadable through signed URLs.
+- Selenoid session IDs map to browser streams through `browser_sessions.py`.
+- Old Grid runtime code is removed.
 
 ### What it does not do
-- Doesn't ship the AI agent
-- Doesn't ship debug rerun UX (Step 4)
-- Doesn't change Layer 1 anything
+- Does not build Moon/K8s.
+- Does not build performance/security/API/native runners.
+- Does not ship the AI agent loop.
 
 ---
 
@@ -299,6 +236,8 @@ The last set of foundations before Step 5 (LangGraph). Each piece is small but e
 - **Debug rerun** is the live-stream regression escape hatch
 - **`AIAgentSession`** is the persisted state that lets agent sessions survive worker restarts
 - **LLM provider abstraction** is what the agent will call instead of importing OpenAI directly
+
+Step 4 builds on the existing `browser_sessions.py` seam; it should not add a second browser-backend abstraction or a parallel Selenoid path.
 
 ### What changes
 
@@ -389,7 +328,7 @@ All upstream pieces are in place: queues split, Selenoid running, MinIO storing 
 - Approved drafts become real `TestSuite` / `TestSection` / `TestScenario` / `TestCase` rows
 
 **Phase 2 — Live authoring (per case, looped)**
-- `BrowserSessionManager.allocate(...)` spawns a Selenoid container with the requested config
+- `apps.automation.services.browser_sessions` resolves the Selenoid session and stream URLs
 - Frontend opens noVNC viewer pointing at the VNC URL — user watches live
 - For each step in the case:
   - LLM + Playwright MCP determine next browser action
@@ -578,7 +517,7 @@ Migrate when:
 At that point, swap:
 - Selenoid → **Moon** (Aerokube's K8s-native multi-tenant grid, free + paid tiers)
 - Celery workers → K8s pods with HPA on queue depth
-- The `BrowserSessionManager` Protocol (Step 3) hides the difference; only endpoint URLs change
+- The browser-session seam from Step 3 hides the difference; consumers should not change
 
 This is **deliberately not on the near-term roadmap.** It's documented so the path exists.
 

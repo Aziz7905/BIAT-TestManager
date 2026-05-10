@@ -35,8 +35,13 @@ class ExecutionStepInline(admin.TabularInline):
 class TestArtifactInline(admin.TabularInline):
     model = TestArtifact
     extra = 0
-    fields = ("artifact_type", "storage_path", "created_at")
-    readonly_fields = ("artifact_type", "storage_path", "created_at")
+    fields = (
+        "artifact_type",
+        "storage_backend",
+        "storage_key",
+        "created_at",
+    )
+    readonly_fields = fields
     show_change_link = False
 
     def has_add_permission(self, request, obj=None):
@@ -87,14 +92,29 @@ class TestExecutionAdmin(admin.ModelAdmin):
         "browser",
         "platform",
         "trigger_type",
+        "stream_enabled",
+        "debug_rerun",
         "triggered_by",
         "started_at",
         "ended_at",
     )
-    list_filter = ("status", "browser", "platform", "trigger_type")
+    list_filter = (
+        "status",
+        "browser",
+        "platform",
+        "trigger_type",
+        "stream_enabled",
+        "debug_rerun",
+    )
     list_select_related = True
     raw_id_fields = ("test_case", "script", "triggered_by", "run_case", "environment")
-    readonly_fields = ("started_at", "ended_at", "celery_task_id", "attempt_number")
+    readonly_fields = (
+        "started_at",
+        "ended_at",
+        "celery_task_id",
+        "attempt_number",
+        "selenium_session_id",
+    )
     search_fields = (
         "test_case__title",
         "test_case__scenario__title",

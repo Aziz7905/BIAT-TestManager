@@ -2,7 +2,7 @@ import uuid
 
 from django.db import models
 
-from .choices import ArtifactType
+from .choices import ArtifactStorageBackend, ArtifactType
 
 
 class TestArtifact(models.Model):
@@ -17,7 +17,12 @@ class TestArtifact(models.Model):
         choices=ArtifactType.choices,
         db_index=True,
     )
-    storage_path = models.CharField(max_length=500)
+    storage_backend = models.CharField(
+        max_length=20,
+        choices=ArtifactStorageBackend.choices,
+        default=ArtifactStorageBackend.MINIO,
+    )
+    storage_key = models.CharField(max_length=1024, blank=True, default="")
     metadata_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

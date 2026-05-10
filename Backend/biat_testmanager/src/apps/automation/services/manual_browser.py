@@ -18,7 +18,11 @@ from apps.automation.models.choices import (
     ExecutionTriggerType,
 )
 from apps.automation.services.control import is_execution_stop_signaled
-from apps.automation.services.grid import cache_browser_session_urls, resize_browser_window
+from apps.automation.services.browser_sessions import (
+    cache_browser_session_urls,
+    get_webdriver_url,
+    resize_browser_window,
+)
 from apps.automation.services.results import finalize_execution_result
 from apps.automation.services.streaming import (
     publish_execution_status_changed,
@@ -52,6 +56,7 @@ def create_and_queue_manual_browser_execution(
         browser=browser,
         platform=platform,
         attempt_number=attempt_number,
+        stream_enabled=True,
     )
     publish_execution_status_changed(execution)
 
@@ -179,11 +184,11 @@ def _build_driver(browser: str):
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options as ChromeOptions
 
-    grid_url = getattr(settings, "SELENIUM_GRID_HUB_URL", "")
-    if not grid_url:
-        raise RuntimeError("SELENIUM_GRID_HUB_URL is required for manual browser sessions.")
+    webdriver_url = get_webdriver_url()
+    if not webdriver_url:
+        raise RuntimeError("A browser WebDriver URL is required for manual browser sessions.")
     if browser not in {ExecutionBrowser.CHROMIUM, ExecutionBrowser.CHROME}:
-        raise RuntimeError("Manual browser sessions currently support Chrome/Grid only.")
+        raise RuntimeError("Manual browser sessions currently support Chrome only.")
 
     options = ChromeOptions()
     options.add_argument("--no-sandbox")
@@ -194,12 +199,13 @@ def _build_driver(browser: str):
     options.add_argument("--disable-features=Translate,InfiniteSessionRestore")
     viewport_width = int(os.environ.get("BIAT_VIEWPORT_WIDTH", "1920"))
     viewport_height = int(os.environ.get("BIAT_VIEWPORT_HEIGHT", "1080"))
+    options.set_capability("enableVNC", True)
     options.add_argument("--window-position=0,0")
     options.add_argument("--force-device-scale-factor=1")
     options.add_argument(f"--window-size={viewport_width},{viewport_height}")
     options.add_argument("--start-maximized")
     options.add_argument(f"--user-data-dir=/tmp/biat-manual-{uuid.uuid4().hex}")
-    driver = webdriver.Remote(command_executor=grid_url, options=options)
+    driver = webdriver.Remote(command_executor=webdriver_url, options=options)
     try:
         driver.maximize_window()
         driver.set_window_rect(

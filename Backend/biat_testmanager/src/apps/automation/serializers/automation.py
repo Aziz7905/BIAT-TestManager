@@ -204,11 +204,6 @@ class ExecutionStreamTicketSerializer(serializers.Serializer):
     expires_in = serializers.IntegerField()
     websocket_path = serializers.CharField()
     browser_websocket_path = serializers.CharField()
-    browser_view_url = serializers.CharField(required=False, allow_blank=True)
-    browser_view_urls = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-    )
 
 
 class TestResultSerializer(serializers.ModelSerializer):
@@ -277,6 +272,8 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "ended_at",
             "duration_ms",
             "celery_task_id",
+            "stream_enabled",
+            "debug_rerun",
             "pause_requested",
             "has_browser_session",
             "result",
@@ -290,6 +287,8 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             "ended_at",
             "duration_ms",
             "celery_task_id",
+            "stream_enabled",
+            "debug_rerun",
             "pause_requested",
             "has_browser_session",
             "result",

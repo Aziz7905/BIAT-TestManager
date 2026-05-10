@@ -275,8 +275,8 @@ One automation attempt.
 - `selenium_session_id` — used to map session to noVNC URL
 - `celery_task_id`
 - `pause_requested` — checkpoint flag
-- (Planned) `stream_enabled` — whether to open noVNC stream (default false)
-- (Planned) `debug_rerun` — if this is a debug rerun of a failed test
+- `stream_enabled` — whether to open noVNC pixel stream (default false)
+- `debug_rerun` — if this is a debug rerun of a failed test
 
 ### 7.3 `TestResult`
 Final persisted outcome.
@@ -323,14 +323,11 @@ Cron-driven scheduled executions.
 - `is_active`, `next_run_at`
 
 ### 7.8 `TestArtifact`
-Files produced during execution. **Will move from local FS to MinIO.**
+Files produced during execution. Local storage remains supported while MinIO is staged.
 - `execution` (FK)
-- `step` (FK, optional)
-- `artifact_type` — `screenshot` | `video` | `log` | `network_har` | `dom_snapshot` | `other`
-- (Current) `file_path` — local filesystem
-- (Planned) `storage_key` — key in MinIO
-- (Planned) `storage_backend` — `minio` | `local` (transitional)
-- `mime_type`, `size_bytes`
+- `artifact_type` — `screenshot` | `video` | `log` | `junit_xml` | `trace`
+- `storage_backend` — `minio`
+- `storage_key` — MinIO object key
 - `created_at`
 
 See [`06-storage-and-streaming.md`](06-storage-and-streaming.md) for the migration plan.

@@ -77,3 +77,8 @@ class ArtifactType(models.TextChoices):
     LOG = "log", "Log"
     JUNIT_XML = "junit_xml", "JUnit XML"
     TRACE = "trace", "Trace"
+
+
+class ArtifactStorageBackend(models.TextChoices):
+    LOCAL = "local", "Local"
+    MINIO = "minio", "MinIO"

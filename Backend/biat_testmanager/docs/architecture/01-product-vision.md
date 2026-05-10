@@ -90,7 +90,7 @@ We have a **handful of Docker Chrome nodes** on the bank's network. That's the r
 Those test categories can still be represented as managed test assets and ingested results. The boundary is runtime ownership: existing bank infrastructure can run them, BIAT can consume and report their outputs.
 
 ### 4.3 We are not a CI/CD replacement
-Engineers who write Selenium scripts in their IDE and run them via Jenkins keep doing that. The platform's Selenium Grid URL is reachable from Jenkins — it's just a remote driver endpoint. We don't replace anyone's pipeline. We integrate with it (see [`08-integrations.md`](08-integrations.md)).
+Engineers who write Selenium scripts in their IDE and run them via Jenkins keep doing that. The platform can expose Selenoid as a remote WebDriver endpoint when teams want to reuse the managed browser farm. We don't replace anyone's pipeline. We integrate with it (see [`08-integrations.md`](08-integrations.md)).
 
 ### 4.4 We are not a generic AI assistant
 - No "ask Claude anything" chat
@@ -115,7 +115,7 @@ AutomationScript stored in DB
          ↓
 Tester triggers run from UI
          ↓
-Celery dispatches to Selenoid (or Selenium Grid until the migration is complete)
+Celery dispatches to Selenoid
          ↓
 Script runs in a Docker runner container
          ↓
@@ -132,7 +132,7 @@ GitHub Actions / Jenkins runs the suite
          ↓
 Script points at the platform's browser backend as remote driver, or runs entirely on existing CI/lab infrastructure
          ↓
-Grid executes it
+Selenoid or the team's existing CI/lab infrastructure executes it
          ↓
 Results reported back to platform via API
 ```
@@ -145,7 +145,7 @@ The AI agent's output (Layer 3) goes through Path A by definition — generated 
 
 ## 6. Why this matters: the difference from "just a wrapper"
 
-If we were building a plain wrapper around Selenium Grid, this product would already exist (it's called Selenium Grid). The thing that makes BIAT TestManager useful and worth building is the combination:
+If we were building a plain wrapper around a browser farm, this product would already exist. The thing that makes BIAT TestManager useful and worth building is the combination:
 
 - **Layer 1** gives the bank a real test management system instead of a spreadsheet
 - **Layer 2** gives the bank a place to actually run those tests without depending on each engineer's laptop
@@ -179,7 +179,7 @@ This is the scale we are building for, not aspirational scale:
 | Concurrent active users | ~10–15 |
 | Projects | ~5–20 (one per banking app / module) |
 | Test cases stored | 10,000–50,000 |
-| Concurrent test executions | 3–10 (Selenium Grid + Selenoid combined) |
+| Concurrent test executions | 3–10 on the Selenoid proof setup |
 | Concurrent AI agent sessions | 1–3 |
 | Specifications indexed | 1,000–5,000 documents |
 
@@ -231,7 +231,7 @@ Concretely, the platform is "done" (v1) when a QA team member can:
 6. The approved cases enter the canonical repository
 7. The user clicks "Generate automation script" on each case
 8. The AI writes Selenium scripts; the user reviews them
-9. The user clicks "Run" — the scripts execute on the regression Grid
+9. The user clicks "Run" — the scripts execute on the Selenoid-backed regression runner
 10. Two pass, one fails
 11. The AI generates an RCA explaining the failure
 12. The AI either self-heals the broken selector or creates a Jira bug

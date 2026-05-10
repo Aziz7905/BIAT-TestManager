@@ -179,11 +179,12 @@ def _persist_engine_artifacts(execution, engine_result: EngineResult) -> None:
         TestArtifact.objects.create(
             execution=execution,
             artifact_type=artifact["type"],
-            storage_path=artifact["path"],
+            storage_backend=artifact.get("storage_backend") or "minio",
+            storage_key=artifact.get("storage_key") or "",
             metadata_json=artifact.get("metadata") or {},
         )
         for artifact in engine_result.artifacts
-        if artifact.get("path")
+        if artifact.get("storage_key")
     ]
     for artifact in artifacts:
         publish_execution_artifact_created(artifact)

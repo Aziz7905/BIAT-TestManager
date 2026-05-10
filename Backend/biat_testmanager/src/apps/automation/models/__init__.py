@@ -1,6 +1,7 @@
 from .automation_script import AutomationScript
 from .choices import (
     ArtifactType,
+    ArtifactStorageBackend,
     AutomationFramework,
     AutomationLanguage,
     AutomationScriptGeneratedBy,
@@ -22,6 +23,7 @@ from .test_result import TestResult
 
 __all__ = [
     "ArtifactType",
+    "ArtifactStorageBackend",
     "AutomationFramework",
     "AutomationLanguage",
     "AutomationScript",

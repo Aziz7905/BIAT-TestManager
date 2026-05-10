@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  selenoid:
+    image: aerokube/selenoid:latest-release
+    container_name: biat-selenoid
+    command:
+      - "-conf"
+      - "/etc/selenoid/browsers.json"
+      - "-limit"
+      - "5"
+      - "-container-network"
+      - "biat_selenoid"
+    ports:
+      - "4444:4444"
+    volumes:
+      - "./infra/selenoid:/etc/selenoid:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - biat_selenoid
+
+  minio:
+    image: minio/minio:latest
+    container_name: biat-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: biat
+      MINIO_ROOT_PASSWORD: biat-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - biat_minio_data:/data
+    networks:
+      - biat_selenoid
+
+  minio-create-bucket:
+    image: minio/mc:latest
+    container_name: biat-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set biat http://minio:9000 biat biat-secret &&
+      mc mb -p biat/biat-artifacts || true
+      "
+    networks:
+      - biat_selenoid
+
+  selenoid-ui:
+    image: aerokube/selenoid-ui:latest-release
+    container_name: biat-selenoid-ui
+    command:
+      - "--selenoid-uri"
+      - "http://selenoid:4444"
+    depends_on:
+      - selenoid
+    ports:
+      - "8080:8080"
+    networks:
+      - biat_selenoid
+
+networks:
+  biat_selenoid:
+    name: biat_selenoid
+
+volumes:
+  biat_minio_data:

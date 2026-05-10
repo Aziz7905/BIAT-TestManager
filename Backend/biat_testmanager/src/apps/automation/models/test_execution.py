@@ -74,6 +74,8 @@ class TestExecution(models.Model):
     ended_at = models.DateTimeField(null=True, blank=True)
     celery_task_id = models.CharField(max_length=255, null=True, blank=True)
     selenium_session_id = models.CharField(max_length=255, null=True, blank=True)
+    stream_enabled = models.BooleanField(default=False)
+    debug_rerun = models.BooleanField(default=False)
     pause_requested = models.BooleanField(default=False)
 
     class Meta:

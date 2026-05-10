@@ -71,7 +71,7 @@ Celery task enqueued on `regression`
          ↓
 Worker picks up task → spawns Docker runner container
          ↓
-Runner container connects to Selenoid/Grid → drives a Chrome browser
+Runner container connects to Selenoid → drives a Chrome browser
          ↓
 Script runs, emits __BIAT_EVENT__ events to stdout
          ↓
@@ -146,16 +146,9 @@ LangGraph agent (the orchestrator)
 The agent runs as a Celery task on `ai_agent`. The LangGraph graph defines the steps the agent goes through (analyze, plan, execute, observe, decide). The graph nodes can call tools. Tools are explicit — no surprise external calls.
 
 ### 4.3 The browser
-Layer 3 uses **Selenoid**, not Selenium Grid. Why?
+Layer 2 and Layer 3 both use **Selenoid** as the browser backend. Regression runs use it silently by default; AI/manual/debug sessions enable the noVNC stream because a human is expected to watch.
 
-| Selenium Grid (Layer 2) | Selenoid (Layer 3) |
-|---|---|
-| Persistent Chrome nodes | Fresh container per session |
-| Optimized for fast scripted runs | Optimized for isolated long sessions |
-| 3 concurrent sessions max (one per Chrome node) | Many concurrent sessions (each gets its own container) |
-| Shared infrastructure across regression tests | Each agent session is fully isolated |
-
-Selenoid spins up a Docker container for each browser session and destroys it when done. This is exactly what an AI agent needs — a clean, disposable environment per session, with no risk of leaking state from a previous session into a new one.
+Selenoid spins up a Docker container for each browser session and destroys it when done. This is exactly what an AI agent needs: a clean, disposable environment per session, with no risk of leaking state from a previous session into a new one.
 
 ### 4.4 Live streaming — always on
 Every Layer 3 session has a live noVNC stream. The user **needs** to watch the agent work — that's the product experience. The whole point of an AI agent driving a browser is that you can see what it's doing in real time and intervene if needed.
@@ -173,7 +166,7 @@ A human reviews. Approves or rejects. Only on approval does the candidate become
 - Does not run regression suites at scale (that's Layer 2)
 - Does not bypass the canonical models
 - Does not auto-commit anything without human approval
-- Does not drive Selenium Grid (uses Selenoid only)
+- Does not own a separate browser farm; it uses the same Selenoid backend through Layer 2 seams
 - Does not store its own data — it reads from Layer 1, writes candidates back to Layer 1
 
 ---
@@ -265,13 +258,13 @@ This dependency direction is the architecture in one sentence: **Layer 1 stands 
 ## 8. Why this matters in practice
 
 ### 8.1 Hiring and ownership
-Different engineers can own different layers. A backend engineer who knows Django and PostgreSQL can fully own Layer 1 without touching Selenium or LLM APIs. A DevOps-ish engineer can own Layer 2's Docker / Grid / Selenoid concerns. An AI engineer can own Layer 3's LangGraph and prompt engineering. The layer split makes specialization possible.
+Different engineers can own different layers. A backend engineer who knows Django and PostgreSQL can fully own Layer 1 without touching Selenium or LLM APIs. A DevOps-ish engineer can own Layer 2's Docker / Selenoid concerns. An AI engineer can own Layer 3's LangGraph and prompt engineering. The layer split makes specialization possible.
 
 ### 8.2 Incremental shipping
 Layer 1 was shipped first. Layer 2 was shipped on top. Layer 3 will ship last. Each layer became useful before the next one started. We never had a "nothing works until everything works" moment.
 
 ### 8.3 Replaceability
-If we ever want to replace a layer (e.g., swap LangGraph for AutoGen in Layer 3, or replace Selenium Grid with Moon in Layer 2), the change is contained. The other two layers don't notice.
+If we ever want to replace a layer (e.g., swap LangGraph for AutoGen in Layer 3, or replace Selenoid with Moon in Layer 2), the change is contained. The other two layers don't notice.
 
 ### 8.4 Testing
 Each layer can be tested in isolation. Layer 1 is just Django ORM tests. Layer 2 can be tested with a fake script runner. Layer 3 can be tested with a recorded LangGraph trace and mocked tools.
@@ -294,12 +287,12 @@ Each layer can be tested in isolation. Layer 1 is just Django ORM tests. Layer 2
   ┌───────────┐            ┌──────────────┐
   │  LAYER 2  │            │   LAYER 3    │
   │ (Celery + │            │ (Celery +    │
-  │  Selenoid/│            │  LangGraph + │
-  │  Grid)    │            │  Selenoid)   │
+  │  Selenoid │            │  LangGraph + │
+  │           │            │  Selenoid)   │
   └─────┬─────┘            └──────┬───────┘
         │                         │
         ▼                         ▼
- [Selenoid/Grid]            [Selenoid]
+ [Selenoid]                 [Selenoid]
  [Chrome browser]           [Browser containers]
         │                         │
         └────────┬────────────────┘

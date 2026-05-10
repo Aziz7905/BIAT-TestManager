@@ -9,6 +9,8 @@ from asgiref.sync import async_to_sync
 from django.core import signing
 from rest_framework.renderers import JSONRenderer
 
+from apps.automation.services.storage import build_artifact_download_url
+
 
 EXECUTION_STREAM_TICKET_SALT = "execution-stream-ticket"
 EXECUTION_STREAM_TICKET_TTL_SECONDS = 120
@@ -34,31 +36,12 @@ def issue_execution_stream_ticket(execution, user) -> dict:
     ticket = signing.dumps(payload, salt=EXECUTION_STREAM_TICKET_SALT)
     query = urlencode({"ticket": ticket})
     browser_websocket_path = f"/ws/executions/{execution.id}/browser-stream/?{query}"
-    browser_view_urls = []
-    if execution.selenium_session_id:
-        try:
-            from apps.automation.services.grid import (
-                get_browser_view_urls_for_session,
-                get_session_vnc_websocket_url,
-            )
-
-            browser_websocket_path = (
-                get_session_vnc_websocket_url(execution.selenium_session_id)
-                or browser_websocket_path
-            )
-            browser_view_urls = get_browser_view_urls_for_session(
-                execution.selenium_session_id
-            )
-        except Exception:
-            pass
 
     return {
         "ticket": ticket,
         "expires_in": EXECUTION_STREAM_TICKET_TTL_SECONDS,
         "websocket_path": f"/ws/executions/{execution.id}/?{query}",
         "browser_websocket_path": browser_websocket_path,
-        "browser_view_url": browser_view_urls[0] if browser_view_urls else "",
-        "browser_view_urls": browser_view_urls,
     }
 
 
@@ -100,7 +83,9 @@ def serialize_test_artifact(artifact) -> dict:
         "id": str(artifact.id),
         "execution": str(artifact.execution_id),
         "artifact_type": artifact.artifact_type,
-        "storage_path": artifact.storage_path,
+        "storage_backend": artifact.storage_backend,
+        "storage_key": artifact.storage_key,
+        "download_url": build_artifact_download_url(artifact),
         "metadata_json": artifact.metadata_json,
         "created_at": artifact.created_at.isoformat().replace("+00:00", "Z"),
     }

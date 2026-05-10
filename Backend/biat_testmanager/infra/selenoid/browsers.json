@@ -1,0 +1,16 @@
+{
+  "chrome": {
+    "default": "128.0",
+    "versions": {
+      "128.0": {
+        "image": "selenoid/vnc:chrome_128.0",
+        "port": "4444",
+        "path": "/",
+        "tmpfs": {
+          "/tmp": "size=512m"
+        },
+        "shmSize": 2147483648
+      }
+    }
+  }
+}

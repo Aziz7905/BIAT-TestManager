@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from unittest import mock
 
 import redis as redis_lib
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.accounts.models import Organization, Team, TeamMembership, UserProfile
 from apps.accounts.models.choices import OrganizationRole, TeamMembershipRole
@@ -12,9 +13,11 @@ from apps.automation.models import (
     AutomationScript,
     ExecutionSchedule,
     ExecutionStatus,
+    TestArtifact,
     TestExecution,
 )
 from apps.automation.models.choices import (
+    ArtifactType,
     AutomationFramework,
     AutomationLanguage,
     ExecutionTriggerType,
@@ -22,6 +25,11 @@ from apps.automation.models.choices import (
 from apps.automation.services.execution_runner import (
     create_execution_record,
     select_execution_script,
+)
+from apps.automation.services.manual_browser import create_and_queue_manual_browser_execution
+from apps.automation.services.python_script_runner import (
+    build_execution_environment,
+    prepare_runner_workspace,
 )
 from apps.automation.services.control import is_execution_stop_signaled
 from apps.automation.services.results import finalize_execution_result
@@ -227,6 +235,128 @@ class AutomationServiceTests(TestCase):
         )
 
         self.assertEqual(execution.script_id, script.id)
+
+    def test_manual_browser_execution_enables_pixel_stream(self):
+        with mock.patch(
+            "apps.automation.tasks.enqueue_manual_browser_session_task",
+            return_value="task-1",
+        ):
+            execution = create_and_queue_manual_browser_execution(
+                test_case=self.test_case,
+                triggered_by=self.user,
+                target_url="https://example.test",
+            )
+
+        self.assertTrue(execution.stream_enabled)
+        self.assertEqual(execution.celery_task_id, "task-1")
+
+    def test_artifact_records_use_storage_key(self):
+        execution = create_execution_record(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser="chromium",
+            platform="desktop",
+        )
+
+        artifact = TestArtifact.objects.create(
+            execution=execution,
+            artifact_type=ArtifactType.LOG,
+            storage_backend="minio",
+            storage_key="projects/p1/executions/e1/log/stdout.log",
+        )
+
+        self.assertEqual(artifact.storage_backend, "minio")
+        self.assertEqual(artifact.storage_key, "projects/p1/executions/e1/log/stdout.log")
+
+    @override_settings(AUTOMATION_PYTHON_RUNNER_IMAGE="biat-python-test:latest")
+    def test_python_runner_workspace_is_container_only(self):
+        script = AutomationScript.objects.create(
+            test_case=self.test_case,
+            framework=AutomationFramework.SELENIUM,
+            language=AutomationLanguage.PYTHON,
+            script_content="print('selenium smoke')",
+        )
+        execution = create_execution_record(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser="chromium",
+            platform="desktop",
+            script=script,
+        )
+
+        workspace = prepare_runner_workspace(execution)
+        try:
+            self.assertEqual(workspace.image, "biat-python-test:latest")
+            self.assertEqual(workspace.command, ["python", "/workspace/script.py"])
+            self.assertTrue((workspace.host_root / "script.py").exists())
+            self.assertTrue((workspace.host_root / "apps" / "automation" / "runtime.py").exists())
+        finally:
+            shutil.rmtree(workspace.host_root, ignore_errors=True)
+
+    @override_settings(AUTOMATION_JAVA_RUNNER_IMAGE="biat-java-test:latest")
+    def test_java_runner_workspace_uses_public_class_name(self):
+        script = AutomationScript.objects.create(
+            test_case=self.test_case,
+            framework=AutomationFramework.SELENIUM,
+            language=AutomationLanguage.JAVA,
+            script_content="""
+public class BankSmoke {
+    public static void main(String[] args) {}
+}
+""".strip(),
+        )
+        execution = create_execution_record(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser="chromium",
+            platform="desktop",
+            script=script,
+        )
+
+        workspace = prepare_runner_workspace(execution)
+        try:
+            self.assertEqual(workspace.image, "biat-java-test:latest")
+            self.assertIn("-Dexec.mainClass=BankSmoke", workspace.command)
+            self.assertTrue((workspace.host_root / "BankSmoke.java").exists())
+            self.assertTrue((workspace.host_root / "BiatRuntime.java").exists())
+            self.assertTrue((workspace.host_root / "pom.xml").exists())
+        finally:
+            shutil.rmtree(workspace.host_root, ignore_errors=True)
+
+    @override_settings(
+        SELENOID_RUNNER_HUB_URL="http://selenoid:4444/wd/hub",
+        MINIO_RUNNER_ENDPOINT_URL="http://minio:9000",
+        MINIO_ACCESS_KEY="runner-access",
+        MINIO_SECRET_KEY="runner-secret",
+        MINIO_BUCKET_NAME="runner-artifacts",
+    )
+    def test_runner_environment_targets_selenoid_and_minio(self):
+        script = AutomationScript.objects.create(
+            test_case=self.test_case,
+            framework=AutomationFramework.SELENIUM,
+            language=AutomationLanguage.PYTHON,
+            script_content="print('env smoke')",
+        )
+        execution = create_execution_record(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser="chromium",
+            platform="desktop",
+            script=script,
+        )
+
+        env = build_execution_environment(execution)
+
+        self.assertEqual(env["BIAT_WEBDRIVER_URL"], "http://selenoid:4444/wd/hub")
+        self.assertEqual(env["MINIO_ENDPOINT_URL"], "http://minio:9000")
+        self.assertEqual(env["MINIO_ACCESS_KEY"], "runner-access")
+        self.assertEqual(env["MINIO_SECRET_KEY"], "runner-secret")
+        self.assertEqual(env["MINIO_BUCKET_NAME"], "runner-artifacts")
+        self.assertNotIn("BIAT_ARTIFACT_STORAGE_BACKEND", env)
 
     def test_stop_signal_check_survives_redis_failure(self):
         execution = TestExecution.objects.create(

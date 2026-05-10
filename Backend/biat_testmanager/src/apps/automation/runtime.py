@@ -55,7 +55,7 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
     """
     Create a Selenium RemoteWebDriver ready for BIAT execution.
 
-    Reads BIAT_SELENIUM_GRID_URL (injected by the runner) for the Grid endpoint
+    Reads BIAT_WEBDRIVER_URL (injected by the runner) for the Selenoid endpoint
     and BIAT_HEADLESS for headless mode. Maximizes the window and automatically
     calls report_session_started() so you don't have to.
 
@@ -68,11 +68,11 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
     """
     from selenium import webdriver as _webdriver
 
-    grid_url = os.environ.get("BIAT_SELENIUM_GRID_URL", "")
-    if not grid_url:
+    webdriver_url = os.environ.get("BIAT_WEBDRIVER_URL", "")
+    if not webdriver_url:
         raise RuntimeError(
-            "BIAT_SELENIUM_GRID_URL is not set. "
-            "Ensure SELENIUM_GRID_HUB_URL is configured in your .env."
+            "BIAT_WEBDRIVER_URL is not set. "
+            "Ensure SELENOID_RUNNER_HUB_URL is configured in your .env."
         )
 
     if headless is None:
@@ -95,6 +95,7 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
         options.add_argument(f"--user-data-dir=/tmp/biat-runtime-{uuid.uuid4().hex}")
         options.add_argument("--window-position=0,0")
         options.add_argument("--force-device-scale-factor=1")
+        options.set_capability("enableVNC", True)
         if headless:
             options.add_argument("--headless=new")
         else:
@@ -105,7 +106,7 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
     if viewport_w and viewport_h:
         options.add_argument(f"--window-size={viewport_w},{viewport_h}")
 
-    driver = _webdriver.Remote(command_executor=grid_url, options=options)
+    driver = _webdriver.Remote(command_executor=webdriver_url, options=options)
 
     if not headless:
         try:

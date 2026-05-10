@@ -373,8 +373,15 @@ class ArtifactPersistenceTests(TestCase):
         engine_result = EngineResult(
             status="passed",
             artifacts=[
-                {"type": ArtifactType.SCREENSHOT, "path": "/tmp/shot.png", "metadata": {"width": 1280}},
-                {"type": ArtifactType.LOG, "path": "/tmp/run.log"},
+                {
+                    "type": ArtifactType.SCREENSHOT,
+                    "storage_key": "projects/p1/executions/e1/screenshot/shot.png",
+                    "metadata": {"width": 1280},
+                },
+                {
+                    "type": ArtifactType.LOG,
+                    "storage_key": "projects/p1/executions/e1/log/run.log",
+                },
             ],
         )
 
@@ -383,11 +390,14 @@ class ArtifactPersistenceTests(TestCase):
         artifacts = list(TestArtifact.objects.filter(execution=execution).order_by("created_at"))
         self.assertEqual(len(artifacts), 2)
         self.assertEqual(artifacts[0].artifact_type, ArtifactType.SCREENSHOT)
-        self.assertEqual(artifacts[0].storage_path, "/tmp/shot.png")
+        self.assertEqual(
+            artifacts[0].storage_key,
+            "projects/p1/executions/e1/screenshot/shot.png",
+        )
         self.assertEqual(artifacts[0].metadata_json, {"width": 1280})
         self.assertEqual(artifacts[1].artifact_type, ArtifactType.LOG)
 
-    def test_persist_engine_artifacts_skips_entries_without_path(self):
+    def test_persist_engine_artifacts_skips_entries_without_storage_key(self):
         execution = create_execution_record(
             test_case=self.test_case,
             triggered_by=self.user,
@@ -399,7 +409,10 @@ class ArtifactPersistenceTests(TestCase):
             status="failed",
             artifacts=[
                 {"type": ArtifactType.SCREENSHOT, "path": ""},  # empty path → skip
-                {"type": ArtifactType.TRACE, "path": "/tmp/trace.zip"},
+                {
+                    "type": ArtifactType.TRACE,
+                    "storage_key": "projects/p1/executions/e1/trace/trace.zip",
+                },
             ],
         )
 

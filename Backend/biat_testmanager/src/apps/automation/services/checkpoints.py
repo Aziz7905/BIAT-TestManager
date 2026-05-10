@@ -8,6 +8,7 @@ from django.utils import timezone
 from apps.automation.models import ExecutionCheckpoint
 from apps.automation.models.choices import ExecutionCheckpointStatus, ExecutionStatus
 from apps.automation.services.control import (
+    ExecutionControlUnavailable,
     write_checkpoint_resume_signal,
     write_execution_stop_signal,
 )
@@ -144,7 +145,10 @@ def expire_stale_execution_checkpoints(*, max_age: timedelta | None = None) -> i
         )
 
         if execution.status == ExecutionStatus.PAUSED:
-            write_execution_stop_signal(execution)
+            try:
+                write_execution_stop_signal(execution)
+            except ExecutionControlUnavailable:
+                pass
             steps = list(execution.steps.all())
             finalize_execution_result(
                 execution,

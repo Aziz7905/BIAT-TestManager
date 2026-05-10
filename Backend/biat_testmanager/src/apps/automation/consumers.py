@@ -15,10 +15,7 @@ from apps.automation.services import (
     get_test_execution_queryset_for_actor,
     verify_execution_stream_ticket,
 )
-from apps.automation.services.grid import (
-    get_node_vnc_url_for_session,
-    get_session_vnc_websocket_url,
-)
+from apps.automation.services.browser_sessions import get_browser_ws_url
 from apps.automation.services.streaming import get_execution_group_name
 
 
@@ -121,11 +118,15 @@ class BrowserStreamConsumer(AsyncWebsocketConsumer):
             await self.close(code=4403)
             return
 
+        if not execution.stream_enabled:
+            await self.close(code=4403)
+            return
+
         if not execution.selenium_session_id:
             await self.close(code=4404)
             return
 
-        ws_url = await sync_to_async(_get_browser_ws_url)(execution)
+        ws_url = await sync_to_async(get_browser_ws_url)(execution)
         if not ws_url:
             logger.warning(
                 "Browser stream unavailable: no VNC websocket URL resolved.",
@@ -141,7 +142,7 @@ class BrowserStreamConsumer(AsyncWebsocketConsumer):
             self._novnc_ws = await _connect_to_browser_stream(ws_lib, ws_url)
         except Exception:
             logger.warning(
-                "Browser stream unavailable: unable to connect to Selenium VNC websocket.",
+                "Browser stream unavailable: unable to connect to browser VNC websocket.",
                 extra={
                     "execution_id": str(execution.id),
                     "selenium_session_id": execution.selenium_session_id,
@@ -207,49 +208,3 @@ async def _connect_to_browser_stream(ws_lib, ws_url: str):
         )
     except Exception:
         return await ws_lib.connect(ws_url, open_timeout=5)
-
-
-def _get_browser_ws_url(execution) -> str | None:
-    """
-    Returns a browser VNC websocket URL for the execution's browser session.
-    Reads from Redis cache first (written when session_started fires), then
-    falls back to a live Grid API lookup (works during active sessions).
-    """
-    from django.conf import settings
-    import redis as redis_lib
-
-    execution_id = str(execution.id)
-    session_id = execution.selenium_session_id
-
-    try:
-        client = redis_lib.from_url(
-            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-        cached_ws = client.get(f"biat:exec:{execution_id}:browser_ws_url")
-        if cached_ws:
-            return cached_ws
-        cached = client.get(f"biat:exec:{execution_id}:vnc_url")
-        if cached:
-            return (
-                cached.rstrip("/")
-                .replace("http://", "ws://")
-                .replace("https://", "wss://")
-                + "/websockify"
-            )
-    except Exception:
-        pass
-
-    browser_ws_url = get_session_vnc_websocket_url(session_id)
-    if browser_ws_url:
-        return browser_ws_url
-
-    vnc_url = get_node_vnc_url_for_session(session_id)
-    if not vnc_url:
-        return None
-    return (
-        vnc_url.rstrip("/")
-        .replace("http://", "ws://")
-        .replace("https://", "wss://")
-        + "/websockify"
-    )

@@ -27,7 +27,7 @@ class EngineResult:
     error_message: str = ""
     stack_trace: str = ""
     artifacts: list[dict] = field(default_factory=list)
-    # Each artifact dict: {"type": ArtifactType value, "path": str, "metadata": dict}
+    # Each artifact dict: {"type": ArtifactType value, "storage_key": str, "metadata": dict}
 
 
 # ---------------------------------------------------------------------------

@@ -325,12 +325,15 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 300.0,
     },
 }
-AUTOMATION_ARTIFACTS_ROOT = Path(
-    config(
-        "AUTOMATION_ARTIFACTS_ROOT",
-        default=str((MEDIA_ROOT / "automation_artifacts").resolve()),
-    )
+MINIO_ENDPOINT_URL = config("MINIO_ENDPOINT_URL", default="http://localhost:9000")
+MINIO_RUNNER_ENDPOINT_URL = config(
+    "MINIO_RUNNER_ENDPOINT_URL",
+    default="http://minio:9000",
 )
+MINIO_ACCESS_KEY = config("MINIO_ACCESS_KEY", default="biat")
+MINIO_SECRET_KEY = config("MINIO_SECRET_KEY", default="biat-secret")
+MINIO_BUCKET_NAME = config("MINIO_BUCKET_NAME", default="biat-artifacts")
+MINIO_REGION_NAME = config("MINIO_REGION_NAME", default="us-east-1")
 AUTOMATION_DEFAULT_BROWSER = config(
     "AUTOMATION_DEFAULT_BROWSER",
     default="chromium",
@@ -339,21 +342,22 @@ AUTOMATION_DEFAULT_PLATFORM = config(
     "AUTOMATION_DEFAULT_PLATFORM",
     default="desktop",
 )
-AUTOMATION_PLAYWRIGHT_PYTHON_BIN = config(
-    "AUTOMATION_PLAYWRIGHT_PYTHON_BIN",
-    default="python",
+SELENOID_HUB_URL = config("SELENOID_HUB_URL", default="http://localhost:4444/wd/hub")
+SELENOID_RUNNER_HUB_URL = config(
+    "SELENOID_RUNNER_HUB_URL",
+    default="http://selenoid:4444/wd/hub",
 )
-AUTOMATION_PLAYWRIGHT_WORKDIR = config(
-    "AUTOMATION_PLAYWRIGHT_WORKDIR",
-    default=str(BASE_DIR),
+SELENOID_PUBLIC_URL = config("SELENOID_PUBLIC_URL", default=SELENOID_HUB_URL)
+AUTOMATION_RUNNER_DOCKER_NETWORK = config(
+    "AUTOMATION_RUNNER_DOCKER_NETWORK",
+    default="biat_selenoid",
 )
-AUTOMATION_SELENIUM_PYTHON_BIN = config(
-    "AUTOMATION_SELENIUM_PYTHON_BIN",
-    default=AUTOMATION_PLAYWRIGHT_PYTHON_BIN,
+AUTOMATION_PYTHON_RUNNER_IMAGE = config(
+    "AUTOMATION_PYTHON_RUNNER_IMAGE",
+    default="biat-runner-python:latest",
 )
-AUTOMATION_SELENIUM_WORKDIR = config(
-    "AUTOMATION_SELENIUM_WORKDIR",
-    default=AUTOMATION_PLAYWRIGHT_WORKDIR,
+AUTOMATION_JAVA_RUNNER_IMAGE = config(
+    "AUTOMATION_JAVA_RUNNER_IMAGE",
+    default="biat-runner-java:latest",
 )
-SELENIUM_GRID_HUB_URL = config("SELENIUM_GRID_HUB_URL", default="")
 

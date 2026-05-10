@@ -100,8 +100,6 @@ export interface ExecutionStreamTicket {
   expires_in: number;
   websocket_path: string;
   browser_websocket_path: string;
-  browser_view_url?: string;
-  browser_view_urls?: string[];
 }
 
 // Execution Result

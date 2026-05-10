@@ -289,7 +289,7 @@ def execute_pending_run_cases(
 
     Reuses each test case's active AutomationScript through the existing
     automation pipeline. Concurrency is bounded by Celery worker concurrency
-    and Selenium Grid capacity — not by this function.
+    and Selenoid capacity, not by this function.
     """
     from apps.automation.models.choices import (
         ExecutionBrowser,

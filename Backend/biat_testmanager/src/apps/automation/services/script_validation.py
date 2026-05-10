@@ -30,9 +30,11 @@ def validate_script_content(
                 framework_label=framework_label,
                 module_hint=framework,
             )
+        elif framework == AutomationFramework.SELENIUM and language == AutomationLanguage.JAVA:
+            _validate_java_script(script_content, errors, warnings)
         else:
             warnings.append(
-                f"This script is stored successfully, but only Python {framework_label} scripts are executable in v1."
+                f"This script is stored successfully, but only Python and Selenium Java scripts are executable."
             )
 
     return _build_validation_result(errors, warnings)
@@ -67,3 +69,16 @@ def _build_validation_result(
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _validate_java_script(
+    script_content: str,
+    errors: list[str],
+    warnings: list[str],
+):
+    if "public class " not in script_content:
+        errors.append("Selenium Java scripts must define one public class.")
+    if "public static void main" not in script_content:
+        warnings.append(
+            "Java runner expects a public static void main entrypoint."
+        )

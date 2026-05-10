@@ -93,7 +93,7 @@ The principle: **the data layer enforces isolation; the view layer is just a con
 This is the **gap relative to LambdaTest** that needs to be closed.
 
 ### 4.1 The problem
-Browser capacity is shared. Even with separate `regression`, `interactive`, and `ai_agent` queues, one busy team or project can still consume the available Selenoid/Grid sessions unless admission control caps are enforced.
+Browser capacity is shared. Even with separate `regression`, `interactive`, and `ai_agent` queues, one busy team or project can still consume the available Selenoid sessions unless admission control caps are enforced.
 
 ### 4.2 The LambdaTest pattern
 LambdaTest organizes users into **Groups**. Each group has a max concurrent session cap. The org's total concurrency (e.g., 10 sessions) is divided among groups (e.g., 6 for Project A, 4 for Project B). One group can never starve another.
@@ -240,7 +240,7 @@ Zero data crossing. Zero stream visibility crossing. The only shared resource wa
 
 ```
 SHARED (infrastructure layer):
-├── Selenoid/Grid browser capacity (shared, gated by caps)
+├── Selenoid browser capacity (shared, gated by caps)
 ├── Celery queues (`regression`, `interactive`, `ai_agent`)
 ├── MinIO bucket (artifacts under project-scoped key prefixes)
 ├── Redis (Celery broker; channel groups are execution-scoped)
