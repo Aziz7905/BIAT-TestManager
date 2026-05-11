@@ -186,6 +186,7 @@ class AutomationApiTests(APITestCase):
                     "script": str(script.id),
                     "browser": "chromium",
                     "platform": "desktop",
+                    "stream_enabled": True,
                 },
                 format="json",
             )
@@ -195,6 +196,8 @@ class AutomationApiTests(APITestCase):
             pk=response.data["id"],
         )
         self.assertEqual(execution.status, "passed")
+        self.assertTrue(execution.stream_enabled)
+        self.assertTrue(response.data["stream_enabled"])
         self.assertIsNotNone(execution.result)
         self.assertEqual(execution.result.total_steps, 2)
         self.assertEqual(execution.result.passed_steps, 2)

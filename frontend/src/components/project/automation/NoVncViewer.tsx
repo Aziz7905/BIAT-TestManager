@@ -42,6 +42,10 @@ function buildWebSocketUrl(path: string): string {
   return url.toString();
 }
 
+function getVncPassword(): string {
+  return import.meta.env.VITE_VNC_PASSWORD || "selenoid";
+}
+
 function getStatusDotClass(enabled: boolean, connected: boolean, loading: boolean): string {
   if (enabled && connected) return "bg-green-400";
   if (enabled && loading) return "animate-pulse bg-slate-500";
@@ -61,8 +65,7 @@ function NoSessionView() {
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-slate-500">
       <p className="text-sm">No browser session active</p>
       <p className="max-w-xs text-center text-xs text-slate-600">
-        Browser streaming requires Selenium Grid and the script to call{" "}
-        <code className="rounded bg-slate-800 px-1 text-slate-300">report_session_started()</code>
+        Browser streaming is enabled for manual or debug sessions after Selenium reports a live session.
       </p>
     </div>
   );
@@ -113,7 +116,7 @@ export default function NoVncViewer({ executionId, enabled }: NoVncViewerProps) 
         const rfb = new RfbConstructor(
           target,
           buildWebSocketUrl(ticket.browser_websocket_path),
-          { credentials: { password: "secret" } }
+          { credentials: { password: getVncPassword() } }
         );
         rfb.viewOnly = true;
         rfb.scaleViewport = true;

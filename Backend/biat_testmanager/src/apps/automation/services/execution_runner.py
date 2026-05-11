@@ -89,6 +89,7 @@ def create_execution_record(
     trigger_type: str = ExecutionTriggerType.MANUAL,
     browser: str,
     platform: str,
+    stream_enabled: bool = True,
     script=None,
     run_case=None,
     environment=None,
@@ -120,6 +121,7 @@ def create_execution_record(
         status=ExecutionStatus.QUEUED,
         browser=browser,
         platform=platform,
+        stream_enabled=stream_enabled,
         attempt_number=attempt_number,
     )
     publish_execution_status_changed(execution)
@@ -143,6 +145,7 @@ def create_and_queue_execution(
     trigger_type: str = ExecutionTriggerType.MANUAL,
     browser: str,
     platform: str,
+    stream_enabled: bool = True,
     script=None,
     environment=None,
 ):
@@ -152,6 +155,7 @@ def create_and_queue_execution(
         trigger_type=trigger_type,
         browser=browser,
         platform=platform,
+        stream_enabled=stream_enabled,
         script=script,
         environment=environment,
     )

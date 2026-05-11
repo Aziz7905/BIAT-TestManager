@@ -289,7 +289,7 @@ class AutomationServiceTests(TestCase):
         workspace = prepare_runner_workspace(execution)
         try:
             self.assertEqual(workspace.image, "biat-python-test:latest")
-            self.assertEqual(workspace.command, ["python", "/workspace/script.py"])
+            self.assertEqual(workspace.command, ["python3", "/workspace/script.py"])
             self.assertTrue((workspace.host_root / "script.py").exists())
             self.assertTrue((workspace.host_root / "apps" / "automation" / "runtime.py").exists())
         finally:
@@ -356,6 +356,11 @@ public class BankSmoke {
         self.assertEqual(env["MINIO_ACCESS_KEY"], "runner-access")
         self.assertEqual(env["MINIO_SECRET_KEY"], "runner-secret")
         self.assertEqual(env["MINIO_BUCKET_NAME"], "runner-artifacts")
+        self.assertEqual(env["BIAT_ENABLE_VNC"], "1")
+        self.assertEqual(env["BIAT_STREAM_HOLD_SECONDS"], "20")
+        self.assertEqual(env["PYTHONPATH"], "/workspace")
+        self.assertNotIn("PATH", env)
+        self.assertNotIn("Path", env)
         self.assertNotIn("BIAT_ARTIFACT_STORAGE_BACKEND", env)
 
     def test_stop_signal_check_survives_redis_failure(self):

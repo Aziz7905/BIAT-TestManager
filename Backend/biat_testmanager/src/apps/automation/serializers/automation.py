@@ -332,6 +332,7 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
     )
     browser = serializers.ChoiceField(choices=ExecutionBrowser.choices, required=False)
     platform = serializers.ChoiceField(choices=ExecutionPlatform.choices, required=False)
+    stream_enabled = serializers.BooleanField(required=False, default=True)
 
     class Meta:
         model = TestExecution
@@ -342,6 +343,7 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
             "trigger_type",
             "browser",
             "platform",
+            "stream_enabled",
         ]
 
     def validate(self, attrs):
@@ -361,6 +363,9 @@ class TestExecutionCreateSerializer(serializers.ModelSerializer):
             )
 
         attrs.setdefault("trigger_type", ExecutionTriggerType.MANUAL)
+        # Proof mode: keep live browser streaming on for every browser execution.
+        # Later AI/regression policy can decide which executions opt out.
+        attrs["stream_enabled"] = True
 
         if environment is not None:
             attrs.setdefault("browser", environment.browser)

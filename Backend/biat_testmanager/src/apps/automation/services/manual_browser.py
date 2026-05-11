@@ -199,7 +199,7 @@ def _build_driver(browser: str):
     options.add_argument("--disable-features=Translate,InfiniteSessionRestore")
     viewport_width = int(os.environ.get("BIAT_VIEWPORT_WIDTH", "1920"))
     viewport_height = int(os.environ.get("BIAT_VIEWPORT_HEIGHT", "1080"))
-    options.set_capability("enableVNC", True)
+    options.set_capability("selenoid:options", {"enableVNC": True})
     options.add_argument("--window-position=0,0")
     options.add_argument("--force-device-scale-factor=1")
     options.add_argument(f"--window-size={viewport_width},{viewport_height}")

@@ -181,7 +181,10 @@ export default function ProjectAutomationWorkspace({
     setIsMutating(true);
     setError(null);
     try {
-      const created = await createExecution({ test_case: testCaseId });
+      const created = await createExecution({
+        test_case: testCaseId,
+        stream_enabled: true,
+      });
       setExecutions((current) => [created, ...current]);
       setSelectedExecutionId(created.id);
       setExecution(created);
@@ -205,10 +208,14 @@ export default function ProjectAutomationWorkspace({
       ...execution,
       has_browser_session:
         execution.has_browser_session || selectedFromList.has_browser_session,
+      stream_enabled: execution.stream_enabled || selectedFromList.stream_enabled,
     };
   }, [execution, selectedExecutionId, selectedFromList]);
   const isExecutionLive =
     visibleExecution?.status === "running" || visibleExecution?.status === "paused";
+  const canStreamBrowser =
+    Boolean(visibleExecution?.stream_enabled) &&
+    Boolean(visibleExecution?.has_browser_session);
 
   return (
     <div className="flex h-full overflow-hidden bg-white">
@@ -397,9 +404,9 @@ export default function ProjectAutomationWorkspace({
                   <NoVncViewer
                     key={visibleExecution.id}
                     executionId={visibleExecution.id}
-                    enabled={visibleExecution.has_browser_session}
+                    enabled={canStreamBrowser}
                   />
-                ) : visibleExecution.has_browser_session ? (
+                ) : canStreamBrowser ? (
                   <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-slate-950 text-slate-500">
                     <p className="text-sm">Browser session ended</p>
                     <p className="text-xs text-slate-600">
@@ -515,17 +522,26 @@ export default function ProjectAutomationWorkspace({
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         {artifacts.map((artifact, index) => (
-                          <div
+                          <a
                             key={artifact.id ?? `${artifact.artifact_type}-${index}`}
-                            className="rounded-md border border-slate-200 px-3 py-1.5 text-xs"
+                            href={artifact.download_url ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-disabled={!artifact.download_url}
+                            className={[
+                              "rounded-md border border-slate-200 px-3 py-1.5 text-xs transition",
+                              artifact.download_url
+                                ? "bg-white hover:border-slate-400 hover:text-slate-950"
+                                : "pointer-events-none bg-slate-50 text-slate-400",
+                            ].join(" ")}
                           >
                             <span className="font-medium text-slate-700">
                               {formatLabel(artifact.artifact_type)}
                             </span>
                             <span className="ml-2 text-slate-400">
-                              {artifact.storage_path ?? artifact.path ?? ""}
+                              {artifact.storage_key ?? artifact.storage_path ?? artifact.path ?? ""}
                             </span>
-                          </div>
+                          </a>
                         ))}
                       </div>
                     )}

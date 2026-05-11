@@ -110,6 +110,9 @@ export interface ExecutionArtifact {
   artifact_type: string;
   path?: string;
   storage_path?: string;
+  storage_backend?: string;
+  storage_key?: string;
+  download_url?: string | null;
   metadata?: Record<string, unknown>;
   metadata_json?: Record<string, unknown>;
   created_at?: string;
@@ -156,6 +159,8 @@ export interface TestExecution {
   ended_at: string | null;
   duration_ms: number | null;
   celery_task_id: string | null;
+  stream_enabled: boolean;
+  debug_rerun: boolean;
   pause_requested: boolean;
   has_browser_session: boolean;
   result: TestResult | null;
@@ -168,6 +173,7 @@ export interface CreateExecutionPayload {
   trigger_type?: ExecutionTriggerType;
   browser?: ExecutionBrowser;
   platform?: ExecutionPlatform;
+  stream_enabled?: boolean;
 }
 
 export interface StartManualBrowserPayload {

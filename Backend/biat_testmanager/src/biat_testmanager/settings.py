@@ -360,4 +360,9 @@ AUTOMATION_JAVA_RUNNER_IMAGE = config(
     "AUTOMATION_JAVA_RUNNER_IMAGE",
     default="biat-runner-java:latest",
 )
+AUTOMATION_STREAM_HOLD_SECONDS = config(
+    "AUTOMATION_STREAM_HOLD_SECONDS",
+    default=20,
+    cast=int,
+)
 

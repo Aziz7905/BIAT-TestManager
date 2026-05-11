@@ -125,13 +125,16 @@ export default function AutomationLivePage() {
       ...loadedExecution,
       ...execution,
       has_browser_session: execution.has_browser_session || loadedExecution.has_browser_session,
+      stream_enabled: execution.stream_enabled || loadedExecution.stream_enabled,
     };
   }, [execution, executionId, loadedExecution]);
 
   const isLive =
     visibleExecution?.status === "running" || visibleExecution?.status === "paused";
   const showBrowser =
-    Boolean(visibleExecution?.has_browser_session) && Boolean(isLive);
+    Boolean(visibleExecution?.stream_enabled) &&
+    Boolean(visibleExecution?.has_browser_session) &&
+    Boolean(isLive);
 
   const runControl = useCallback(
     async (action: () => Promise<TestExecution>) => {
@@ -264,7 +267,7 @@ export default function AutomationLivePage() {
         <section className="min-w-0 flex-1 overflow-hidden bg-slate-950">
           {showBrowser ? (
             <NoVncViewer executionId={visibleExecution.id} enabled />
-          ) : visibleExecution.has_browser_session ? (
+          ) : visibleExecution.has_browser_session && visibleExecution.stream_enabled ? (
             <BrowserEndedView />
           ) : (
             <NoVncViewer executionId={visibleExecution.id} enabled={false} />

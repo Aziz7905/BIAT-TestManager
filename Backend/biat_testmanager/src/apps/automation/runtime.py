@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import atexit
 import json
 import os
 import time
@@ -95,7 +96,8 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
         options.add_argument(f"--user-data-dir=/tmp/biat-runtime-{uuid.uuid4().hex}")
         options.add_argument("--window-position=0,0")
         options.add_argument("--force-device-scale-factor=1")
-        options.set_capability("enableVNC", True)
+        if os.environ.get("BIAT_ENABLE_VNC", "0") == "1":
+            options.set_capability("selenoid:options", {"enableVNC": True})
         if headless:
             options.add_argument("--headless=new")
         else:
@@ -107,6 +109,7 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
         options.add_argument(f"--window-size={viewport_w},{viewport_h}")
 
     driver = _webdriver.Remote(command_executor=webdriver_url, options=options)
+    _defer_quit_for_live_stream(driver)
 
     if not headless:
         try:
@@ -130,6 +133,38 @@ def create_driver(*, browser: str = "chrome", headless: bool | None = None):
 
     report_session_started(session_id=driver.session_id)
     return driver
+
+
+def _defer_quit_for_live_stream(driver) -> None:
+    hold_seconds = _stream_hold_seconds()
+    if hold_seconds <= 0:
+        return
+
+    original_quit = driver.quit
+    state = {"closed": False}
+
+    def quit_later():
+        # Keep fast streamed runs visible long enough for noVNC to attach.
+        pass
+
+    def close_at_exit():
+        if state["closed"]:
+            return
+        try:
+            time.sleep(hold_seconds)
+            original_quit()
+        finally:
+            state["closed"] = True
+
+    driver.quit = quit_later
+    atexit.register(close_at_exit)
+
+
+def _stream_hold_seconds() -> int:
+    try:
+        return max(int(os.environ.get("BIAT_STREAM_HOLD_SECONDS", "0")), 0)
+    except ValueError:
+        return 0
 
 
 def _reset_browser_tabs(driver) -> None:

@@ -194,6 +194,7 @@ class TestExecutionListCreateView(generics.ListCreateAPIView):
             trigger_type=serializer.validated_data["trigger_type"],
             browser=serializer.validated_data["browser"],
             platform=serializer.validated_data["platform"],
+            stream_enabled=serializer.validated_data["stream_enabled"],
             script=serializer.validated_data.get("script"),
             environment=serializer.validated_data.get("environment"),
         )

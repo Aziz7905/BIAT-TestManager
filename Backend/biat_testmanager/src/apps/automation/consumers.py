@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer, AsyncWebsocketConsumer
 from django.contrib.auth import get_user_model
 from django.core import signing
+from django.conf import settings
 
 from apps.automation.services import (
     build_execution_snapshot,
@@ -200,11 +201,33 @@ class BrowserStreamConsumer(AsyncWebsocketConsumer):
 
 
 async def _connect_to_browser_stream(ws_lib, ws_url: str):
-    try:
-        return await ws_lib.connect(
-            ws_url,
-            subprotocols=["binary"],
-            open_timeout=5,
-        )
-    except Exception:
-        return await ws_lib.connect(ws_url, open_timeout=5)
+    origin = _browser_stream_origin()
+    last_error = None
+    # Selenoid can report the WebDriver session before the VNC server inside
+    # the browser container is ready. A short retry window avoids a false
+    # "disconnected" state in the UI.
+    for attempt in range(10):
+        if attempt == 0:
+            await asyncio.sleep(0.5)
+        try:
+            return await ws_lib.connect(
+                ws_url,
+                origin=origin,
+                open_timeout=5,
+            )
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(0.5)
+    raise last_error
+
+
+def _browser_stream_origin() -> str:
+    base_url = (
+        getattr(settings, "SELENOID_PUBLIC_URL", "")
+        or getattr(settings, "SELENOID_HUB_URL", "")
+        or "http://localhost:4444"
+    )
+    parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return "http://localhost:4444"
+    return f"{parsed.scheme}://{parsed.netloc}"

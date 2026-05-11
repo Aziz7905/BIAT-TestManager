@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import threading
@@ -202,7 +201,7 @@ def prepare_runner_workspace(execution) -> RunnerWorkspace:
             host_root=host_root,
             container_root=container_root,
             script_path=f"{container_root}/script.py",
-            command=["python", f"{container_root}/script.py"],
+            command=["python3", f"{container_root}/script.py"],
             image=getattr(settings, "AUTOMATION_PYTHON_RUNNER_IMAGE"),
         )
 
@@ -333,19 +332,21 @@ def build_execution_environment(
     *,
     artifact_dir: str = "/workspace/artifacts",
 ) -> dict[str, str]:
-    env = os.environ.copy()
+    env: dict[str, str] = {}
     env["BIAT_EXECUTION_ID"] = str(execution.id)
     env["BIAT_TEST_CASE_ID"] = str(execution.test_case_id)
     env["BIAT_ARTIFACT_DIR"] = artifact_dir
     env["BIAT_AUTOMATION_FRAMEWORK"] = execution.script.framework if execution.script_id else ""
     env["BIAT_AUTOMATION_BROWSER"] = execution.browser
     env["BIAT_AUTOMATION_PLATFORM"] = execution.platform
+    env["BIAT_ENABLE_VNC"] = "1" if execution.stream_enabled else "0"
+    env["BIAT_STREAM_HOLD_SECONDS"] = (
+        str(getattr(settings, "AUTOMATION_STREAM_HOLD_SECONDS", 20))
+        if execution.stream_enabled
+        else "0"
+    )
     env["PYTHONUNBUFFERED"] = "1"
-    python_path_segments = ["/workspace"]
-    existing_python_path = env.get("PYTHONPATH")
-    if existing_python_path:
-        python_path_segments.append(existing_python_path)
-    env["PYTHONPATH"] = os.pathsep.join(python_path_segments)
+    env["PYTHONPATH"] = "/workspace"
 
     if execution.environment_id:
         env["BIAT_EXECUTION_ENVIRONMENT_ID"] = str(execution.environment_id)
@@ -477,25 +478,32 @@ def _run_container_with_live_events(
     runtime_events_seen = False
     last_seq = 0
     client = docker.from_env()
-    container = client.containers.run(
-        workspace.image,
-        command=workspace.command,
-        detach=True,
-        environment=build_execution_environment(
-            execution,
-            artifact_dir=f"{workspace.container_root}/artifacts",
-        ),
-        volumes={
-            str(workspace.host_root): {
-                "bind": workspace.container_root,
-                "mode": "rw",
-            }
-        },
-        working_dir=workspace.container_root,
-        network=getattr(settings, "AUTOMATION_RUNNER_DOCKER_NETWORK", ""),
-        stdout=True,
-        stderr=True,
-    )
+    try:
+        container = client.containers.run(
+            workspace.image,
+            command=workspace.command,
+            detach=True,
+            environment=build_execution_environment(
+                execution,
+                artifact_dir=f"{workspace.container_root}/artifacts",
+            ),
+            volumes={
+                str(workspace.host_root): {
+                    "bind": workspace.container_root,
+                    "mode": "rw",
+                }
+            },
+            working_dir=workspace.container_root,
+            network=getattr(settings, "AUTOMATION_RUNNER_DOCKER_NETWORK", ""),
+            stdout=True,
+            stderr=True,
+        )
+    except Exception as exc:
+        if _looks_like_missing_runner_image(exc):
+            raise UnsupportedExecutionConfigurationError(
+                _missing_runner_image_message(workspace.image, execution.script.language)
+            ) from exc
+        raise
     line_queue: Queue[tuple[str, str | None]] = Queue()
     stop_requested = False
 
@@ -882,3 +890,24 @@ def _coerce_positive_int(value, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _looks_like_missing_runner_image(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "pull access denied for biat-runner" in message
+        or "repository does not exist" in message
+        or "no such image" in message
+    )
+
+
+def _missing_runner_image_message(image: str, language: str) -> str:
+    build_hint = (
+        "docker build -t biat-runner-python:latest -f infra/runners/python/Dockerfile ."
+        if language == AutomationLanguage.PYTHON
+        else "docker build -t biat-runner-java:latest -f infra/runners/java/Dockerfile ."
+    )
+    return (
+        f"Runner image '{image}' is not available locally. Build it first with: "
+        f"{build_hint}"
+    )

@@ -7,6 +7,7 @@ from apps.automation.services.browser_sessions import (
     get_webdriver_url,
     get_browser_ws_url_by_ids,
 )
+from apps.automation.consumers import _browser_stream_origin
 
 
 class BrowserSessionBackendTests(SimpleTestCase):
@@ -43,3 +44,7 @@ class BrowserSessionBackendTests(SimpleTestCase):
             ),
             "ws://localhost:4444/vnc/abc123",
         )
+
+    @override_settings(SELENOID_PUBLIC_URL="http://localhost:4444/wd/hub")
+    def test_browser_stream_origin_strips_webdriver_path(self):
+        self.assertEqual(_browser_stream_origin(), "http://localhost:4444")

@@ -103,6 +103,7 @@ export default function CaseWorkspacePanel({
       const execution = await createExecution({
         test_case: testCase.id,
         script: activeScript?.id ?? null,
+        stream_enabled: true,
       });
       setExecutions((prev) => [execution, ...prev]);
       onViewExecution?.(execution.id);
