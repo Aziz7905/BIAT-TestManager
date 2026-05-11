@@ -14,15 +14,19 @@ import {
   addTeamMember,
   createTeam,
   deleteTeam,
+  getAIProviders,
   getTeamMembersPage,
   getTeamsPage,
   removeTeamMember,
+  testTeamAIConnection,
   updateTeam,
   updateTeamMember,
 } from "../../api/accounts/teams";
 import { getAllUsers } from "../../api/accounts/users";
 import type {
   AdminUser,
+  AIDeploymentMode,
+  AIProvider,
   CreateTeamPayload,
   PaginatedResponse,
   Team,
@@ -37,6 +41,20 @@ const TEAM_ROLE_OPTIONS = [
   { value: "viewer", label: "Viewer" },
   { value: "manager", label: "Manager" },
 ];
+
+const DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434";
+
+const AI_PROVIDER_MODEL_HINTS: Record<string, string> = {
+  groq: "llama-3.3-70b-versatile",
+  openai: "gpt-4o-mini",
+  azure_openai: "Azure deployment name",
+  anthropic: "claude-3-5-sonnet-latest",
+  ollama: "gemma3:12b",
+};
+
+function defaultDeploymentMode(provider?: AIProvider | null): AIDeploymentMode {
+  return provider?.provider_type === "ollama" ? "local" : "cloud";
+}
 
 function normalizeTeamIntegrations(integrations?: TeamIntegrations): TeamIntegrations {
   return {
@@ -61,6 +79,9 @@ function extractError(err: unknown): string {
     if (data) {
       if (typeof data.detail === "string") {
         return data.detail;
+      }
+      if (typeof data.error === "string") {
+        return data.error;
       }
       const firstKey = Object.keys(data)[0];
       const firstValue = data[firstKey];
@@ -144,12 +165,15 @@ export default function TeamsPage() {
   const [membersPage, setMembersPage] = useState<PaginatedResponse<TeamMember> | null>(null);
   const [membersPageNumber, setMembersPageNumber] = useState(1);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
 
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingAIProviders, setLoadingAIProviders] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [error, setError] = useState("");
   const [settingsError, setSettingsError] = useState("");
+  const [aiTestMessage, setAiTestMessage] = useState("");
   const [memberError, setMemberError] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -163,6 +187,7 @@ export default function TeamsPage() {
   const [editForm, setEditForm] = useState<UpdateTeamPayload>({});
   const [editAiKey, setEditAiKey] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
+  const [testingAIConnection, setTestingAIConnection] = useState(false);
 
   const [addMemberUserId, setAddMemberUserId] = useState<number | null>(null);
   const [addMemberRole, setAddMemberRole] = useState<TeamMembershipRole>("tester");
@@ -192,6 +217,14 @@ export default function TeamsPage() {
   useEffect(() => {
     void loadTeams(teamsPageNumber);
   }, [teamsPageNumber]);
+
+  useEffect(() => {
+    setLoadingAIProviders(true);
+    getAIProviders()
+      .then(setAiProviders)
+      .catch(() => setError("Failed to load AI providers."))
+      .finally(() => setLoadingAIProviders(false));
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -226,12 +259,17 @@ export default function TeamsPage() {
     setEditForm({
       name: selectedTeam.name,
       manager: selectedTeam.manager ?? undefined,
+      ai_provider: selectedTeam.ai_provider ?? undefined,
       ai_model: selectedTeam.ai_model,
+      ai_endpoint_url: selectedTeam.ai_endpoint_url,
+      ai_api_version: selectedTeam.ai_api_version,
+      ai_deployment_mode: selectedTeam.ai_deployment_mode,
       monthly_token_budget: selectedTeam.monthly_token_budget,
       integrations: normalizeTeamIntegrations(selectedTeam.integrations),
     });
     setEditAiKey("");
     setSettingsError("");
+    setAiTestMessage("");
     setMemberError("");
     setAddMemberUserId(null);
   }, [selectedTeam]);
@@ -241,9 +279,77 @@ export default function TeamsPage() {
     return users.filter((user) => !currentMemberIds.has(user.id));
   }, [membersPage?.results, users]);
 
+  const selectedAIProvider = useMemo(() => {
+    const providerId = editForm.ai_provider;
+    return aiProviders.find((provider) => String(provider.id) === String(providerId)) ?? null;
+  }, [aiProviders, editForm.ai_provider]);
+
   function selectTeam(team: Team) {
     setSelectedTeam(team);
     setMembersPageNumber(1);
+  }
+
+  function handleAIProviderChange(providerId: string) {
+    const provider = aiProviders.find((currentProvider) => String(currentProvider.id) === providerId);
+    setAiTestMessage("");
+    setEditForm((currentForm) => {
+      const providerType = provider?.provider_type;
+      return {
+        ...currentForm,
+        ai_provider: provider ? provider.id : null,
+        ai_deployment_mode: defaultDeploymentMode(provider),
+        ai_model:
+          currentForm.ai_model && currentForm.ai_model !== "gpt-4o-mini"
+            ? currentForm.ai_model
+            : AI_PROVIDER_MODEL_HINTS[providerType ?? ""] ?? currentForm.ai_model,
+        ai_endpoint_url:
+          providerType === "ollama"
+            ? currentForm.ai_endpoint_url || provider?.base_url || DEFAULT_OLLAMA_ENDPOINT
+            : providerType === "azure_openai"
+              ? currentForm.ai_endpoint_url ?? ""
+              : "",
+        ai_api_version: providerType === "azure_openai" ? currentForm.ai_api_version ?? "" : "",
+      };
+    });
+  }
+
+  async function handleTestAIConnection() {
+    if (!selectedTeam) {
+      return;
+    }
+
+    setTestingAIConnection(true);
+    setAiTestMessage("");
+    setSettingsError("");
+    try {
+      const payload: UpdateTeamPayload = { ...editForm };
+      if (editAiKey) {
+        payload.ai_api_key = editAiKey;
+      }
+      const updatedTeam = await updateTeam(selectedTeam.id, payload);
+      setSelectedTeam(updatedTeam);
+      setEditAiKey("");
+      setTeamsPage((currentPage) =>
+        currentPage
+          ? {
+              ...currentPage,
+              results: currentPage.results.map((team) =>
+                team.id === updatedTeam.id ? updatedTeam : team
+              ),
+            }
+          : currentPage
+      );
+      const result = await testTeamAIConnection(selectedTeam.id);
+      setAiTestMessage(
+        result.ok
+          ? `Connected to ${result.provider ?? "provider"} using ${result.model ?? "model"} in ${result.duration_ms ?? 0} ms.`
+          : result.error ?? "AI connection failed."
+      );
+    } catch (err) {
+      setSettingsError(extractError(err));
+    } finally {
+      setTestingAIConnection(false);
+    }
   }
 
   function updateIntegrationSettings(nextIntegrations: TeamIntegrations) {
@@ -288,6 +394,7 @@ export default function TeamsPage() {
 
     setSavingSettings(true);
     setSettingsError("");
+    setAiTestMessage("");
     try {
       const payload: UpdateTeamPayload = { ...editForm };
       if (editAiKey) {
@@ -403,6 +510,13 @@ export default function TeamsPage() {
       setError("Failed to remove member.");
     }
   }
+
+  const selectedProviderType = selectedAIProvider?.provider_type;
+  const showEndpointField =
+    selectedProviderType === "ollama" || selectedProviderType === "azure_openai";
+  const showApiVersionField = selectedProviderType === "azure_openai";
+  const showApiKeyField = Boolean(selectedProviderType && selectedProviderType !== "ollama");
+  const modelLabel = selectedProviderType === "azure_openai" ? "Deployment name" : "Model";
 
   return (
     <AppLayout>
@@ -527,10 +641,51 @@ export default function TeamsPage() {
 
                   <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                     <h3 className="text-base font-semibold text-slate-900">AI Settings</h3>
+
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label htmlFor="team-ai-provider" className="mb-1.5 block text-sm font-medium text-slate-700">
+                          Provider
+                        </label>
+                        <select
+                          id="team-ai-provider"
+                          value={editForm.ai_provider ? String(editForm.ai_provider) : ""}
+                          onChange={(event) => handleAIProviderChange(event.target.value)}
+                          disabled={loadingAIProviders}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-transparent focus:ring-2 focus:ring-blue-600 disabled:bg-slate-50 disabled:text-slate-400"
+                        >
+                          <option value="">Select provider</option>
+                          {aiProviders.map((provider) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label htmlFor="team-ai-mode" className="mb-1.5 block text-sm font-medium text-slate-700">
+                          Mode
+                        </label>
+                        <select
+                          id="team-ai-mode"
+                          value={editForm.ai_deployment_mode ?? "cloud"}
+                          onChange={(event) =>
+                            setEditForm((currentForm) => ({
+                              ...currentForm,
+                              ai_deployment_mode: event.target.value as AIDeploymentMode,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-transparent focus:ring-2 focus:ring-blue-600"
+                        >
+                          <option value="cloud">Cloud</option>
+                          <option value="local">Local</option>
+                        </select>
+                      </div>
+
                       <Input
                         id="team-ai-model"
-                        label="Model"
+                        label={modelLabel}
                         value={editForm.ai_model ?? ""}
                         onChange={(event) =>
                           setEditForm((currentForm) => ({
@@ -538,7 +693,9 @@ export default function TeamsPage() {
                             ai_model: event.target.value,
                           }))
                         }
+                        placeholder={AI_PROVIDER_MODEL_HINTS[selectedProviderType ?? ""] ?? "Model name"}
                       />
+
                       <Input
                         id="team-monthly-budget"
                         label="Monthly token budget"
@@ -551,17 +708,75 @@ export default function TeamsPage() {
                           }))
                         }
                       />
+
+                      {showEndpointField && (
+                        <Input
+                          id="team-ai-endpoint"
+                          label={selectedProviderType === "ollama" ? "Ollama endpoint" : "Azure endpoint"}
+                          value={editForm.ai_endpoint_url ?? ""}
+                          onChange={(event) =>
+                            setEditForm((currentForm) => ({
+                              ...currentForm,
+                              ai_endpoint_url: event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            selectedProviderType === "ollama"
+                              ? DEFAULT_OLLAMA_ENDPOINT
+                              : "https://<resource>.openai.azure.com"
+                          }
+                        />
+                      )}
+
+                      {showApiVersionField && (
+                        <Input
+                          id="team-ai-api-version"
+                          label="Azure API version"
+                          value={editForm.ai_api_version ?? ""}
+                          onChange={(event) =>
+                            setEditForm((currentForm) => ({
+                              ...currentForm,
+                              ai_api_version: event.target.value,
+                            }))
+                          }
+                          placeholder="2024-10-21"
+                        />
+                      )}
                     </div>
 
-                    <div className="mt-4">
-                      <Input
-                        id="team-ai-key"
-                        label={`API key${selectedTeam.has_ai_api_key ? " (set)" : ""}`}
-                        type="password"
-                        value={editAiKey}
-                        onChange={(event) => setEditAiKey(event.target.value)}
-                        placeholder={selectedTeam.has_ai_api_key ? "Leave blank to keep current key" : "Enter key"}
-                      />
+                    {showApiKeyField && (
+                      <div className="mt-4">
+                        <Input
+                          id="team-ai-key"
+                          label={`API key${selectedTeam.has_ai_api_key ? " (set)" : ""}`}
+                          type="password"
+                          value={editAiKey}
+                          onChange={(event) => setEditAiKey(event.target.value)}
+                          placeholder={selectedTeam.has_ai_api_key ? "Leave blank to keep current key" : "Enter key"}
+                        />
+                      </div>
+                    )}
+
+                    {selectedAIProvider?.base_url && !showEndpointField && (
+                      <p className="mt-3 text-xs text-slate-500">
+                        Base URL: {selectedAIProvider.base_url}
+                      </p>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        isLoading={testingAIConnection}
+                        loadingText="Testing..."
+                        onClick={handleTestAIConnection}
+                        disabled={!editForm.ai_provider || savingSettings}
+                      >
+                        Save & test connection
+                      </Button>
+                      {aiTestMessage && (
+                        <span className="text-xs font-medium text-emerald-700">{aiTestMessage}</span>
+                      )}
                     </div>
 
                   </section>

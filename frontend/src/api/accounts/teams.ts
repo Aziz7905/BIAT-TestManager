@@ -1,8 +1,10 @@
 import apiClient from "../client";
 import type {
   AddMemberPayload,
+  AIProvider,
   PaginatedResponse,
   Team,
+  TeamAITestConnectionResult,
   TeamMember,
   CreateTeamPayload,
   UpdateMemberPayload,
@@ -33,6 +35,11 @@ export async function getTeams(): Promise<Team[]> {
   return (await getTeamsPage()).results;
 }
 
+export async function getAIProviders(): Promise<AIProvider[]> {
+  const { data } = await apiClient.get<AIProvider[]>("/ai-providers/");
+  return data;
+}
+
 export async function getAllTeams(): Promise<Team[]> {
   const teams: Team[] = [];
   let page = 1;
@@ -56,6 +63,13 @@ export async function createTeam(payload: CreateTeamPayload): Promise<Team> {
 
 export async function updateTeam(id: string, payload: UpdateTeamPayload): Promise<Team> {
   const { data } = await apiClient.patch<Team>(`/teams/${id}/`, payload);
+  return data;
+}
+
+export async function testTeamAIConnection(id: string): Promise<TeamAITestConnectionResult> {
+  const { data } = await apiClient.post<TeamAITestConnectionResult>(
+    `/teams/${id}/ai/test-connection/`
+  );
   return data;
 }
 

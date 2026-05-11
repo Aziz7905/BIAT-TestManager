@@ -1,6 +1,8 @@
 export type OrganizationRole = "platform_owner" | "org_admin" | "member";
 export type TeamMembershipRole = "manager" | "tester" | "viewer";
 export type NotificationProvider = "none" | "slack" | "teams";
+export type AIProviderType = "groq" | "openai" | "azure_openai" | "anthropic" | "ollama";
+export type AIDeploymentMode = "cloud" | "local";
 
 export interface PaginatedResponse<T> {
   count: number;
@@ -81,6 +83,14 @@ export interface AdminUser {
   date_joined: string;
 }
 
+export interface AIProvider {
+  id: number;
+  name: string;
+  provider_type: AIProviderType;
+  base_url: string | null;
+  is_active: boolean;
+}
+
 export interface CreateUserPayload {
   first_name: string;
   last_name: string;
@@ -112,8 +122,13 @@ export interface Team {
   member_count: number;
   ai_provider: string | null;
   ai_provider_name: string | null;
+  ai_provider_type: AIProviderType | null;
+  ai_provider_base_url: string | null;
   has_ai_api_key: boolean;
   ai_model: string;
+  ai_endpoint_url: string;
+  ai_api_version: string;
+  ai_deployment_mode: AIDeploymentMode;
   monthly_token_budget: number;
   integrations: TeamIntegrations;
   created_at: string;
@@ -137,7 +152,11 @@ export interface CreateTeamPayload {
   name: string;
   manager: number;
   ai_api_key?: string;
+  ai_provider?: string | number | null;
   ai_model?: string;
+  ai_endpoint_url?: string;
+  ai_api_version?: string;
+  ai_deployment_mode?: AIDeploymentMode;
   monthly_token_budget?: number;
   integrations?: TeamIntegrations;
 }
@@ -146,9 +165,23 @@ export interface UpdateTeamPayload {
   name?: string;
   manager?: number;
   ai_api_key?: string;
+  ai_provider?: string | number | null;
   ai_model?: string;
+  ai_endpoint_url?: string;
+  ai_api_version?: string;
+  ai_deployment_mode?: AIDeploymentMode;
   monthly_token_budget?: number;
   integrations?: TeamIntegrations;
+}
+
+export interface TeamAITestConnectionResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  duration_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  error?: string;
 }
 
 export interface TeamMember {

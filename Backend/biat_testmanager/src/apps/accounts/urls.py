@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.accounts.views import (
     AdminUserDetailView,
     AdminUserListCreateView,
+    AIProviderListView,
     ChangeMyPasswordView,
     CurrentUserView,
     LoginView,
@@ -12,6 +13,7 @@ from apps.accounts.views import (
     OrganizationDetailView,
     OrganizationListCreateView,
     TeamDetailView,
+    TeamAITestConnectionView,
     TeamListCreateView,
     TeamMemberDetailView,
     TeamMemberListCreateView,
@@ -26,8 +28,14 @@ urlpatterns = [
     path("admin/users/<int:pk>/", AdminUserDetailView.as_view(), name="admin-user-detail"),
     path("organizations/", OrganizationListCreateView.as_view(), name="organization-list-create"),
     path("organizations/<uuid:pk>/", OrganizationDetailView.as_view(), name="organization-detail"),
+    path("ai-providers/", AIProviderListView.as_view(), name="ai-provider-list"),
     path("teams/", TeamListCreateView.as_view(), name="team-list-create"),
     path("teams/<uuid:pk>/", TeamDetailView.as_view(), name="team-detail"),
+    path(
+        "teams/<uuid:pk>/ai/test-connection/",
+        TeamAITestConnectionView.as_view(),
+        name="team-ai-test-connection",
+    ),
     path("teams/<uuid:team_pk>/members/", TeamMemberListCreateView.as_view(), name="team-member-list-create"),
     path(
         "teams/<uuid:team_pk>/members/<uuid:membership_pk>/",

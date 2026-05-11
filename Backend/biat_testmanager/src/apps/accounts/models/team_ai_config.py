@@ -23,6 +23,8 @@ class TeamAIConfig(models.Model):
         related_name="team_ai_configs",
     )
     api_key = EncryptedCharField(max_length=512, null=True, blank=True)
+    endpoint_url = models.URLField(max_length=500, blank=True, default="")
+    api_version = models.CharField(max_length=50, blank=True, default="")
     monthly_budget = models.IntegerField(default=1000000)
     is_active = models.BooleanField(default=True)
     default_model_profile = models.ForeignKey(

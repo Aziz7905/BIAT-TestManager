@@ -2,6 +2,7 @@ from .auth import ChangeMyPasswordSerializer, LoginSerializer
 from .organizations import OrganizationSerializer
 from .profiles import MyProfileSerializer, UpdateMyProfileSerializer, UserProfileSerializer
 from .teams import (
+    AIProviderSerializer,
     TeamMemberSerializer,
     TeamMembershipCreateSerializer,
     TeamMembershipUpdateSerializer,
@@ -18,6 +19,7 @@ __all__ = [
     "AdminCreateUserSerializer",
     "AdminUpdateUserSerializer",
     "AdminUserSerializer",
+    "AIProviderSerializer",
     "ChangeMyPasswordSerializer",
     "CurrentUserSerializer",
     "LoginSerializer",

@@ -15,8 +15,8 @@ from apps.accounts.services.team_ai import get_effective_ai_provider
 
 @admin.register(AIProvider)
 class AIProviderAdmin(admin.ModelAdmin):
-    list_display = ("name", "provider_type", "is_active")
-    search_fields = ("name", "provider_type")
+    list_display = ("name", "provider_type", "base_url", "is_active")
+    search_fields = ("name", "provider_type", "base_url")
     list_filter = ("is_active", "provider_type")
 
 
@@ -134,6 +134,8 @@ class TeamAIConfigAdmin(admin.ModelAdmin):
         "team",
         "provider",
         "default_model_profile",
+        "endpoint_url",
+        "api_version",
         "monthly_budget",
         "is_active",
         "updated_at",

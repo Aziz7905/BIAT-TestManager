@@ -6,11 +6,16 @@ from apps.accounts.models import (
     AIProvider,
     Organization,
     OrganizationRole,
+    Team,
     TeamAIConfig,
     UserProfile,
 )
 from apps.accounts.serializers.profiles import MyProfileSerializer, UpdateMyProfileSerializer
 from apps.accounts.serializers.teams import TeamSerializer
+from apps.ai.providers.base import LLMProviderNotConfiguredError
+from apps.ai.providers.factory import get_llm_provider
+from apps.ai.providers.ollama import OllamaProvider
+from apps.ai.providers.openai_compatible import OpenAICompatibleProvider
 from apps.integrations.models import IntegrationConfig, UserIntegrationCredential
 
 User = get_user_model()
@@ -69,6 +74,8 @@ class Batch2ConfigTests(TestCase):
                 "ai_provider": self.provider.id,
                 "ai_api_key": "configured-secret",
                 "ai_model": "llama-3.3-70b-versatile",
+                "ai_endpoint_url": "https://api.groq.com/openai/v1",
+                "ai_deployment_mode": "cloud",
                 "monthly_token_budget": 500000,
                 "integrations": {
                     "jira": {
@@ -92,13 +99,18 @@ class Batch2ConfigTests(TestCase):
         ai_config = TeamAIConfig.objects.get(team=team)
         self.assertEqual(ai_config.provider, self.provider)
         self.assertEqual(ai_config.api_key, "configured-secret")
+        self.assertEqual(ai_config.endpoint_url, "https://api.groq.com/openai/v1")
         self.assertEqual(ai_config.monthly_budget, 500000)
         self.assertEqual(
             ai_config.default_model_profile.model_name,
             "llama-3.3-70b-versatile",
         )
+        self.assertEqual(ai_config.default_model_profile.deployment_mode, "cloud")
         self.assertEqual(payload["ai_provider"], str(self.provider.id))
+        self.assertEqual(payload["ai_provider_type"], "groq")
         self.assertEqual(payload["ai_model"], "llama-3.3-70b-versatile")
+        self.assertEqual(payload["ai_endpoint_url"], "https://api.groq.com/openai/v1")
+        self.assertEqual(payload["ai_deployment_mode"], "cloud")
         self.assertEqual(payload["integrations"]["jira"]["project_key"], "QABANK")
         self.assertTrue(payload["has_ai_api_key"])
 
@@ -123,6 +135,90 @@ class Batch2ConfigTests(TestCase):
 
         payload = TeamSerializer(team, context={"request": request}).data
         self.assertNotIn("tokens_used_this_month", payload)
+
+    def test_llm_factory_returns_openai_compatible_provider_for_groq(self):
+        team = Team.objects.create(
+            organization=self.organization,
+            name="AI QA",
+            manager=self.team_manager,
+        )
+        serializer = TeamSerializer(
+            team,
+            data={
+                "ai_provider": self.provider.id,
+                "ai_api_key": "groq-secret",
+                "ai_model": "llama-3.3-70b-versatile",
+                "ai_deployment_mode": "cloud",
+            },
+            partial=True,
+            context={"request": self.factory.patch("/api/accounts/teams/")},
+        )
+        serializer.context["request"].user = self.org_admin
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        team = serializer.save()
+
+        provider = get_llm_provider(team)
+
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+        self.assertEqual(provider.name, "groq")
+        self.assertEqual(provider.model_name, "llama-3.3-70b-versatile")
+
+    def test_llm_factory_allows_ollama_without_api_key(self):
+        ollama = AIProvider.objects.create(
+            name="Ollama",
+            provider_type="ollama",
+            base_url="http://localhost:11434",
+            is_active=True,
+        )
+        team = Team.objects.create(
+            organization=self.organization,
+            name="Local AI QA",
+            manager=self.team_manager,
+        )
+        request = self.factory.patch("/api/accounts/teams/")
+        request.user = self.org_admin
+        serializer = TeamSerializer(
+            team,
+            data={
+                "ai_provider": ollama.id,
+                "ai_model": "gemma3:12b",
+                "ai_endpoint_url": "http://localhost:11434",
+                "ai_deployment_mode": "local",
+            },
+            partial=True,
+            context={"request": request},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        team = serializer.save()
+
+        provider = get_llm_provider(team)
+
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.model_name, "gemma3:12b")
+
+    def test_llm_factory_rejects_cloud_provider_without_api_key(self):
+        team = Team.objects.create(
+            organization=self.organization,
+            name="Missing Key QA",
+            manager=self.team_manager,
+        )
+        request = self.factory.patch("/api/accounts/teams/")
+        request.user = self.org_admin
+        serializer = TeamSerializer(
+            team,
+            data={
+                "ai_provider": self.provider.id,
+                "ai_model": "llama-3.3-70b-versatile",
+                "ai_deployment_mode": "cloud",
+            },
+            partial=True,
+            context={"request": request},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        team = serializer.save()
+
+        with self.assertRaises(LLMProviderNotConfiguredError):
+            get_llm_provider(team)
 
     def test_profile_updates_store_personal_tokens_in_user_credentials(self):
         serializer = UpdateMyProfileSerializer(

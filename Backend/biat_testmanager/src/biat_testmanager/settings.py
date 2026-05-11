@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     
 
     'apps.accounts.apps.AccountsConfig',
+    'apps.ai.apps.AIConfig',
     'apps.projects.apps.ProjectsConfig',
     'apps.specs.apps.SpecsConfig',
     'apps.testing.apps.TestingConfig',

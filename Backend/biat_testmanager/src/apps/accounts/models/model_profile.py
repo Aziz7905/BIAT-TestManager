@@ -17,7 +17,6 @@ class ModelProfilePurpose(models.TextChoices):
 class ModelDeploymentMode(models.TextChoices):
     CLOUD = "cloud", "Cloud"
     LOCAL = "local", "Local"
-    HYBRID = "hybrid", "Hybrid"
 
 
 class ModelProfile(models.Model):

@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import (
     AIProvider,
+    ModelDeploymentMode,
     OrganizationRole,
     Team,
     TeamMembership,
@@ -19,7 +20,10 @@ from apps.accounts.services.memberships import (
 from apps.accounts.services.roles import has_team_manager_role
 from apps.accounts.services.team_ai import (
     UNSET,
+    get_effective_ai_api_version,
     get_effective_ai_api_key,
+    get_effective_ai_deployment_mode,
+    get_effective_ai_endpoint_url,
     get_effective_ai_model,
     get_effective_ai_provider,
     get_effective_monthly_budget,
@@ -33,6 +37,12 @@ from apps.integrations.services import (
 )
 
 User = get_user_model()
+
+
+class AIProviderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AIProvider
+        fields = ["id", "name", "provider_type", "base_url", "is_active"]
 
 
 class TeamSerializer(serializers.ModelSerializer):
@@ -52,11 +62,13 @@ class TeamSerializer(serializers.ModelSerializer):
     # AI configuration is read/written through TeamAIConfig; these are
     # serializer-level fields, not Team model fields.
     ai_provider = serializers.PrimaryKeyRelatedField(
-        queryset=AIProvider.objects.all(),
+        queryset=AIProvider.objects.filter(is_active=True),
         required=False,
         allow_null=True,
     )
     ai_provider_name = serializers.SerializerMethodField()
+    ai_provider_type = serializers.SerializerMethodField()
+    ai_provider_base_url = serializers.SerializerMethodField()
     has_ai_api_key = serializers.SerializerMethodField()
     ai_api_key = serializers.CharField(
         required=False,
@@ -65,6 +77,12 @@ class TeamSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     ai_model = serializers.CharField(required=False, allow_blank=True)
+    ai_endpoint_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    ai_api_version = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    ai_deployment_mode = serializers.ChoiceField(
+        choices=ModelDeploymentMode.choices,
+        required=False,
+    )
     monthly_token_budget = serializers.IntegerField(required=False)
 
     # Integration configuration is read/written through IntegrationConfig.
@@ -83,9 +101,14 @@ class TeamSerializer(serializers.ModelSerializer):
             "member_count",
             "ai_provider",
             "ai_provider_name",
+            "ai_provider_type",
+            "ai_provider_base_url",
             "ai_api_key",
             "has_ai_api_key",
             "ai_model",
+            "ai_endpoint_url",
+            "ai_api_version",
+            "ai_deployment_mode",
             "monthly_token_budget",
             "integrations",
             "created_at",
@@ -95,6 +118,14 @@ class TeamSerializer(serializers.ModelSerializer):
     def get_ai_provider_name(self, obj):
         provider = get_effective_ai_provider(obj)
         return provider.name if provider else None
+
+    def get_ai_provider_type(self, obj):
+        provider = get_effective_ai_provider(obj)
+        return provider.provider_type if provider else None
+
+    def get_ai_provider_base_url(self, obj):
+        provider = get_effective_ai_provider(obj)
+        return provider.base_url if provider else None
 
     def get_manager_name(self, obj):
         if not obj.manager:
@@ -122,6 +153,9 @@ class TeamSerializer(serializers.ModelSerializer):
         provider = get_effective_ai_provider(instance)
         payload["ai_provider"] = str(provider.id) if provider else None
         payload["ai_model"] = get_effective_ai_model(instance)
+        payload["ai_endpoint_url"] = get_effective_ai_endpoint_url(instance)
+        payload["ai_api_version"] = get_effective_ai_api_version(instance)
+        payload["ai_deployment_mode"] = get_effective_ai_deployment_mode(instance)
         payload["monthly_token_budget"] = get_effective_monthly_budget(instance)
 
         payload["integrations"] = get_team_integration_values(instance)
@@ -173,6 +207,9 @@ class TeamSerializer(serializers.ModelSerializer):
                     "ai_provider",
                     "ai_api_key",
                     "ai_model",
+                    "ai_endpoint_url",
+                    "ai_api_version",
+                    "ai_deployment_mode",
                     "monthly_token_budget",
                     "integrations",
                 }
@@ -197,6 +234,9 @@ class TeamSerializer(serializers.ModelSerializer):
         ai_provider = validated_data.pop("ai_provider", None)
         ai_api_key = validated_data.pop("ai_api_key", None)
         ai_model = validated_data.pop("ai_model", None)
+        ai_endpoint_url = validated_data.pop("ai_endpoint_url", None)
+        ai_api_version = validated_data.pop("ai_api_version", None)
+        ai_deployment_mode = validated_data.pop("ai_deployment_mode", None)
         monthly_token_budget = validated_data.pop("monthly_token_budget", None)
         integrations = validated_data.pop("integrations", None)
 
@@ -212,7 +252,10 @@ class TeamSerializer(serializers.ModelSerializer):
             team=team,
             provider=ai_provider,
             api_key=ai_api_key,
+            endpoint_url=ai_endpoint_url,
+            api_version=ai_api_version,
             model_name=ai_model or "gpt-4o-mini",
+            deployment_mode=ai_deployment_mode or UNSET,
             monthly_budget=monthly_token_budget
             if isinstance(monthly_token_budget, int)
             else UNSET,
@@ -230,6 +273,9 @@ class TeamSerializer(serializers.ModelSerializer):
         ai_provider = validated_data.pop("ai_provider", serializers.empty)
         ai_api_key = validated_data.pop("ai_api_key", serializers.empty)
         ai_model = validated_data.pop("ai_model", serializers.empty)
+        ai_endpoint_url = validated_data.pop("ai_endpoint_url", serializers.empty)
+        ai_api_version = validated_data.pop("ai_api_version", serializers.empty)
+        ai_deployment_mode = validated_data.pop("ai_deployment_mode", serializers.empty)
         monthly_token_budget = validated_data.pop("monthly_token_budget", serializers.empty)
         integrations = validated_data.pop("integrations", serializers.empty)
 
@@ -239,6 +285,9 @@ class TeamSerializer(serializers.ModelSerializer):
                 ai_provider,
                 ai_api_key,
                 ai_model,
+                ai_endpoint_url,
+                ai_api_version,
+                ai_deployment_mode,
                 monthly_token_budget,
             ]
         )
@@ -260,7 +309,16 @@ class TeamSerializer(serializers.ModelSerializer):
                 team=instance,
                 provider=UNSET if ai_provider is serializers.empty else ai_provider,
                 api_key=UNSET if ai_api_key is serializers.empty else ai_api_key,
+                endpoint_url=(
+                    UNSET if ai_endpoint_url is serializers.empty else ai_endpoint_url
+                ),
+                api_version=UNSET if ai_api_version is serializers.empty else ai_api_version,
                 model_name=UNSET if ai_model is serializers.empty else ai_model,
+                deployment_mode=(
+                    UNSET
+                    if ai_deployment_mode is serializers.empty
+                    else ai_deployment_mode
+                ),
                 monthly_budget=(
                     monthly_token_budget
                     if monthly_token_budget is not serializers.empty
