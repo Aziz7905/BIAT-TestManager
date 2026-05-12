@@ -156,7 +156,7 @@ Every Layer 3 session has a live noVNC stream. The user **needs** to watch the a
 ### 4.5 Output: candidates, not commits
 Layer 3 never writes directly to canonical models. Everything it produces is a **candidate**:
 
-- AI-generated test case → `TestCase` with `design_status=draft`
+- Step 4A AI-generated test design → `AIGenerationSession.draft_payload` until human review, then canonical `TestCase` rows with `design_status=draft` or `approved`
 - AI-generated script → `AutomationScript` with `is_active=False`
 - AI-generated bug analysis → posted to a review queue, not auto-committed to Jira
 

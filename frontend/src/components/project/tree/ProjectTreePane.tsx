@@ -17,6 +17,7 @@ interface ProjectTreePaneProps {
   loadingScenarioIds: Record<string, boolean>;
   onLoadScenarioCases: (scenarioId: string) => Promise<void> | void;
   onOpenCaseEditor: (caseId: string) => void;
+  onGenerateWithAI?: (target: { suiteId?: string; sectionId?: string }) => void;
   onMutate: (request?: TreeMutationRequest) => Promise<void> | void;
 }
 
@@ -29,6 +30,7 @@ export default function ProjectTreePane({
   loadingScenarioIds,
   onLoadScenarioCases,
   onOpenCaseEditor,
+  onGenerateWithAI,
   onMutate,
 }: ProjectTreePaneProps) {
   const [search, setSearch] = useState("");
@@ -118,6 +120,7 @@ export default function ProjectTreePane({
               onLoadScenarioCases={onLoadScenarioCases}
               onMutate={onMutate}
               onOpenCaseEditor={onOpenCaseEditor}
+              onGenerateWithAI={onGenerateWithAI}
               onRequestCreate={setCreateTarget}
               onRequestDelete={setDeleteTarget}
             />

@@ -19,6 +19,7 @@ export default function SectionNode({
   onLoadScenarioCases,
   onMutate,
   onOpenCaseEditor,
+  onGenerateWithAI,
   onRequestCreate,
   onRequestDelete,
 }: SectionNodeProps) {
@@ -126,6 +127,15 @@ export default function SectionNode({
                         sectionName: section.name,
                       }),
                   },
+                  ...(onGenerateWithAI
+                    ? [
+                        {
+                          label: "Generate with AI",
+                          onSelect: () =>
+                            onGenerateWithAI({ suiteId, sectionId: section.id }),
+                        },
+                      ]
+                    : []),
                 ]}
               />
             </div>
@@ -167,6 +177,7 @@ export default function SectionNode({
               onLoadScenarioCases={onLoadScenarioCases}
               onMutate={onMutate}
               onOpenCaseEditor={onOpenCaseEditor}
+              onGenerateWithAI={onGenerateWithAI}
               onRequestCreate={onRequestCreate}
               onRequestDelete={onRequestDelete}
             />

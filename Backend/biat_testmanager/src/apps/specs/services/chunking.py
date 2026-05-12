@@ -57,7 +57,22 @@ def infer_chunk_type(content: str) -> str:
     ):
         return SpecChunkType.ACCEPTANCE_CRITERIA
 
-    if any(phrase in lowered for phrase in ["shall ", "must ", "should ", "requirement"]):
+    if any(
+        phrase in lowered
+        for phrase in [
+            "shall ",
+            "must ",
+            "should ",
+            "requirement",
+            "selectionner ",
+            "sélectionner ",
+            "obtenir ",
+            "si le champ ",
+            "a la generation",
+            "à la génération",
+            "il y a lieu",
+        ]
+    ):
         return SpecChunkType.FUNCTIONAL_REQUIREMENT
 
     return SpecChunkType.OTHER
@@ -68,7 +83,10 @@ def infer_component_tag(content: str) -> str:
     if not lines:
         return ""
 
-    first_line = lines[0].lstrip("#").strip().lower()
+    first_line = lines[0]
+    if first_line.lower().startswith("contexte:") and len(lines) > 1:
+        first_line = lines[1]
+    first_line = first_line.lstrip("#- ").strip().lower()
     normalized = re.sub(r"[^a-z0-9]+", "-", first_line).strip("-")
     return normalized[:100]
 
@@ -84,6 +102,10 @@ def split_into_sections(content: str) -> list[str]:
 def split_section_by_sentences(section: str, *, max_chars: int, overlap_chars: int) -> list[str]:
     if len(section) <= max_chars:
         return [section.strip()]
+
+    line_windows = _split_section_by_lines(section, max_chars=max_chars, overlap_chars=overlap_chars)
+    if len(line_windows) > 1:
+        return line_windows
 
     sentences = [
         segment.strip()
@@ -124,26 +146,66 @@ def split_section_by_sentences(section: str, *, max_chars: int, overlap_chars: i
     return [window for window in windows if window]
 
 
+def _split_section_by_lines(section: str, *, max_chars: int, overlap_chars: int) -> list[str]:
+    lines = [line.rstrip() for line in section.splitlines() if line.strip()]
+    if len(lines) <= 1:
+        return []
+
+    windows: list[str] = []
+    current_lines: list[str] = []
+    current_length = 0
+
+    for line in lines:
+        line_length = len(line) + (1 if current_lines else 0)
+        if current_lines and current_length + line_length > max_chars:
+            windows.append("\n".join(current_lines).strip())
+            overlap_lines: list[str] = []
+            overlap_length = 0
+            for existing in reversed(current_lines):
+                candidate_length = len(existing) + (1 if overlap_lines else 0)
+                if overlap_length + candidate_length > overlap_chars:
+                    break
+                overlap_lines.insert(0, existing)
+                overlap_length += candidate_length
+            current_lines = overlap_lines[:]
+            current_length = len("\n".join(current_lines))
+
+        current_lines.append(line)
+        current_length = len("\n".join(current_lines))
+
+    if current_lines:
+        windows.append("\n".join(current_lines).strip())
+
+    return [window for window in windows if window]
+
+
 def build_chunks_from_content(content: str) -> list[ChunkDraft]:
     config = get_chunking_configuration()
     sections = split_into_sections(content)
     drafts: list[ChunkDraft] = []
+    active_context = ""
 
     for section in sections:
+        is_context_section = section.lower().startswith("contexte:")
         for part in split_section_by_sentences(
             section,
             max_chars=int(config["max_chars"]),
             overlap_chars=int(config["overlap_chars"]),
         ):
+            chunk_content = part
+            if active_context and not is_context_section:
+                chunk_content = f"{active_context}\n{part}"
             drafts.append(
                 ChunkDraft(
                     chunk_index=len(drafts),
-                    chunk_type=infer_chunk_type(part),
-                    component_tag=infer_component_tag(part),
-                    content=part,
-                    token_count=estimate_token_count(part),
+                    chunk_type=infer_chunk_type(chunk_content),
+                    component_tag=infer_component_tag(chunk_content),
+                    content=chunk_content,
+                    token_count=estimate_token_count(chunk_content),
                 )
             )
+        if is_context_section:
+            active_context = section
 
     return drafts
 

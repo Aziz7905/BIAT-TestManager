@@ -41,23 +41,20 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 - Docker runner containers and MinIO are implemented in code/config, but still need a real Docker Compose smoke test
 - No per-team capacity caps
 - Debug rerun UX remains Step 4
-- No Results Ingest API for the hybrid path (external CI / IDE → platform)
+- No Results Ingest API for external CI / IDE → platform result upload
 - Selenoid is the browser backend target in the current branch
 
 ### Schema cleanup — **in progress**
 - Deprecated AI and integration fields are being moved out of `Team` / `UserProfile`
 - `TeamSerializer` now exposes compatibility fields through `TeamAIConfig` / `IntegrationConfig` instead of direct model fields
 - `IntegrationResolverService` exists as the seam agents and integration callers should use
-- Frontend `/admin/teams` compatibility for removed `Team.tokens_used_this_month` is repaired in the current branch
+- Frontend `/admin/teams` compatibility now reads AI configuration from `TeamAIConfig`
 
-### Layer 3 — AI agent — **not started**
+### Layer 3 — AI layer — **foundation starting**
 - `TeamAIConfig`, `ModelProfile`, `AIProvider` models exist ✓
-- Zero LLM calls in the codebase
-- No LangGraph
-- No Playwright MCP
-- No AI browser-session orchestration yet
-- No `AIAgentSession` model
-- The Selenoid browser-session seam is in Step 3
+- Provider abstraction exists in `apps.ai.providers` with OpenAI-compatible, Azure OpenAI, Anthropic, Ollama, and Groq support
+- The next AI step is **offline test generation first**: prompt/spec context → draft scenarios/cases → human review → canonical save
+- No live browser authoring, Playwright MCP loop, self-healing, GitHub PR validation, or Jira webhook automation yet
 
 ---
 
@@ -67,17 +64,18 @@ Steps are sequenced. Don't skip ahead — earlier steps are foundations for late
 Step 1  →  Three Celery queues (ai_agent / regression / interactive)
 Step 2  →  Schema consolidation + IntegrationResolverService
 Step 3  →  Selenoid + Java/Python Docker runners + MinIO + stream policy
-Step 4  →  Per-team capacity caps + debug rerun + AIAgentSession model + LLM provider abstraction
-Step 5  →  Phase E — LangGraph live agent (THE GOAL: KaneAI core loop)
-Step 6  →  Results Ingest API (hybrid path: external CI / IDE → platform)
-Step 7  →  Phase D — AI offline generation (RCA, then test/script generation)
-Step 8  →  GitHub source-of-truth sync
-Step 9  →  GitHub PR validation + Jira ticket → test generation
-Step 10 →  Phase F — Self-healing
-Step 11 →  Scale: Moon + Kubernetes (only when needed)
+Step 4A → AI test generation foundation (offline drafts, review, canonical save)
+Step 4B → AI script generation from canonical TestCaseRevision into AutomationScript candidates
+Step 5  → Phase E — LangGraph live browser authoring (KaneAI core loop)
+Step 6  → Results Ingest API (external CI / IDE → platform)
+Step 7  → AI RCA on failed executions
+Step 8  → GitHub source-of-truth sync
+Step 9  → GitHub PR validation + Jira ticket automation
+Step 10 → Phase F — Self-healing
+Step 11 → Scale: Moon + Kubernetes (only when needed)
 ```
 
-The agent layer is reached after **5 steps**. Steps 6–9 enrich the platform around the agent and are reorderable.
+The AI layer now starts with offline generation because it is the safest product slice: no browser, no MCP, no script execution, and no canonical write until human review. The live browser agent remains the headline goal, but it builds on the same provider, RAG, audit, review, and canonical-save contracts created in Step 4A.
 
 ### Scope guardrail
 
@@ -159,7 +157,7 @@ This is cheap (1–2 days), no production data to migrate, and unblocks Steps 4 
 ### What changes
 
 **Remove from `Team` (already in `TeamAIConfig`):**
-- `ai_provider`, `ai_api_key`, `ai_model`, `monthly_token_budget`, `tokens_used_this_month`
+- `ai_provider`, `ai_api_key`, `ai_model`, `monthly_token_budget`
 
 **Remove from `Team` (move to `IntegrationConfig`):**
 - `jira_base_url`, `jira_project_key`, `github_org`, `github_repo`, `jenkins_url`
@@ -189,11 +187,11 @@ def resolve_integration_credentials(
 - Migration removes the deprecated fields from `Team` and `UserProfile`
 - All read sites use `TeamAIConfig` / `IntegrationConfig` / `UserIntegrationCredential`
 - `IntegrationResolverService` exists with at least Jira and GitHub coverage
-- Frontend `Team` types and Teams admin UI no longer read removed fields such as `tokens_used_this_month`
+- Frontend `Team` types and Teams admin UI read provider/model/budget state through `TeamAIConfig`
 - Existing tests pass; new tests cover the resolver's `act_as_user` vs `act_as_app` paths
 
 ### Compatibility note
-The Teams admin page previously expected `selectedTeam.tokens_used_this_month` after the backend cleanup removed `Team.tokens_used_this_month`. The current branch removes that frontend dependency; keep this guarded with frontend build/typecheck coverage.
+The Teams admin page now treats `TeamAIConfig` as the source of truth for provider, model, deployment mode, endpoint, key presence, and monthly budget; keep this guarded with frontend build/typecheck coverage.
 
 ### What it does not do
 Doesn't change any API contracts that don't reference the removed fields. Doesn't touch execution behavior.
@@ -228,7 +226,35 @@ This moves browser E2E execution onto the target MVP infrastructure instead of k
 
 ---
 
-## Step 4 — Per-team caps + debug rerun + AIAgentSession + LLM abstraction
+## Step 4A — AI test generation foundation
+
+### Why now
+This is the first safe AI product slice. It proves the shared team AI key, provider abstraction, RAG grounding, review workflow, and canonical repository commit path without involving live browsers or script execution.
+
+### What changes
+- Add `AIGenerationSession` and `AIGenerationRetrievedContext` as the minimal AI workflow/audit layer.
+- Store generated suites/root sections/child sections/scenarios/cases as draft JSON inside the session until the user saves.
+- Retrieve context from existing `Specification` / `SpecChunk` records and existing repository models.
+- Use `get_team_brain(team, purpose=...)` for all LLM calls; no provider SDK imports outside `apps.ai.providers`.
+- Validate generated JSON against a strict draft schema, repair once if invalid, then run a critic pass.
+- Commit selected reviewed drafts through existing repository services into `TestSuite`, recursive `TestSection` trees, `TestScenario`, `TestCase`, and `TestCaseRevision`.
+- Mark saved objects with existing `ai_generated` fields and set `TestCase.design_status` to `draft` unless the user explicitly saves as approved.
+
+### Definition of done
+- A user can start an AI generation session from a prompt and optional specification.
+- The Celery task runs on `ai_agent`, produces a draft payload, and records retrieved context.
+- The user can submit review decisions and commit only selected drafts.
+- No unreviewed LLM output becomes canonical.
+- Focused tests cover access, provider failure, prompt/spec generation, invalid JSON repair failure, duplicate surfacing, and canonical commit.
+
+### What it does not do
+- No live browser authoring.
+- No Selenium script generation.
+- No RCA.
+- No self-healing.
+- No Jira/GitHub webhook automation.
+
+## Historical Step 4 foundation — capacity/debug/live-agent session planning
 
 ### Why now
 The last set of foundations before Step 5 (LangGraph). Each piece is small but each is required:
@@ -380,10 +406,10 @@ All upstream pieces are in place: queues split, Selenoid running, MinIO storing 
 
 ---
 
-## Step 6 — Results Ingest API (hybrid path)
+## Step 6 — Results Ingest API
 
 ### Why now
-With the agent shipping, the platform's TestRail-equivalent surface is ready to accept results from external execution paths. This closes the hybrid model: tests can run on the platform OR on the engineer's laptop / Jenkins / GitHub Actions, both feeding the same `TestExecution` rows.
+With the agent shipping, the platform's TestRail-equivalent surface is ready to accept results from external execution paths. Tests can run on the platform or on the engineer's laptop / Jenkins / GitHub Actions, with both paths feeding the same `TestExecution` rows.
 
 ### What changes
 

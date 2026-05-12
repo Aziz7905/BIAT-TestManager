@@ -10,6 +10,7 @@ import AppLayout from "../components/layout/AppLayout";
 import ProjectTree from "../components/project/ProjectTree";
 import RepositoryDetailPane from "../components/project/RepositoryDetailPane";
 import ProjectMembersModal from "../components/project/ProjectMembersModal";
+import AIGenerationPanel from "../components/project/ai/AIGenerationPanel";
 import CaseEditorModal from "../components/project/case-editor/CaseEditorModal";
 import ProjectAutomationWorkspace from "../components/project/automation/ProjectAutomationWorkspace";
 import ProjectSpecificationsWorkspace from "../components/project/specs/ProjectSpecificationsWorkspace";
@@ -17,6 +18,7 @@ import ProjectTestRunsWorkspace from "../components/project/test-runs/ProjectTes
 import { Spinner } from "../components/ui";
 
 type ProjectWorkspaceTab = "repository" | "specs" | "automation" | "test-runs";
+type AIPanelTarget = { suiteId?: string; sectionId?: string } | null;
 
 export default function ProjectWorkspacePage() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +34,7 @@ export default function ProjectWorkspacePage() {
   const [scenarioCasesById, setScenarioCasesById] = useState<Record<string, TreeCase[]>>({});
   const [loadingScenarioIds, setLoadingScenarioIds] = useState<Record<string, boolean>>({});
   const [focusedExecutionId, setFocusedExecutionId] = useState<string | null>(null);
+  const [aiPanelTarget, setAiPanelTarget] = useState<AIPanelTarget>(null);
   const [treeWidth, setTreeWidth] = useState(320);
   const [resizing, setResizing] = useState(false);
 
@@ -185,21 +188,38 @@ export default function ProjectWorkspacePage() {
               <h2 className="truncate text-sm font-semibold text-slate-900">{project.name}</h2>
               <p className="mt-0.5 text-xs text-slate-500">{project.team_name}</p>
             </div>
-            <button
-              onClick={() => setShowMembers(true)}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
-              title="Manage project members"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-5.13a4 4 0 11-8 0 4 4 0 018 0zm6 0a4 4 0 11-8 0 4 4 0 018 0z"
-                />
-              </svg>
-              {project.member_count}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => setAiPanelTarget({})}
+                className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                title="Generate with AI"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"
+                  />
+                </svg>
+                Generate with AI
+              </button>
+              <button
+                onClick={() => setShowMembers(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                title="Manage project members"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-5.13a4 4 0 11-8 0 4 4 0 018 0zm6 0a4 4 0 11-8 0 4 4 0 018 0z"
+                  />
+                </svg>
+                {project.member_count}
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 flex items-center gap-2">
@@ -241,6 +261,7 @@ export default function ProjectWorkspacePage() {
                   loadingScenarioIds={loadingScenarioIds}
                   onLoadScenarioCases={loadScenarioCases}
                   onOpenCaseEditor={setEditingCaseId}
+                  onGenerateWithAI={(target) => setAiPanelTarget(target)}
                   onMutate={refreshTree}
                 />
               </div>
@@ -315,6 +336,17 @@ export default function ProjectWorkspacePage() {
             invalidateScenarioIds: [scenarioId],
           })
         }
+      />
+
+      <AIGenerationPanel
+        open={Boolean(aiPanelTarget)}
+        projectId={id ?? ""}
+        projectName={project.name}
+        tree={tree}
+        initialSuiteId={aiPanelTarget?.suiteId ?? null}
+        initialSectionId={aiPanelTarget?.sectionId ?? null}
+        onClose={() => setAiPanelTarget(null)}
+        onCommitted={() => refreshTree({ resetCaseCache: true })}
       />
     </AppLayout>
   );

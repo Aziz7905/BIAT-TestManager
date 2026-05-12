@@ -1,26 +1,25 @@
 # 07 — AI Layer
 
-**`TeamAIConfig`. API key management. Ollama deployment. Phase D (offline generation). Phase E (live agent — KaneAI equivalent). Phase F (self-healing). AI RCA.**
+**`TeamAIConfig`. Provider abstraction. Ollama deployment. Step 4A offline test generation. Later live agent, AI RCA, and self-healing.**
 
 ---
 
-## 1. The AI configuration model (already built, not yet called)
+## 1. The AI configuration model and provider abstraction
 
 ### 1.1 What's wired
-The data model for AI is fully in place. **No code anywhere makes an LLM call yet** — but the configuration plumbing is done.
+The team-level AI configuration and provider abstraction are wired. Step 4A uses them for offline test generation before any live browser agent is built.
 
 ```
 Team
   └── TeamAIConfig (one per team)
-       ├── monthly_token_budget
-       ├── tokens_used_this_month
+       ├── provider → AIProvider
+       ├── encrypted api_key
+       ├── endpoint_url / api_version
+       ├── monthly_budget
        └── ModelProfile (one per purpose)
             ├── purpose: test_design | review | execution
-            ├── deployment_mode: local | cloud | hybrid
-            ├── endpoint_url
-            ├── api_key (encrypted)
-            ├── model_name
-            └── provider → AIProvider (reference data)
+            ├── deployment_mode: local | cloud
+            └── model_name
 ```
 
 ### 1.2 The purpose-based split
@@ -79,13 +78,13 @@ independent calls with the same key. Both calls are server-side.
 ```
 
 ### 2.3 Why this is right
-- **One key = one billing line.** The manager monitors `tokens_used_this_month` against `monthly_token_budget`. They don't need to chase individual users.
+- **One key = one billing line.** The manager sets a shared team budget and the backend records usage from AI sessions/telemetry. They don't need to chase individual users.
 - **Onboarding is automatic.** A new team member gets AI access the moment they join. No "request a key" step.
 - **Revocation is simple.** Remove the team membership → user loses AI access immediately. No key rotation required.
 - **Compliance.** API keys never appear in browser localStorage, never in network logs from the client side, never in user-visible UI.
 
 ### 2.4 Encryption at rest
-`ModelProfile.api_key` uses `django-encrypted-model-fields` with `FIELD_ENCRYPTION_KEY` from settings. The DB stores ciphertext. Decrypt happens only in the Celery worker, not in the view layer.
+`TeamAIConfig.api_key` uses `django-encrypted-model-fields` with `FIELD_ENCRYPTION_KEY` from settings. The DB stores ciphertext. Decrypt happens only in the backend worker path, not in the frontend.
 
 ---
 
@@ -159,6 +158,22 @@ The AI work is sequenced into three phases. They build on each other.
 
 The AI layer's near-term product focus is browser E2E. It can generate structured test suites/cases/steps from requirements and then author Selenium browser automation by driving a live browser. It is not expected to author native performance, security, API, unit, or integration runtime infrastructure in this phase; those test categories stay on the management/results-ingest path until explicitly added later.
 
+### 4.0 Step 4A — Offline AI test generation foundation
+
+Step 4A ships before the live browser agent. It is a graph-shaped backend workflow:
+
+```
+prompt/spec context
+  → draft suites/sections/scenarios/cases
+  → schema validation + critic
+  → human review
+  → canonical save into TestSuite/TestSection/TestScenario/TestCase/TestCaseRevision
+```
+
+Drafts live only in `AIGenerationSession.draft_payload` until the user saves. The draft section schema mirrors the repository tree and supports recursive `children`, so generated suites can save into root and child `TestSection` rows before scenarios/cases are created. `AIGenerationRetrievedContext` records the `SpecChunk` and repository context used for audit. There is no `ai_generation_candidate` table and no parallel AI test hierarchy. Saved objects use the existing repository services and existing `ai_generated` flags.
+
+This step deliberately excludes live browser authoring, Selenium script generation, RCA, self-healing, and Jira/GitHub webhook automation.
+
 ### 4.1 Phase D — Offline AI test generation
 
 **What it is:** the user gives the platform a spec or a Jira ticket; the platform generates candidate test cases.
@@ -175,13 +190,14 @@ The AI layer's near-term product focus is browser E2E. It can generate structure
    c. Builds a prompt: "given this spec, generate 5 test cases in this JSON schema..."
    d. Calls LLM via TeamAIConfig
    e. Parses the JSON response
-   f. Validates each candidate against the TestCase schema
-   g. Creates TestCase rows with design_status='draft', generated_by='ai_offline'
+   f. Validates each candidate against the draft schema
+   g. Stores draft JSON on AIGenerationSession for human review
 4. Frontend: candidates appear in the user's review queue
-5. User reviews each candidate:
+5. User reviews each draft candidate:
    - Edit fields if needed
-   - Approve → design_status='approved', candidate becomes canonical
-   - Reject → soft-delete with reason
+   - Save selected → canonical TestCase rows with design_status='draft'
+   - Save and approve → canonical TestCase rows with design_status='approved'
+   - Reject/drop → nothing canonical is created
 ```
 
 **The same Phase D applies to scripts:**
@@ -391,10 +407,9 @@ This stays planned — no code yet.
 
 ### 7.1 The budget mechanic
 `TeamAIConfig` has:
-- `monthly_token_budget` — the cap (in tokens)
-- `tokens_used_this_month` — running counter, reset on the 1st
+- `monthly_budget` — the shared team cap/configured budget value
 
-Before an LLM call, the worker checks: are we under budget? If yes, proceed. If no, refuse and log the refusal. The user sees a clear error: "AI budget exhausted for this month — contact your manager."
+Step 4A records provider/model/tokens/latency on `AIGenerationSession` and MLflow. A dedicated usage ledger can be added later if the manager UI needs native monthly rollups.
 
 ### 7.2 MLflow telemetry
 Every LLM call logs to MLflow:

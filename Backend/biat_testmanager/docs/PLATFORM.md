@@ -122,7 +122,7 @@ The product philosophy is strict: **the non-AI core must be stable and complete 
 - **MLflow** (embedding telemetry)
 - **LangGraph** (AI agent orchestration) — planned, Layer 3
 - **Playwright MCP** (agent's browser interface) — planned, Layer 3
-- **TeamAIConfig + ModelProfile + AIProvider** (already wired, no provider call yet)
+- **TeamAIConfig + ModelProfile + AIProvider + apps.ai.providers** (team-level provider abstraction for cloud/local LLMs)
 
 ### Frontend (separate documentation)
 - See `frontend/docs/PLATFORM.md`
@@ -154,7 +154,7 @@ This master document is intentionally short. The detailed documentation lives in
 | [`architecture/04-rbac-and-multi-tenancy.md`](architecture/04-rbac-and-multi-tenancy.md) | The 3-layer authorization model, multi-tenant isolation, concurrency groups (per-project quotas), the team workflow scenario |
 | [`architecture/05-execution-engine.md`](architecture/05-execution-engine.md) | The Celery queues, Selenoid, Docker runner containers, the `__BIAT_EVENT__` protocol, checkpoint resume |
 | [`architecture/06-storage-and-streaming.md`](architecture/06-storage-and-streaming.md) | MinIO for artifacts, when to stream live (and when not to), debug rerun mode, video recording strategy |
-| [`architecture/07-ai-layer.md`](architecture/07-ai-layer.md) | `TeamAIConfig`, API key management, Ollama deployment, Phase D (offline generation), Phase E (live agent), Phase F (self-healing), AI RCA |
+| [`architecture/07-ai-layer.md`](architecture/07-ai-layer.md) | Team AI configuration, provider abstraction, Step 4A offline generation, later live agent, RCA, and self-healing |
 | [`architecture/08-integrations.md`](architecture/08-integrations.md) | GitHub source-of-truth sync, Jira ticket → test generation, webhook ingestion, HMAC signatures, action audit |
 | [`architecture/09-specs-and-rag.md`](architecture/09-specs-and-rag.md) | Specification ingestion, parsers, chunking, pgvector retrieval, the RAG layer that grounds AI generation |
 
@@ -232,7 +232,7 @@ These are the rules we don't relitigate. They have been decided. Each rule has a
 
 ## 8. The current build state in one paragraph
 
-Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, and integration foundation. Layer 2 (browser E2E regression execution) is being moved onto the target MVP infrastructure: Celery queues, Selenoid browser sessions, Docker Java/Python runners, MinIO artifact keys, WebSocket events, checkpoint control, and opt-in browser streaming. The Results Ingest API for external CI/IDE/lab results is not built yet. Layer 3 (AI browser E2E authoring) is **not started** beyond configuration models: `TeamAIConfig`, `ModelProfile`, and `AIProvider` are wired, but no LLM/LangGraph/Playwright MCP loop exists yet. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
+Layer 1 (test management) is **complete and stable**: tenancy, RBAC, project membership, specs + pgvector RAG, repository with revisions, plans/runs/run-cases, reporting, and integration foundation. Layer 2 (browser E2E regression execution) is being moved onto the target MVP infrastructure: Celery queues, Selenoid browser sessions, Docker Java/Python runners, MinIO artifact keys, WebSocket events, checkpoint control, and opt-in browser streaming. The Results Ingest API for external CI/IDE/lab results is not built yet. Layer 3 (AI) starts with **Step 4A offline test generation**: prompt/spec context produces reviewed draft scenarios/cases that are saved into canonical repository models only after human approval. Live browser authoring, Playwright MCP, RCA, self-healing, and Jira/GitHub automation come later. See [`roadmap.md`](roadmap.md) for the full step-by-step plan to close the gap.
 
 ---
 

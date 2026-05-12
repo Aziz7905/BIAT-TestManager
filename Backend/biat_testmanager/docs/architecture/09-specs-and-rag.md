@@ -196,7 +196,7 @@ POST   /api/specs/retrieve/
   response: [{chunk_id, content, similarity, specification_title}]
 ```
 
-This is the primitive that AI generation uses — but it's also useful for any UI that wants to surface "specs related to this query." Expose it as a normal endpoint, not a private internal call.
+Step 4A uses the existing internal retrieval service first: project-scoped `Specification` / `SpecChunk` search from the AI generation workflow. A public retrieval endpoint can still be added later for UI search, but AI generation does not need a separate RAG table or a new embedding store.
 
 ---
 

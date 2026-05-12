@@ -67,6 +67,7 @@ export interface RepositoryTreeNodeProps {
   onSelect: (selection: TreeSelection) => void;
   onRequestCreate: (target: CreateTarget) => void;
   onRequestDelete: (target: Exclude<DeleteTarget, null>) => void;
+  onGenerateWithAI?: (target: { suiteId?: string; sectionId?: string }) => void;
   onMutate: (request?: TreeMutationRequest) => Promise<void> | void;
   onOpenCaseEditor: (caseId: string) => void;
 }

@@ -309,6 +309,7 @@ except ModuleNotFoundError:  # pragma: no cover - environment without celery
 CELERY_TASK_DEFAULT_QUEUE = "regression"
 CELERY_TASK_DEFAULT_ROUTING_KEY = "regression"
 CELERY_TASK_ROUTES = {
+    "ai.run_generation_session": {"queue": "ai_agent"},
     "automation.run_test_execution": {"queue": "regression"},
     "automation.run_manual_browser_session": {"queue": "interactive"},
     "automation.expire_stale_execution_checkpoints": {"queue": "regression"},

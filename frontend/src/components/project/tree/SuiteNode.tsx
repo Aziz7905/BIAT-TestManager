@@ -24,6 +24,7 @@ export default function SuiteNode({
   onLoadScenarioCases,
   onMutate,
   onOpenCaseEditor,
+  onGenerateWithAI,
   onRequestCreate,
   onRequestDelete,
 }: SuiteNodeProps) {
@@ -124,6 +125,15 @@ export default function SuiteNode({
                     icon: <PencilIcon />,
                     onSelect: () => setEditing(true),
                   },
+                  ...(onGenerateWithAI
+                    ? [
+                        {
+                          label: "Generate with AI",
+                          icon: <SparkIcon />,
+                          onSelect: () => onGenerateWithAI({ suiteId: suite.id }),
+                        },
+                      ]
+                    : []),
                   {
                     label: "Delete suite",
                     icon: <TrashIcon />,
@@ -153,6 +163,7 @@ export default function SuiteNode({
               onLoadScenarioCases={onLoadScenarioCases}
               onMutate={onMutate}
               onOpenCaseEditor={onOpenCaseEditor}
+              onGenerateWithAI={onGenerateWithAI}
               onRequestCreate={onRequestCreate}
               onRequestDelete={onRequestDelete}
             />
@@ -168,5 +179,18 @@ export default function SuiteNode({
         onSaved={() => void onMutate({ resetCaseCache: true })}
       />
     </div>
+  );
+}
+
+function SparkIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"
+      />
+    </svg>
   );
 }

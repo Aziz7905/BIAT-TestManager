@@ -74,17 +74,17 @@ Project-level membership.
 ### 2.6 `TeamAIConfig` (one per team)
 Per-team AI configuration:
 - `provider` — references `AIProvider`
-- `monthly_token_budget`, `tokens_used_this_month`
-- Active model profiles (FKs to `ModelProfile`)
+- encrypted `api_key`, `endpoint_url`, `api_version`
+- `monthly_budget`
+- default and per-purpose model profiles through `ModelProfile`
 
-The actual API key lives encrypted on `ModelProfile` or `AIProvider` — not here. See [`07-ai-layer.md`](07-ai-layer.md).
+The actual API key lives encrypted on `TeamAIConfig`, not on `Team`, `ModelProfile`, or `AIProvider`. See [`07-ai-layer.md`](07-ai-layer.md).
 
 ### 2.7 `ModelProfile`
 Per-purpose model assignment:
 - `team_ai_config` (FK)
 - `purpose` — `test_design` | `review` | `execution`
-- `deployment_mode` — `local` | `cloud` | `hybrid`
-- `endpoint_url`, encrypted `api_key`
+- `deployment_mode` — `local` | `cloud`
 - `model_name` (e.g., `claude-opus-4-7`, `llama3:70b`)
 
 A team has multiple `ModelProfile`s — one per purpose. Test design might use a small local model; execution analysis might use a large cloud model.
@@ -94,6 +94,17 @@ Reference data: known AI providers and their default endpoints. Anthropic, OpenA
 
 ### 2.9 `UserIntegrationCredential`
 Per-user encrypted credentials for integrations (e.g., a personal Jira API token used when a tester wants to act-as-themselves on Jira). **Never returned by any API serializer.**
+
+### 2.10 `AIGenerationSession` (Step 4A)
+Temporary workflow state for offline AI test generation.
+- Stores prompt/objective, source refs, status, provider/model snapshot, draft payload, critic report, review decisions, saved object IDs, token/latency/error summaries
+- Drafts stay here until a user explicitly commits selected items
+- On commit, selected drafts become canonical `TestSuite`, root or child `TestSection`, `TestScenario`, `TestCase`, and `TestCaseRevision` rows
+
+### 2.11 `AIGenerationRetrievedContext` (Step 4A)
+Audit trail of what grounded a generation session.
+- Links a session to retrieved `SpecChunk`, existing test/repository memory, or external references
+- Does not replace `SpecChunk`, `TestCase`, or integration action logs
 
 ---
 
