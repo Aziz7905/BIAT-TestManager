@@ -8,6 +8,7 @@ from apps.accounts.services.team_ai import DEFAULT_MODEL_NAME, DEFAULT_OLLAMA_EN
 from .anthropic import AnthropicProvider
 from .azure_openai import AzureOpenAIProvider
 from .base import LLMProvider, LLMProviderNotConfiguredError
+from .gemini import GeminiProvider
 from .ollama import OllamaProvider
 from .openai_compatible import OpenAICompatibleProvider
 
@@ -15,6 +16,7 @@ DEFAULT_PROVIDER_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "groq": "https://api.groq.com/openai/v1",
     "anthropic": "https://api.anthropic.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
 }
 
 
@@ -111,6 +113,15 @@ def get_llm_provider(
             api_key=api_key,
             model_name=model_name,
             base_url=provider.base_url or DEFAULT_PROVIDER_BASE_URLS["anthropic"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    if provider_type == "gemini":
+        return GeminiProvider(
+            api_key=api_key,
+            model_name=model_name,
+            base_url=provider.base_url or DEFAULT_PROVIDER_BASE_URLS["gemini"],
             temperature=temperature,
             max_tokens=max_tokens,
         )

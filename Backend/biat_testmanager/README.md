@@ -18,11 +18,13 @@ This backend powers the BIAT Test Manager platform: authentication, project acce
 
 ## Backend Apps
 
-- `accounts`: organizations, teams, memberships, user profile
+- `accounts`: organizations, teams, memberships, user profile, AI provider config (`TeamAIConfig` + `ModelProfile`)
 - `projects`: project model and project membership
-- `specs`: source ingestion, normalized specifications, chunks, embeddings
+- `specs`: source ingestion, normalized specifications, chunks, embeddings (pgvector + BAAI/bge-m3)
 - `testing`: suites, scenarios, test cases, traceability
 - `automation`: scripts, executions, steps, results, schedules
+- `ai`: provider abstraction, LangGraph test generation, Playwright MCP browser authoring
+- `integrations`: Jira / GitHub / Jenkins config, HMAC-verified webhook ingest, external issue links
 
 ## Current Execution Model
 
@@ -33,7 +35,8 @@ The execution layer is a self-hosted browser E2E pipeline backed by Selenoid, Do
 - `ExecutionStep` stores step-level progress
 - `TestResult` stores final outcome and artifacts metadata
 - `ExecutionSchedule` is persisted for future scheduling support
-- `HealingEvent` exists as future-facing schema only
+
+Self-healing (`HealingEvent`) was deliberately removed; its full pipeline spec is preserved in `docs/backlog.md` and returns in Phase F.
 
 Current v1 rule:
 

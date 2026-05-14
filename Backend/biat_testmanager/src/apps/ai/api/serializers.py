@@ -12,8 +12,10 @@ from apps.projects.access import get_project_queryset_for_actor
 from apps.projects.models import Project
 from apps.specs.models import Specification
 from apps.specs.services.access import get_specification_queryset_for_actor
-from apps.testing.models import TestSection, TestSuite
+from apps.automation.models import ExecutionBrowser, ExecutionPlatform
+from apps.testing.models import TestCase, TestSection, TestSuite
 from apps.testing.services.access import can_manage_test_design_for_project
+from apps.automation.services.access import can_trigger_test_execution
 
 
 class AIGenerationRetrievedContextSerializer(serializers.ModelSerializer):
@@ -177,3 +179,45 @@ class AIGenerationCommitSerializer(serializers.Serializer):
 
 class AIGenerationStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=AIGenerationSessionStatus.choices)
+
+
+class AIAuthoringSessionStartSerializer(serializers.Serializer):
+    test_case = serializers.PrimaryKeyRelatedField(
+        queryset=TestCase.objects.select_related(
+            "scenario",
+            "scenario__section",
+            "scenario__section__suite",
+            "scenario__section__suite__project",
+            "scenario__section__suite__project__team",
+        ).all()
+    )
+    target_url = serializers.URLField()
+    max_steps = serializers.IntegerField(required=False, min_value=2, max_value=12, default=12)
+    browser = serializers.ChoiceField(
+        choices=ExecutionBrowser.choices,
+        required=False,
+        default=ExecutionBrowser.CHROMIUM,
+    )
+    platform = serializers.ChoiceField(
+        choices=ExecutionPlatform.choices,
+        required=False,
+        default=ExecutionPlatform.DESKTOP,
+    )
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        test_case = attrs["test_case"]
+        if not can_trigger_test_execution(request.user, test_case):
+            raise serializers.ValidationError(
+                {"test_case": "You do not have permission to author this test case."}
+            )
+        if attrs.get("browser") not in {ExecutionBrowser.CHROMIUM, ExecutionBrowser.CHROME}:
+            raise serializers.ValidationError(
+                {
+                    "browser": (
+                        "Playwright MCP authoring currently supports chromium/chrome. "
+                        "Configure AI_PLAYWRIGHT_MCP_ARGS for other browser launch profiles later."
+                    )
+                }
+            )
+        return attrs

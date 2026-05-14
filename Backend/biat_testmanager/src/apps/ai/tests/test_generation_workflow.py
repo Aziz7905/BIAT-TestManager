@@ -12,14 +12,21 @@ from rest_framework.test import APIClient
 from apps.accounts.models import Organization, Team, UserProfile
 from apps.accounts.models.choices import OrganizationRole
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus, AIGenerationSourceType
-from apps.ai.providers.base import ChatResponse
+from apps.ai.providers.base import ChatResponse, LLMProviderRequestError
 from apps.ai.services.capacity import AICapacityExceededError
-from apps.ai.services.commit_service import commit_selected_drafts
-from apps.ai.services.context_retrieval import retrieve_generation_context
-from apps.ai.services.generation_session import start_generation_session
-from apps.ai.services.test_generation_workflow import run_test_generation_workflow
+from apps.ai.services.sessions import start_generation_session
+from apps.ai.workflows.generation.commit import commit_selected_drafts
+from apps.ai.workflows.generation.context import retrieve_generation_context
+from apps.ai.workflows.generation.service import run_test_generation_workflow
+from apps.ai.tasks import _run_generation_session
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
-from apps.specs.models import SpecChunk, SpecChunkType, Specification, SpecificationSourceType
+from apps.specs.models import (
+    SpecChunk,
+    SpecChunkType,
+    Specification,
+    SpecificationSource,
+    SpecificationSourceType,
+)
 from apps.testing.models import TestCase as RepositoryTestCase
 from apps.testing.models import TestCaseDesignStatus, TestPriority
 from apps.testing.services import (
@@ -51,6 +58,14 @@ class FakeProvider:
             finish_reason="stop",
             raw={},
         )
+
+
+class FailingProvider:
+    name = "groq"
+    model_name = "llama-3.3-70b-versatile"
+
+    def chat(self, messages, **opts):
+        raise LLMProviderRequestError("Provider request timed out.")
 
 
 def make_user(username, organization, role=OrganizationRole.MEMBER):
@@ -136,14 +151,31 @@ def make_valid_draft(case_ids=None):
     }
 
 
-def make_critic_response(draft):
+def make_requirement_extraction():
     return {
-        "critic_report": {
-            "quality_score": 0.88,
-            "duplicates": [],
-            "missing_coverage": [],
-        },
-        "draft_payload": draft,
+        "requirement_type": "ui_flow",
+        "system_or_process_name": "Login",
+        "actors": ["Registered user"],
+        "business_entities": ["User account"],
+        "source_entities": [],
+        "target_entities": [],
+        "screens": ["Login page", "Dashboard"],
+        "apis": [],
+        "files_or_reports": [],
+        "fields": ["username", "password"],
+        "filters": [],
+        "grouping_rules": [],
+        "sorting_rules": [],
+        "calculations": [],
+        "business_rules": ["Valid credentials open the dashboard"],
+        "validation_rules": ["Invalid passwords show an error message"],
+        "update_rules": [],
+        "generated_outputs": [],
+        "notifications": [],
+        "error_conditions": ["Invalid password"],
+        "acceptance_criteria": ["Dashboard is displayed after successful login"],
+        "test_data_hints": [{"username": "valid.user"}],
+        "open_questions": [],
     }
 
 
@@ -295,14 +327,14 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
             automation_status="manual",
         )
         draft = make_valid_draft()
-        fake_provider = FakeProvider([draft, make_critic_response(draft)])
+        fake_provider = FakeProvider([make_requirement_extraction(), draft])
         session = self.make_session()
 
         with patch(
-            "apps.ai.services.test_generation_workflow.get_team_brain",
+            "apps.ai.workflows.generation.nodes.get_team_brain",
             return_value=fake_provider,
         ), patch(
-            "apps.ai.services.test_generation_workflow.retrieve_generation_context",
+            "apps.ai.workflows.generation.nodes.retrieve_generation_context",
             return_value=[],
         ):
             run_test_generation_workflow(str(session.id))
@@ -332,7 +364,7 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
         session = self.make_session(attached_specification=specification)
 
         with patch(
-            "apps.ai.services.context_retrieval.retrieve_similar_chunks",
+            "apps.ai.workflows.generation.context.retrieve_similar_chunks",
             side_effect=RuntimeError("vector search unavailable"),
         ):
             context = retrieve_generation_context(session, top_k=5)
@@ -342,25 +374,76 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
         stored_context = session.retrieved_contexts.get()
         self.assertEqual(stored_context.object_id, str(chunk.id))
 
+    def test_generation_context_resolves_specification_source_refs(self):
+        source = SpecificationSource.objects.create(
+            project=self.project,
+            name="Imported DOCX",
+            source_type=SpecificationSourceType.DOCX,
+            uploaded_by=self.owner,
+        )
+        first_spec = Specification.objects.create(
+            project=self.project,
+            source=source,
+            title="REQ-JOB-1",
+            content="The job reads source rows.",
+            source_type=SpecificationSourceType.DOCX,
+            uploaded_by=self.owner,
+        )
+        second_spec = Specification.objects.create(
+            project=self.project,
+            source=source,
+            title="REQ-JOB-2",
+            content="The job writes generated output.",
+            source_type=SpecificationSourceType.DOCX,
+            uploaded_by=self.owner,
+        )
+        first_chunk = SpecChunk.objects.create(
+            specification=first_spec,
+            chunk_index=0,
+            chunk_type=SpecChunkType.FUNCTIONAL_REQUIREMENT,
+            content="Read source rows matching the extracted filters.",
+        )
+        second_chunk = SpecChunk.objects.create(
+            specification=second_spec,
+            chunk_index=0,
+            chunk_type=SpecChunkType.FUNCTIONAL_REQUIREMENT,
+            content="Write the generated report output.",
+        )
+        session = self.make_session(
+            objective="Generate job tests for source rows and generated report output.",
+            source_refs={"specification_source_id": str(source.id)},
+        )
+
+        with patch(
+            "apps.ai.workflows.generation.context.retrieve_similar_chunks",
+            side_effect=RuntimeError("vector search unavailable"),
+        ):
+            context = retrieve_generation_context(session, top_k=5)
+
+        self.assertEqual(
+            {item["chunk_id"] for item in context},
+            {str(first_chunk.id), str(second_chunk.id)},
+        )
+
     def test_invalid_draft_json_is_repaired_once(self):
         repaired = make_valid_draft()
         fake_provider = FakeProvider(
             [
+                make_requirement_extraction(),
                 "not a json object",
                 repaired,
-                make_critic_response(repaired),
             ]
         )
         session = self.make_session()
 
         with patch(
-            "apps.ai.services.test_generation_workflow.get_team_brain",
+            "apps.ai.workflows.generation.nodes.get_team_brain",
             return_value=fake_provider,
         ), patch(
-            "apps.ai.services.test_generation_workflow.retrieve_generation_context",
+            "apps.ai.workflows.generation.nodes.retrieve_generation_context",
             return_value=[],
         ), patch(
-            "apps.ai.services.test_generation_workflow.search_repository_memory",
+            "apps.ai.workflows.generation.nodes.search_repository_memory",
             return_value=[],
         ):
             run_test_generation_workflow(str(session.id))
@@ -373,6 +456,7 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
     def test_invalid_repair_fails_session_clearly(self):
         fake_provider = FakeProvider(
             [
+                make_requirement_extraction(),
                 {"summary": "Missing suite and sections."},
                 {"summary": "Still invalid."},
             ]
@@ -380,13 +464,13 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
         session = self.make_session()
 
         with patch(
-            "apps.ai.services.test_generation_workflow.get_team_brain",
+            "apps.ai.workflows.generation.nodes.get_team_brain",
             return_value=fake_provider,
         ), patch(
-            "apps.ai.services.test_generation_workflow.retrieve_generation_context",
+            "apps.ai.workflows.generation.nodes.retrieve_generation_context",
             return_value=[],
         ), patch(
-            "apps.ai.services.test_generation_workflow.search_repository_memory",
+            "apps.ai.workflows.generation.nodes.search_repository_memory",
             return_value=[],
         ):
             with self.assertRaises(Exception):
@@ -395,6 +479,26 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
         session.refresh_from_db()
         self.assertEqual(session.status, AIGenerationSessionStatus.FAILED)
         self.assertTrue(session.error_message)
+
+    def test_task_marks_provider_failure_without_uncaught_crash(self):
+        session = self.make_session()
+
+        with patch(
+            "apps.ai.workflows.generation.nodes.get_team_brain",
+            return_value=FailingProvider(),
+        ), patch(
+            "apps.ai.workflows.generation.nodes.retrieve_generation_context",
+            return_value=[],
+        ), patch(
+            "apps.ai.workflows.generation.nodes.search_repository_memory",
+            return_value=[],
+        ):
+            result = _run_generation_session(str(session.id))
+
+        session.refresh_from_db()
+        self.assertEqual(result["status"], AIGenerationSessionStatus.FAILED)
+        self.assertEqual(session.status, AIGenerationSessionStatus.FAILED)
+        self.assertIn("timed out", session.error_message)
 
 
 class AIGenerationCommitTests(AIGenerationTestBase):

@@ -12,11 +12,38 @@ from apps.testing.models.choices import (
 )
 
 SCHEMA_VERSION = "ai_generation_draft_v1"
+MAX_SECTIONS = 5
+MAX_SCENARIOS_PER_SECTION = 8
+MAX_CASES_PER_SCENARIO = 6
+MAX_STEPS_PER_CASE = 12
+
+LOCAL_MAX_SECTIONS = 2
+LOCAL_MAX_SCENARIOS_PER_SECTION = 3
+LOCAL_MAX_CASES_PER_SCENARIO = 2
+LOCAL_MAX_STEPS_PER_CASE = 6
 
 ALLOWED_SCENARIO_TYPES = {value for value, _ in TestScenarioType.choices}
 ALLOWED_PRIORITIES = {value for value, _ in TestPriority.choices}
 ALLOWED_BUSINESS_PRIORITIES = {value for value, _ in BusinessPriority.choices}
 ALLOWED_POLARITIES = {value for value, _ in TestScenarioPolarity.choices}
+
+SCENARIO_TYPE_ALIASES = {
+    "error_case": TestScenarioType.EDGE_CASE
+    if TestScenarioType.EDGE_CASE in ALLOWED_SCENARIO_TYPES
+    else TestScenarioType.ALTERNATIVE_FLOW,
+    "error_handling": TestScenarioType.EDGE_CASE
+    if TestScenarioType.EDGE_CASE in ALLOWED_SCENARIO_TYPES
+    else TestScenarioType.ALTERNATIVE_FLOW,
+    "failure_case": TestScenarioType.EDGE_CASE
+    if TestScenarioType.EDGE_CASE in ALLOWED_SCENARIO_TYPES
+    else TestScenarioType.ALTERNATIVE_FLOW,
+    "negative": TestScenarioType.ALTERNATIVE_FLOW
+    if TestScenarioType.ALTERNATIVE_FLOW in ALLOWED_SCENARIO_TYPES
+    else TestScenarioType.EDGE_CASE,
+    "negative_case": TestScenarioType.ALTERNATIVE_FLOW
+    if TestScenarioType.ALTERNATIVE_FLOW in ALLOWED_SCENARIO_TYPES
+    else TestScenarioType.EDGE_CASE,
+}
 
 DRAFT_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -25,6 +52,7 @@ DRAFT_JSON_SCHEMA: dict[str, Any] = {
         "summary": {"type": "string"},
         "assumptions": {"type": "array", "items": {"type": "string"}},
         "open_questions": {"type": "array", "items": {"type": "string"}},
+        "requirement_extraction": {"type": "object"},
         "suite": {
             "type": "object",
             "required": ["name", "description"],
@@ -87,7 +115,22 @@ DRAFT_JSON_SCHEMA: dict[str, Any] = {
                                         "draft_id": {"type": "string"},
                                         "title": {"type": "string"},
                                         "preconditions": {"type": "string"},
-                                        "steps": {"type": "array"},
+                                        "steps": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "required": ["action", "expected_outcome"],
+                                                "properties": {
+                                                    "step_index": {"type": "integer"},
+                                                    "action": {"type": "string"},
+                                                    "expected_outcome": {"type": "string"},
+                                                    "target": {"type": "string"},
+                                                    "test_data": {"type": "object"},
+                                                    "validation_type": {"type": "string"},
+                                                    "notes": {"type": "string"},
+                                                },
+                                            },
+                                        },
                                         "expected_result": {"type": "string"},
                                         "test_data": {"type": "object"},
                                         "linked_spec_ids": {"type": "array"},
@@ -139,6 +182,10 @@ def normalize_draft_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_sections = draft.get("sections")
     if not isinstance(raw_sections, list) or not raw_sections:
         raise DraftValidationError("Draft must include at least one section.")
+    if len(raw_sections) > MAX_SECTIONS:
+        raise DraftValidationError(
+            f"Draft cannot include more than {MAX_SECTIONS} root sections."
+        )
 
     sections = [
         _normalize_section(section, section_index=index)
@@ -152,6 +199,7 @@ def normalize_draft_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "assumptions": _string_list(draft.get("assumptions")),
         "open_questions": _string_list(draft.get("open_questions")),
+        "requirement_extraction": _json_object(draft.get("requirement_extraction")),
         "coverage_summary": _json_object(draft.get("coverage_summary")),
         "possible_duplicates": _json_list(draft.get("possible_duplicates")),
         "suite": suite,
@@ -176,9 +224,18 @@ def _normalize_section(raw: Any, *, section_index: int) -> dict[str, Any]:
     raw_scenarios = raw.get("scenarios", [])
     if not isinstance(raw_scenarios, list):
         raise DraftValidationError(f"Section '{name}' scenarios must be a list.")
+    if len(raw_scenarios) > MAX_SCENARIOS_PER_SECTION:
+        raise DraftValidationError(
+            f"Section '{name}' cannot include more than "
+            f"{MAX_SCENARIOS_PER_SECTION} scenarios."
+        )
     raw_children = raw.get("children", [])
     if not isinstance(raw_children, list):
         raise DraftValidationError(f"Section '{name}' children must be a list.")
+    if len(raw_children) > MAX_SECTIONS:
+        raise DraftValidationError(
+            f"Section '{name}' cannot include more than {MAX_SECTIONS} child sections."
+        )
     if not raw_scenarios and not raw_children:
         raise DraftValidationError(
             f"Section '{name}' must include scenarios or child sections."
@@ -207,7 +264,7 @@ def _normalize_scenario(raw: Any, *, scenario_index: int) -> dict[str, Any]:
     if not title:
         raise DraftValidationError("Every scenario must include a title.")
 
-    scenario_type = _choice(
+    scenario_type = _scenario_type_choice(
         raw.get("scenario_type"),
         allowed=ALLOWED_SCENARIO_TYPES,
         default=TestScenarioType.HAPPY_PATH,
@@ -234,6 +291,11 @@ def _normalize_scenario(raw: Any, *, scenario_index: int) -> dict[str, Any]:
     raw_cases = raw.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
         raise DraftValidationError(f"Scenario '{title}' must include at least one case.")
+    if len(raw_cases) > MAX_CASES_PER_SCENARIO:
+        raise DraftValidationError(
+            f"Scenario '{title}' cannot include more than "
+            f"{MAX_CASES_PER_SCENARIO} test cases."
+        )
 
     return {
         "draft_id": _clean_string(raw.get("draft_id")) or _draft_id(),
@@ -291,6 +353,10 @@ def _section_has_scenarios(section: dict[str, Any]) -> bool:
 def _normalize_steps(raw_steps: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_steps, list) or not raw_steps:
         raise DraftValidationError("Every test case must include at least one step.")
+    if len(raw_steps) > MAX_STEPS_PER_CASE:
+        raise DraftValidationError(
+            f"A test case cannot include more than {MAX_STEPS_PER_CASE} steps."
+        )
 
     normalized: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_steps):
@@ -305,14 +371,20 @@ def _normalize_steps(raw_steps: Any) -> list[dict[str, Any]]:
         if not action:
             raise DraftValidationError("Every test step must include an action.")
         if not expected:
-            expected = "The application shows the expected state for this step."
-        normalized.append(
-            {
-                "step_index": _integer(raw.get("step_index") or raw.get("order"), index),
-                "action": action,
-                "expected_outcome": expected,
-            }
-        )
+            raise DraftValidationError("Every test step must include an expected outcome.")
+        step = {
+            "step_index": index + 1,
+            "action": action,
+            "expected_outcome": expected,
+        }
+        for optional_field in ("target", "validation_type", "notes"):
+            optional_value = _clean_string(raw.get(optional_field))
+            if optional_value:
+                step[optional_field] = optional_value
+        test_data = _json_object(raw.get("test_data"))
+        if test_data:
+            step["test_data"] = test_data
+        normalized.append(step)
     return normalized
 
 
@@ -363,6 +435,20 @@ def _confidence(value: Any) -> float | None:
 
 def _choice(value: Any, *, allowed: set[str], default: str, field_name: str) -> str:
     cleaned = _clean_string(value) or default
+    if cleaned not in allowed:
+        raise DraftValidationError(f"Invalid {field_name}: {cleaned}.")
+    return cleaned
+
+
+def _scenario_type_choice(
+    value: Any,
+    *,
+    allowed: set[str],
+    default: str,
+    field_name: str,
+) -> str:
+    cleaned = _clean_string(value) or default
+    cleaned = SCENARIO_TYPE_ALIASES.get(cleaned, cleaned)
     if cleaned not in allowed:
         raise DraftValidationError(f"Invalid {field_name}: {cleaned}.")
     return cleaned

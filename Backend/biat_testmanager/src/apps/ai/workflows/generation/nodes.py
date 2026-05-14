@@ -2,52 +2,45 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Any
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.accounts.models import ModelProfilePurpose
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus
-from apps.ai.prompts import (
+from apps.ai.providers.base import LLMProvider, parse_json_content
+from apps.ai.providers.brain import get_team_brain
+from apps.ai.services.capacity import check_ai_generation_capacity
+from apps.ai.workflows.generation.context import retrieve_generation_context
+from apps.ai.workflows.generation.prompts import (
     CRITIC_PROMPT_VERSION,
     DESIGN_PROMPT_VERSION,
+    EXTRACTION_PROMPT_VERSION,
+    REQUIREMENT_EXTRACTION_SCHEMA,
+    build_requirement_extraction_messages,
     build_test_critic_messages,
     build_test_design_messages,
+    empty_requirement_extraction,
+    normalize_requirement_extraction,
 )
-from apps.ai.providers.base import ChatResponse, LLMProvider, parse_json_content
-from apps.ai.schemas import DRAFT_JSON_SCHEMA, SCHEMA_VERSION, normalize_draft_payload
-from apps.ai.services.brain import get_team_brain
-from apps.ai.services.capacity import check_ai_generation_capacity
-from apps.ai.services.context_retrieval import retrieve_generation_context
-from apps.ai.services.repository_memory import search_repository_memory
-from apps.specs.services.mlflow_tracking import MLflowRunLogger
-
-
-class TestGenerationState(TypedDict, total=False):
-    session_id: str
-    session: AIGenerationSession
-    provider: LLMProvider
-    provider_name: str
-    model_name: str
-    normalized_intent: dict[str, Any]
-    rag_context: list[dict[str, Any]]
-    repository_memory: list[dict[str, Any]]
-    raw_draft_payload: dict[str, Any]
-    draft_payload: dict[str, Any]
-    critic_report: dict[str, Any]
-    validation_error: str
-    input_tokens: int
-    output_tokens: int
-    duration_ms: int
-    mlflow_run_id: str
-
-
-@dataclass
-class LLMJSONResult:
-    payload: dict[str, Any]
-    response: ChatResponse
-    duration_ms: int
+from apps.ai.workflows.generation.quality import (
+    evaluate_draft_quality,
+    format_quality_repair_instruction,
+)
+from apps.ai.workflows.generation.repository_memory import search_repository_memory
+from apps.ai.workflows.generation.schemas import (
+    ALLOWED_SCENARIO_TYPES,
+    DRAFT_JSON_SCHEMA,
+    SCHEMA_VERSION,
+    normalize_draft_payload,
+)
+from apps.ai.workflows.generation.state import (
+    CLOUD_GENERATION_LIMITS,
+    LOCAL_GENERATION_LIMITS,
+    LLMJSONResult,
+    TestGenerationState,
+)
 
 
 def request_gate(state: TestGenerationState) -> TestGenerationState:
@@ -95,6 +88,11 @@ def brain_resolver(state: TestGenerationState) -> TestGenerationState:
     state["provider"] = provider
     state["provider_name"] = provider.name
     state["model_name"] = provider.model_name
+    state["generation_limits"] = (
+        LOCAL_GENERATION_LIMITS
+        if provider.name == "ollama"
+        else CLOUD_GENERATION_LIMITS
+    )
 
     session.provider_name = provider.name
     session.model_name = provider.model_name
@@ -121,7 +119,14 @@ def capacity_check(state: TestGenerationState) -> TestGenerationState:
 
 
 def context_retrieval(state: TestGenerationState) -> TestGenerationState:
-    state["rag_context"] = retrieve_generation_context(state["session"], top_k=10)
+    limits = state.get("generation_limits", CLOUD_GENERATION_LIMITS)
+    state["rag_context"] = retrieve_generation_context(
+        state["session"],
+        top_k=int(limits.get("rag_top_k") or CLOUD_GENERATION_LIMITS["rag_top_k"]),
+        max_content_chars=int(
+            limits.get("max_chunk_chars") or CLOUD_GENERATION_LIMITS["max_chunk_chars"]
+        ),
+    )
     return state
 
 
@@ -146,6 +151,26 @@ def intent_normalizer(state: TestGenerationState) -> TestGenerationState:
     return state
 
 
+def requirement_extraction(state: TestGenerationState) -> TestGenerationState:
+    session = state["session"]
+    messages = build_requirement_extraction_messages(
+        objective=session.objective,
+        project_name=session.project.name,
+        rag_context=state.get("rag_context", []),
+        repository_memory=state.get("repository_memory", []),
+    )
+    result = _call_llm_json(
+        state["provider"],
+        messages=messages,
+        schema=REQUIREMENT_EXTRACTION_SCHEMA,
+        max_tokens=_limit_value(state, "extraction_max_tokens"),
+        num_ctx=_limit_value(state, "num_ctx"),
+    )
+    _accumulate_usage(state, result)
+    state["requirement_extraction"] = normalize_requirement_extraction(result.payload)
+    return state
+
+
 def test_design_generator(state: TestGenerationState) -> TestGenerationState:
     session = state["session"]
     messages = build_test_design_messages(
@@ -154,8 +179,11 @@ def test_design_generator(state: TestGenerationState) -> TestGenerationState:
         target_suite_name=session.target_suite.name if session.target_suite_id else None,
         target_section_name=session.target_section.name if session.target_section_id else None,
         normalized_intent=state.get("normalized_intent", {}),
+        requirement_extraction=state.get("requirement_extraction", empty_requirement_extraction()),
         rag_context=state.get("rag_context", []),
         repository_memory=state.get("repository_memory", []),
+        generation_limits=state.get("generation_limits", CLOUD_GENERATION_LIMITS),
+        allowed_scenario_types=sorted(ALLOWED_SCENARIO_TYPES),
         jira_issue_key=session.jira_issue_key,
     )
     result = _call_llm_json(
@@ -163,6 +191,8 @@ def test_design_generator(state: TestGenerationState) -> TestGenerationState:
         messages=messages,
         schema=DRAFT_JSON_SCHEMA,
         allow_invalid_json=True,
+        max_tokens=_limit_value(state, "design_max_tokens"),
+        num_ctx=_limit_value(state, "num_ctx"),
     )
     _accumulate_usage(state, result)
     state["raw_draft_payload"] = result.payload
@@ -172,7 +202,10 @@ def test_design_generator(state: TestGenerationState) -> TestGenerationState:
 def draft_schema_validator(state: TestGenerationState) -> TestGenerationState:
     try:
         state["draft_payload"] = _attach_repository_duplicates(
-            normalize_draft_payload(state["raw_draft_payload"]),
+            _attach_requirement_extraction(
+                normalize_draft_payload(state["raw_draft_payload"]),
+                state.get("requirement_extraction", {}),
+            ),
             state.get("repository_memory", []),
         )
         state.pop("validation_error", None)
@@ -185,20 +218,68 @@ def draft_repair(state: TestGenerationState) -> TestGenerationState:
     if not state.get("validation_error"):
         return state
 
+    instruction = (
+        "Repair the supplied draft so it validates against BIAT's test generation "
+        "schema. Return only the repaired draft JSON object."
+    )
+    return _repair_draft(state, instruction=instruction, error_message=state["validation_error"])
+
+
+def draft_quality_gate(state: TestGenerationState) -> TestGenerationState:
+    if not state.get("draft_payload"):
+        return state
+    result = evaluate_draft_quality(
+        state["draft_payload"],
+        state.get("requirement_extraction", {}),
+        source_context_count=len(state.get("rag_context") or []),
+    )
+    state["quality_warnings"] = result.warnings
+    if result.should_repair:
+        state["quality_repair_instruction"] = format_quality_repair_instruction(result)
+    else:
+        state.pop("quality_repair_instruction", None)
+    return state
+
+
+def quality_repair(state: TestGenerationState) -> TestGenerationState:
+    instruction = state.get("quality_repair_instruction")
+    if not instruction:
+        return state
+    try:
+        _repair_draft(state, instruction=instruction, error_message="")
+        result = evaluate_draft_quality(
+            state["draft_payload"],
+            state.get("requirement_extraction", {}),
+            source_context_count=len(state.get("rag_context") or []),
+        )
+        state["quality_warnings"] = result.warnings
+    except Exception as exc:
+        warnings = list(state.get("quality_warnings") or [])
+        warnings.append(f"Quality repair failed: {exc}")
+        state["quality_warnings"] = warnings
+    return state
+
+
+def _repair_draft(
+    state: TestGenerationState,
+    *,
+    instruction: str,
+    error_message: str = "",
+) -> TestGenerationState:
     messages = [
         {
             "role": "system",
-            "content": (
-                "Repair the supplied draft so it validates against BIAT's test generation "
-                "schema. Return only the repaired draft JSON object."
-            ),
+            "content": instruction,
         },
         {
             "role": "user",
             "content": json.dumps(
                 {
-                    "validation_error": state["validation_error"],
-                    "draft_payload": state.get("raw_draft_payload", {}),
+                    "validation_error": error_message,
+                    "requirement_extraction": state.get("requirement_extraction", {}),
+                    "generation_limits": state.get("generation_limits", CLOUD_GENERATION_LIMITS),
+                    "draft_payload": state.get("draft_payload")
+                    or state.get("raw_draft_payload", {}),
                 },
                 ensure_ascii=True,
                 default=str,
@@ -209,11 +290,16 @@ def draft_repair(state: TestGenerationState) -> TestGenerationState:
         state["provider"],
         messages=messages,
         schema=DRAFT_JSON_SCHEMA,
+        max_tokens=_limit_value(state, "repair_max_tokens"),
+        num_ctx=_limit_value(state, "num_ctx"),
     )
     _accumulate_usage(state, result)
     state["raw_draft_payload"] = result.payload
     state["draft_payload"] = _attach_repository_duplicates(
-        normalize_draft_payload(result.payload),
+        _attach_requirement_extraction(
+            normalize_draft_payload(result.payload),
+            state.get("requirement_extraction", {}),
+        ),
         state.get("repository_memory", []),
     )
     state.pop("validation_error", None)
@@ -221,6 +307,12 @@ def draft_repair(state: TestGenerationState) -> TestGenerationState:
 
 
 def test_critic(state: TestGenerationState) -> TestGenerationState:
+    if not getattr(settings, "AI_GENERATION_ENABLE_CRITIC", False):
+        state["critic_report"] = {
+            "status": "critic_skipped",
+            "reason": "Critic is disabled by default to avoid blocking review on extra LLM calls.",
+        }
+        return state
     messages = build_test_critic_messages(
         objective=state["session"].objective,
         draft_payload=state["draft_payload"],
@@ -239,12 +331,17 @@ def test_critic(state: TestGenerationState) -> TestGenerationState:
                     "draft_payload": DRAFT_JSON_SCHEMA,
                 },
             },
+            max_tokens=_limit_value(state, "critic_max_tokens"),
+            num_ctx=_limit_value(state, "num_ctx"),
         )
         _accumulate_usage(state, result)
         critic_payload = result.payload
         if isinstance(critic_payload.get("draft_payload"), dict):
             state["draft_payload"] = _attach_repository_duplicates(
-                normalize_draft_payload(critic_payload["draft_payload"]),
+                _attach_requirement_extraction(
+                    normalize_draft_payload(critic_payload["draft_payload"]),
+                    state.get("requirement_extraction", {}),
+                ),
                 state.get("repository_memory", []),
             )
         state["critic_report"] = _critic_report(critic_payload.get("critic_report"))
@@ -262,6 +359,8 @@ def persist_ready_for_review(state: TestGenerationState) -> TestGenerationState:
     session.draft_payload = state["draft_payload"]
     session.critic_report = {
         "prompt_version": CRITIC_PROMPT_VERSION,
+        "extraction_prompt_version": EXTRACTION_PROMPT_VERSION,
+        "quality_warnings": state.get("quality_warnings", []),
         **state.get("critic_report", {}),
     }
     session.input_tokens = int(state.get("input_tokens") or 0)
@@ -287,76 +386,14 @@ def persist_ready_for_review(state: TestGenerationState) -> TestGenerationState:
     return state
 
 
-def run_test_generation_workflow(session_id: str) -> TestGenerationState:
-    from apps.ai.graphs.test_generation_graph import run_test_generation_graph
-
-    state: TestGenerationState = {"session_id": session_id}
-    with MLflowRunLogger(
-        "ai_test_generation",
-        params={
-            "session_id": session_id,
-            "schema_version": SCHEMA_VERSION,
-            "prompt_version": DESIGN_PROMPT_VERSION,
-        },
-        tags={"pipeline": "ai_test_generation"},
-    ) as tracker:
-        if getattr(tracker, "_run", None):
-            state["mlflow_run_id"] = tracker._run.info.run_id
-        try:
-            result = run_test_generation_graph(state)
-            tracker.log_params(
-                {
-                    "provider": result.get("provider_name", ""),
-                    "model": result.get("model_name", ""),
-                }
-            )
-            tracker.log_metrics(
-                {
-                    "input_tokens": float(result.get("input_tokens") or 0),
-                    "output_tokens": float(result.get("output_tokens") or 0),
-                    "duration_ms": float(result.get("duration_ms") or 0),
-                    "retrieved_chunk_count": float(len(result.get("rag_context") or [])),
-                    "repository_memory_count": float(len(result.get("repository_memory") or [])),
-                }
-            )
-            tracker.log_dict(result.get("draft_payload", {}), "draft_payload.json")
-            tracker.log_dict(result.get("critic_report", {}), "critic_report.json")
-            return result
-        except Exception as exc:
-            mark_generation_failed(session_id, str(exc), state=state)
-            raise
-
-
-def mark_generation_failed(
-    session_id: str,
-    message: str,
-    *,
-    state: TestGenerationState | None = None,
-) -> None:
-    update_fields = ["status", "error_message", "completed_at", "updated_at"]
-    session = AIGenerationSession.objects.filter(pk=session_id).first()
-    if session is None:
-        return
-    session.status = AIGenerationSessionStatus.FAILED
-    session.error_message = message[:5000]
-    session.completed_at = timezone.now()
-    if state:
-        session.input_tokens = int(state.get("input_tokens") or session.input_tokens)
-        session.output_tokens = int(state.get("output_tokens") or session.output_tokens)
-        session.duration_ms = int(state.get("duration_ms") or session.duration_ms or 0)
-        session.mlflow_run_id = state.get("mlflow_run_id", session.mlflow_run_id)
-        update_fields.extend(
-            ["input_tokens", "output_tokens", "duration_ms", "mlflow_run_id"]
-        )
-    session.save(update_fields=update_fields)
-
-
 def _call_llm_json(
     provider: LLMProvider,
     *,
     messages: list[dict[str, str]],
     schema: dict[str, Any],
     allow_invalid_json: bool = False,
+    max_tokens: int | None = None,
+    num_ctx: int | None = None,
 ) -> LLMJSONResult:
     schema_text = json.dumps(schema, ensure_ascii=True)
     json_messages = [
@@ -370,9 +407,16 @@ def _call_llm_json(
         *messages,
     ]
     started = time.monotonic()
+    chat_options: dict[str, Any] = {
+        "response_format": {"type": "json_object"},
+    }
+    if max_tokens:
+        chat_options["max_tokens"] = max_tokens
+    if num_ctx:
+        chat_options["num_ctx"] = num_ctx
     response = provider.chat(
         json_messages,
-        response_format={"type": "json_object"},
+        **chat_options,
     )
     duration_ms = int((time.monotonic() - started) * 1000)
     try:
@@ -390,8 +434,29 @@ def _accumulate_usage(state: TestGenerationState, result: LLMJSONResult) -> None
     state["duration_ms"] = int(state.get("duration_ms") or 0) + result.duration_ms
 
 
+def _limit_value(state: TestGenerationState, key: str) -> int | None:
+    value = state.get("generation_limits", {}).get(key)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _critic_report(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"status": "critic_returned_no_report"}
+
+
+def _attach_requirement_extraction(
+    draft_payload: dict[str, Any],
+    requirement_extraction: dict[str, Any],
+) -> dict[str, Any]:
+    draft_payload["requirement_extraction"] = (
+        requirement_extraction
+        if isinstance(requirement_extraction, dict)
+        else empty_requirement_extraction()
+    )
+    return draft_payload
 
 
 def _attach_repository_duplicates(

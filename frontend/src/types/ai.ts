@@ -4,6 +4,7 @@ import type {
   ScenarioPolarity,
   ScenarioType,
 } from "./testing";
+import type { ExecutionBrowser, ExecutionPlatform } from "./automation";
 
 export type AIGenerationStatus =
   | "queued"
@@ -148,4 +149,23 @@ export interface CommitAIGenerationResponse {
     revision_ids: string[];
     created_case_count: number;
   };
+}
+
+export interface StartAIAuthoringSessionPayload {
+  test_case: string;
+  target_url: string;
+  max_steps?: number;
+  browser?: ExecutionBrowser;
+  platform?: ExecutionPlatform;
+}
+
+export interface SaveAIAuthoringTraceResponse {
+  test_case_id: string;
+  revision_id: string | null;
+  version: number;
+  step_count: number;
+  steps: Array<{
+    step: string;
+    outcome: string;
+  }>;
 }

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { startAIAuthoringSession } from "../../../api/ai";
 import type { CaseWorkspace } from "../../../types/testing";
 import type { AutomationScript, TestExecution } from "../../../types/automation";
+import type { StartAIAuthoringSessionPayload } from "../../../types/ai";
 import { getScripts } from "../../../api/automation/scripts";
 import {
   createExecution,
@@ -22,6 +24,7 @@ import {
   formatLabel,
   resultTone,
 } from "./shared";
+import AIAuthoringStartModal from "../ai/AIAuthoringStartModal";
 import CaseScriptEditorModal from "../case-editor/CaseScriptEditorModal";
 
 type CaseTab = "design" | "automation" | "history" | "code" | "runs";
@@ -33,6 +36,15 @@ const TAB_LABELS: Record<CaseTab, string> = {
   code: "Code",
   runs: "Runs",
 };
+
+function getDefaultTargetUrl(testData: Record<string, unknown>) {
+  const urlKeys = ["target_url", "base_url", "application_url", "app_url", "url"];
+  for (const key of urlKeys) {
+    const value = testData[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
 
 interface CaseWorkspacePanelProps {
   readonly testCase: CaseWorkspace;
@@ -52,7 +64,10 @@ export default function CaseWorkspacePanel({
   const [isLoadingScripts, setIsLoadingScripts] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [isOpeningBrowser, setIsOpeningBrowser] = useState(false);
+  const [authoringOpen, setAuthoringOpen] = useState(false);
+  const [isStartingAuthoring, setIsStartingAuthoring] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [authoringError, setAuthoringError] = useState<string | null>(null);
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
 
   // Runs tab state
@@ -63,28 +78,34 @@ export default function CaseWorkspacePanel({
     () => formatJson(testCase.design.test_data),
     [testCase.design.test_data]
   );
+  const defaultAuthoringUrl = useMemo(
+    () => getDefaultTargetUrl(testCase.design.test_data),
+    [testCase.design.test_data]
+  );
 
   useEffect(() => {
     setTab("design");
     setScripts([]);
     setExecutions([]);
     setRunError(null);
+    setAuthoringError(null);
+    setAuthoringOpen(false);
     setScriptEditorOpen(false);
   }, [testCase.id]);
 
-  async function loadScripts() {
+  const loadScripts = useCallback(async () => {
     setIsLoadingScripts(true);
     try {
       setScripts(await getScripts({ test_case: testCase.id }));
     } finally {
       setIsLoadingScripts(false);
     }
-  }
+  }, [testCase.id]);
 
   useEffect(() => {
     if (tab !== "code") return;
     void loadScripts();
-  }, [tab, testCase.id]);
+  }, [loadScripts, tab]);
 
   useEffect(() => {
     if (tab !== "runs") return;
@@ -134,6 +155,25 @@ export default function CaseWorkspacePanel({
     }
   }
 
+  async function handleStartAIAuthoring(payload: StartAIAuthoringSessionPayload) {
+    setIsStartingAuthoring(true);
+    setAuthoringError(null);
+    setRunError(null);
+    try {
+      const execution = await startAIAuthoringSession(payload);
+      setExecutions((prev) => [execution, ...prev]);
+      setAuthoringOpen(false);
+      onViewExecution?.(execution.id);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        "Failed to start AI authoring.";
+      setAuthoringError(msg);
+    } finally {
+      setIsStartingAuthoring(false);
+    }
+  }
+
   async function handleDeleteExecution(executionId: string) {
     if (!globalThis.confirm("Delete this execution and its stored results?")) return;
     await deleteExecution(executionId);
@@ -151,6 +191,15 @@ export default function CaseWorkspacePanel({
         badges={<CaseSummaryBadges testCase={testCase} />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {onViewExecution && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setAuthoringOpen(true)}
+              >
+                Author with AI
+              </Button>
+            )}
             {onViewExecution && (
               <Button
                 variant="secondary"
@@ -584,6 +633,23 @@ export default function CaseWorkspacePanel({
         onClose={() => setScriptEditorOpen(false)}
         onSaved={loadScripts}
       />
+
+      {authoringOpen && (
+        <AIAuthoringStartModal
+          open
+          testCaseId={testCase.id}
+          testCaseTitle={testCase.title}
+          defaultTargetUrl={defaultAuthoringUrl}
+          isSubmitting={isStartingAuthoring}
+          error={authoringError}
+          onClose={() => {
+            if (isStartingAuthoring) return;
+            setAuthoringOpen(false);
+            setAuthoringError(null);
+          }}
+          onSubmit={handleStartAIAuthoring}
+        />
+      )}
     </>
   );
 }

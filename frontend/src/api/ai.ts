@@ -3,8 +3,11 @@ import type {
   AIGenerationSession,
   CommitAIGenerationResponse,
   ReviewAIGenerationPayload,
+  SaveAIAuthoringTraceResponse,
+  StartAIAuthoringSessionPayload,
   StartAIGenerationPayload,
 } from "../types/ai";
+import type { TestExecution } from "../types/automation";
 
 export async function startAIGeneration(
   payload: StartAIGenerationPayload
@@ -36,6 +39,23 @@ export async function commitAIGeneration(
   const { data } = await apiClient.post<CommitAIGenerationResponse>(
     `/ai/generations/${sessionId}/commit/`,
     { create_as_approved: createAsApproved }
+  );
+  return data;
+}
+
+export async function startAIAuthoringSession(
+  payload: StartAIAuthoringSessionPayload
+): Promise<TestExecution> {
+  const { data } = await apiClient.post<TestExecution>("/ai/authoring/sessions/", payload);
+  return data;
+}
+
+export async function saveAIAuthoringTrace(
+  executionId: string
+): Promise<SaveAIAuthoringTraceResponse> {
+  const { data } = await apiClient.post<SaveAIAuthoringTraceResponse>(
+    `/ai/authoring/sessions/${executionId}/save-trace/`,
+    {}
   );
   return data;
 }

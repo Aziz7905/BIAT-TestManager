@@ -1,0 +1,6 @@
+from .browser_action_v1 import ALLOWED_BROWSER_ACTIONS, BROWSER_ACTION_SCHEMA
+
+__all__ = [
+    "ALLOWED_BROWSER_ACTIONS",
+    "BROWSER_ACTION_SCHEMA",
+]

@@ -310,6 +310,7 @@ CELERY_TASK_DEFAULT_QUEUE = "regression"
 CELERY_TASK_DEFAULT_ROUTING_KEY = "regression"
 CELERY_TASK_ROUTES = {
     "ai.run_generation_session": {"queue": "ai_agent"},
+    "ai.run_authoring_session": {"queue": "ai_agent"},
     "automation.run_test_execution": {"queue": "regression"},
     "automation.run_manual_browser_session": {"queue": "interactive"},
     "automation.expire_stale_execution_checkpoints": {"queue": "regression"},
@@ -365,6 +366,23 @@ AUTOMATION_JAVA_RUNNER_IMAGE = config(
 AUTOMATION_STREAM_HOLD_SECONDS = config(
     "AUTOMATION_STREAM_HOLD_SECONDS",
     default=20,
+    cast=int,
+)
+
+AI_PLAYWRIGHT_MCP_COMMAND = config("AI_PLAYWRIGHT_MCP_COMMAND", default="npx")
+AI_PLAYWRIGHT_MCP_ARGS = config(
+    "AI_PLAYWRIGHT_MCP_ARGS",
+    default="@playwright/mcp@latest,--headless",
+    cast=lambda value: [item.strip() for item in value.split(",") if item.strip()],
+)
+AI_PLAYWRIGHT_MCP_START_TIMEOUT_SECONDS = config(
+    "AI_PLAYWRIGHT_MCP_START_TIMEOUT_SECONDS",
+    default=45,
+    cast=int,
+)
+AI_PLAYWRIGHT_MCP_CALL_TIMEOUT_SECONDS = config(
+    "AI_PLAYWRIGHT_MCP_CALL_TIMEOUT_SECONDS",
+    default=30,
     cast=int,
 )
 

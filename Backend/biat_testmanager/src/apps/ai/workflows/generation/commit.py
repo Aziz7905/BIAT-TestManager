@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus
-from apps.ai.schemas import normalize_draft_payload
+from apps.ai.workflows.generation.schemas import normalize_draft_payload
 from apps.specs.models import Specification
 from apps.testing.models import TestSection, TestSuite
 from apps.testing.models.choices import (

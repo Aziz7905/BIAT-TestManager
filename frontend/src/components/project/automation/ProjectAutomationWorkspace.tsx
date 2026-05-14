@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { saveAIAuthoringTrace } from "../../../api/ai";
 import {
   createExecution,
   deleteExecution,
@@ -82,6 +83,7 @@ export default function ProjectAutomationWorkspace({
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("result");
 
@@ -190,6 +192,20 @@ export default function ProjectAutomationWorkspace({
       setExecution(created);
     } catch {
       setError("Could not start a new execution.");
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function handleSaveAuthoringTrace(executionId: string) {
+    setIsMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await saveAIAuthoringTrace(executionId);
+      setNotice(`Saved ${saved.step_count} authored steps as draft revision v${saved.version}.`);
+    } catch {
+      setError("Could not save the authored trace as test steps.");
     } finally {
       setIsMutating(false);
     }
@@ -305,6 +321,13 @@ export default function ProjectAutomationWorkspace({
             <ErrorMessage message={error} onDismiss={() => setError(null)} />
           </div>
         )}
+        {notice && (
+          <div className="shrink-0 px-3 pt-3">
+            <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+              {notice}
+            </div>
+          </div>
+        )}
 
         {!visibleExecution && (
           <div className="flex flex-1 items-center justify-center px-6">
@@ -356,6 +379,14 @@ export default function ProjectAutomationWorkspace({
                   disabled={isMutating || isExecutionLive}
                 >
                   Start
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void handleSaveAuthoringTrace(visibleExecution.id)}
+                  disabled={isMutating || steps.length === 0}
+                >
+                  Save steps
                 </Button>
                 <Link
                   to={`/projects/${projectId}/automation/executions/${visibleExecution.id}/live`}

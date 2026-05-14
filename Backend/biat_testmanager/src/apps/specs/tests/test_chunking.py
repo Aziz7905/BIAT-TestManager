@@ -8,7 +8,7 @@ from apps.specs.services.chunking import (
 
 
 class SpecificationChunkingTests(SimpleTestCase):
-    def test_context_is_carried_into_following_business_rule_chunks(self):
+    def test_context_is_carried_once_without_duplicate_context_chunk(self):
         content = (
             "Contexte: 1/Creer un nouveau job ENTREPRISE.INTR.GF.001.JOB.RX\n\n"
             "- Selectionner les records de la table ENTREPRISE.CORR.CHRG.PARAM\n"
@@ -17,11 +17,10 @@ class SpecificationChunkingTests(SimpleTestCase):
 
         chunks = build_chunks_from_content(content)
 
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].content, "Contexte: 1/Creer un nouveau job ENTREPRISE.INTR.GF.001.JOB.RX")
-        self.assertIn("Contexte: 1/Creer un nouveau job", chunks[1].content)
-        self.assertIn("Selectionner les records", chunks[1].content)
-        self.assertEqual(chunks[1].chunk_type, SpecChunkType.FUNCTIONAL_REQUIREMENT)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("Contexte: 1/Creer un nouveau job", chunks[0].content)
+        self.assertIn("Selectionner les records", chunks[0].content)
+        self.assertEqual(chunks[0].chunk_type, SpecChunkType.FUNCTIONAL_REQUIREMENT)
 
     @override_settings(SPEC_CHUNK_MAX_CHARS=180, SPEC_CHUNK_OVERLAP_CHARS=45)
     def test_line_aware_chunks_do_not_cut_table_rows_mid_line(self):
@@ -61,4 +60,4 @@ class SpecificationChunkingTests(SimpleTestCase):
 
         chunks = build_chunks_from_content(content)
 
-        self.assertEqual(chunks[1].component_tag, "generate-invoice-output-for-rxt")
+        self.assertEqual(chunks[0].component_tag, "generate-invoice-output-for-rxt")

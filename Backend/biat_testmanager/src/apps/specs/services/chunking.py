@@ -184,17 +184,24 @@ def build_chunks_from_content(content: str) -> list[ChunkDraft]:
     sections = split_into_sections(content)
     drafts: list[ChunkDraft] = []
     active_context = ""
+    context_consumed = False
 
     for section in sections:
         is_context_section = section.lower().startswith("contexte:")
+        if is_context_section:
+            active_context = section
+            context_consumed = False
+            continue
+
         for part in split_section_by_sentences(
             section,
             max_chars=int(config["max_chars"]),
             overlap_chars=int(config["overlap_chars"]),
         ):
             chunk_content = part
-            if active_context and not is_context_section:
+            if active_context and not context_consumed:
                 chunk_content = f"{active_context}\n{part}"
+                context_consumed = True
             drafts.append(
                 ChunkDraft(
                     chunk_index=len(drafts),
@@ -204,8 +211,6 @@ def build_chunks_from_content(content: str) -> list[ChunkDraft]:
                     token_count=estimate_token_count(chunk_content),
                 )
             )
-        if is_context_section:
-            active_context = section
 
     return drafts
 

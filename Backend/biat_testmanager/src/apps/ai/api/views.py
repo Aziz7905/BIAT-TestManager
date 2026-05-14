@@ -7,22 +7,30 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.ai.models import AIGenerationSession
-from apps.ai.providers.base import LLMProviderError
-from apps.ai.serializers import (
+from apps.ai.api.serializers import (
+    AIAuthoringSessionStartSerializer,
     AIGenerationCommitSerializer,
     AIGenerationReviewSerializer,
     AIGenerationSessionSerializer,
     AIGenerationSessionStartSerializer,
 )
+from apps.ai.models import AIGenerationSession
+from apps.ai.providers.base import LLMProviderError
 from apps.ai.services.capacity import AICapacityExceededError
-from apps.ai.services.commit_service import AICommitError, commit_selected_drafts
-from apps.ai.services.generation_session import (
+from apps.ai.services.sessions import (
     AIGenerationPermissionError,
     apply_review_decisions,
     get_generation_session_queryset_for_actor,
     start_generation_session,
 )
+from apps.ai.workflows.authoring.service import (
+    AIAuthoringError,
+    start_browser_authoring_session,
+)
+from apps.ai.workflows.authoring.trace import save_authoring_trace_as_draft_steps
+from apps.ai.workflows.generation.commit import AICommitError, commit_selected_drafts
+from apps.automation.models import TestExecution
+from apps.automation.serializers import TestExecutionSerializer
 from apps.testing.services.access import can_manage_test_design_for_project
 
 
@@ -120,3 +128,52 @@ class AIGenerationSessionCommitView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AIAuthoringSessionStartView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = AIAuthoringSessionStartSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            execution = start_browser_authoring_session(
+                user=request.user,
+                **serializer.validated_data,
+            )
+        except AIAuthoringError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        except LLMProviderError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+
+        return Response(
+            TestExecutionSerializer(execution, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AIAuthoringTraceSaveView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, execution_pk):
+        execution = get_object_or_404(
+            TestExecution.objects.select_related(
+                "test_case",
+                "test_case__scenario",
+                "test_case__scenario__section",
+                "test_case__scenario__section__suite",
+                "test_case__scenario__section__suite__project",
+            ),
+            pk=execution_pk,
+        )
+        try:
+            summary = save_authoring_trace_as_draft_steps(
+                execution=execution,
+                user=request.user,
+            )
+        except AIAuthoringError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(summary, status=status.HTTP_200_OK)

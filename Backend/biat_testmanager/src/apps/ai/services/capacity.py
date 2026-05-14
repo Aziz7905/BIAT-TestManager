@@ -6,7 +6,7 @@ from django.conf import settings
 
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus
 
-DEFAULT_MAX_CONCURRENT_AI_GENERATIONS = 5
+DEFAULT_MAX_CONCURRENT_AI_GENERATIONS = 20
 ACTIVE_GENERATION_STATUSES = [
     AIGenerationSessionStatus.QUEUED,
     AIGenerationSessionStatus.GENERATING,

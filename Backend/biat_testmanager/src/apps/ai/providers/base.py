@@ -1,8 +1,8 @@
 from __future__ import annotations
 import httpx
 import json
-import urllib.error
-import urllib.request
+import re
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -54,6 +54,7 @@ def post_json(
     payload: dict[str, Any],
     headers: dict[str, str],
     timeout_seconds: int = 90,
+    max_retries: int = 0,
 ) -> dict[str, Any]:
     request_headers = {
         "Content-Type": "application/json",
@@ -62,31 +63,56 @@ def post_json(
         **headers,
     }
 
-    try:
-        with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
-            response = client.post(
-                url,
-                json=payload,
-                headers=request_headers,
-            )
+    attempts = max(0, max_retries) + 1
+    response = None
+    for attempt in range(attempts):
+        try:
+            with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
+                response = client.post(
+                    url,
+                    json=payload,
+                    headers=request_headers,
+                )
 
-        if response.status_code >= 400:
-            raise LLMProviderRequestError(
-                f"Provider request failed with HTTP {response.status_code}: "
-                f"{response.text[:1000]}"
-            )
+            if response.status_code == 429 and attempt < attempts - 1:
+                time.sleep(_retry_delay_seconds(response))
+                continue
 
-    except httpx.TimeoutException as exc:
-        raise LLMProviderRequestError("Provider request timed out.") from exc
+            if response.status_code >= 400:
+                raise LLMProviderRequestError(
+                    f"Provider request failed with HTTP {response.status_code}: "
+                    f"{response.text[:1000]}"
+                )
+            break
 
-    except httpx.RequestError as exc:
-        raise LLMProviderRequestError(f"Provider request failed: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise LLMProviderRequestError("Provider request timed out.") from exc
+
+        except httpx.RequestError as exc:
+            raise LLMProviderRequestError(f"Provider request failed: {exc}") from exc
+
+    if response is None:
+        raise LLMProviderRequestError("Provider request failed before receiving a response.")
 
     try:
         return response.json()
 
     except ValueError as exc:
         raise LLMProviderResponseError("Provider returned non-JSON response.") from exc
+
+
+def _retry_delay_seconds(response: httpx.Response) -> float:
+    retry_after = response.headers.get("retry-after")
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after) + 1.0)
+        except ValueError:
+            pass
+
+    match = re.search(r"try again in\s+([0-9]+(?:\.[0-9]+)?)s", response.text, re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 1.0
+    return 1.0
 
 
 def parse_json_content(content: str) -> dict[str, Any]:

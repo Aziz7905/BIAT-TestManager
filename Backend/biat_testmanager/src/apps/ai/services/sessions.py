@@ -6,9 +6,9 @@ from django.utils import timezone
 
 from apps.accounts.models import ModelProfilePurpose
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus
-from apps.ai.schemas import SCHEMA_VERSION
-from apps.ai.services.brain import get_team_brain
+from apps.ai.providers.brain import get_team_brain
 from apps.ai.services.capacity import check_ai_generation_capacity
+from apps.ai.workflows.generation.schemas import SCHEMA_VERSION
 from apps.projects.access import get_project_queryset_for_actor
 from apps.testing.services.access import can_manage_test_design_for_project
 

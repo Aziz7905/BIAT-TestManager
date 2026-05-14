@@ -38,6 +38,8 @@ class OllamaProvider(BaseLLMProvider):
                 "num_predict": int(opts.get("max_tokens") or self.max_tokens),
             },
         }
+        if opts.get("num_ctx"):
+            payload["options"]["num_ctx"] = int(opts["num_ctx"])
         if opts.get("response_format"):
             payload["format"] = "json"
 
@@ -45,6 +47,8 @@ class OllamaProvider(BaseLLMProvider):
             url=f"{self.endpoint}/api/chat",
             payload=payload,
             headers={},
+            timeout_seconds=300,
+            max_retries=0,
         )
         try:
             content = raw["message"].get("content") or ""

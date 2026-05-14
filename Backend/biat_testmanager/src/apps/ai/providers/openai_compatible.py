@@ -41,6 +41,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             url=f"{self.base_url}/chat/completions",
             payload=payload,
             headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout_seconds=90,
+            max_retries=1,
         )
         try:
             choice = raw["choices"][0]
