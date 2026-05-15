@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { saveAIAuthoringTrace } from "../../../api/ai";
+import { saveAIAuthoringScript, saveAIAuthoringTrace } from "../../../api/ai";
 import {
   createExecution,
   deleteExecution,
@@ -35,6 +35,24 @@ const STATUS_FILTERS: Array<ExecutionStatus | "all"> = [
 ];
 
 type BottomTab = "result" | "checkpoints" | "artifacts";
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (typeof data !== "object") return fallback;
+
+  const detail = (data as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.join(" ");
+
+  const fieldErrors = Object.values(data as Record<string, unknown>).flatMap((value) => {
+    if (Array.isArray(value)) return value.map(String);
+    if (typeof value === "string") return [value];
+    return [];
+  });
+  return fieldErrors.length > 0 ? fieldErrors.join(" ") : fallback;
+}
 
 interface ProjectAutomationWorkspaceProps {
   readonly projectId: string;
@@ -204,8 +222,27 @@ export default function ProjectAutomationWorkspace({
     try {
       const saved = await saveAIAuthoringTrace(executionId);
       setNotice(`Saved ${saved.step_count} authored steps as draft revision v${saved.version}.`);
-    } catch {
-      setError("Could not save the authored trace as test steps.");
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, "Could not save the authored trace as test steps."));
+    } finally {
+      setIsMutating(false);
+    }
+  }
+
+  async function handleSaveAuthoringScript(executionId: string) {
+    setIsMutating(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const script = await saveAIAuthoringScript(executionId);
+      setNotice(`Saved Selenium script v${script.script_version} and activated it.`);
+    } catch (err: unknown) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "Could not save the AI authoring trace as a Selenium script.",
+        )
+      );
     } finally {
       setIsMutating(false);
     }
@@ -227,11 +264,26 @@ export default function ProjectAutomationWorkspace({
       stream_enabled: execution.stream_enabled || selectedFromList.stream_enabled,
     };
   }, [execution, selectedExecutionId, selectedFromList]);
+  const displayExecution = useMemo(() => {
+    if (!visibleExecution || !result) return visibleExecution;
+    if (!["passed", "failed", "error", "cancelled"].includes(result.status)) {
+      return visibleExecution;
+    }
+    return {
+      ...visibleExecution,
+      status: result.status,
+      result,
+    };
+  }, [result, visibleExecution]);
   const isExecutionLive =
-    visibleExecution?.status === "running" || visibleExecution?.status === "paused";
+    displayExecution?.status === "running" || displayExecution?.status === "paused";
   const canStreamBrowser =
-    Boolean(visibleExecution?.stream_enabled) &&
-    Boolean(visibleExecution?.has_browser_session);
+    Boolean(displayExecution?.stream_enabled) &&
+    Boolean(displayExecution?.has_browser_session);
+  const canSaveAuthoringScript =
+    displayExecution?.trigger_type === "ai_authoring" &&
+    displayExecution.status === "passed" &&
+    steps.length > 0;
 
   return (
     <div className="flex h-full overflow-hidden bg-white">
@@ -388,6 +440,17 @@ export default function ProjectAutomationWorkspace({
                 >
                   Save steps
                 </Button>
+                {displayExecution?.trigger_type === "ai_authoring" && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => void handleSaveAuthoringScript(visibleExecution.id)}
+                    disabled={isMutating || !canSaveAuthoringScript}
+                    title="Translate the passed AI authoring trace into a Selenium Python script."
+                  >
+                    Save Selenium script
+                  </Button>
+                )}
                 <Link
                   to={`/projects/${projectId}/automation/executions/${visibleExecution.id}/live`}
                   aria-disabled={!isExecutionLive}

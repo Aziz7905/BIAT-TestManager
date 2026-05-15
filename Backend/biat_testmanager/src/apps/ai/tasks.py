@@ -49,12 +49,16 @@ def run_authoring_session_task(
     self,
     execution_id: str,
     target_url: str = "",
-    max_steps: int = 12,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens_per_step: int | None = None,
 ):
     return _run_authoring_session(
         execution_id,
         target_url=target_url,
         max_steps=max_steps,
+        temperature=temperature,
+        max_tokens_per_step=max_tokens_per_step,
     )
 
 
@@ -62,12 +66,16 @@ def _run_authoring_session(
     execution_id: str,
     *,
     target_url: str = "",
-    max_steps: int = 12,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens_per_step: int | None = None,
 ):
     execution = run_browser_authoring_session(
         execution_id,
         target_url=target_url,
         max_steps=max_steps,
+        temperature=temperature,
+        max_tokens_per_step=max_tokens_per_step,
     )
     return {
         "execution_id": str(execution.id),
@@ -97,7 +105,9 @@ def enqueue_authoring_session_task(
     execution_id: str,
     *,
     target_url: str = "",
-    max_steps: int = 12,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens_per_step: int | None = None,
 ):
     if hasattr(run_authoring_session_task, "delay"):
         try:
@@ -105,6 +115,8 @@ def enqueue_authoring_session_task(
                 execution_id,
                 target_url,
                 max_steps,
+                temperature,
+                max_tokens_per_step,
             )
             return getattr(async_result, "id", None)
         except Exception as exc:
@@ -113,6 +125,8 @@ def enqueue_authoring_session_task(
                     execution_id,
                     target_url=target_url,
                     max_steps=max_steps,
+                    temperature=temperature,
+                    max_tokens_per_step=max_tokens_per_step,
                 )
                 return None
             raise RuntimeError("Unable to enqueue AI authoring session.") from exc
@@ -124,6 +138,8 @@ def enqueue_authoring_session_task(
         execution_id,
         target_url=target_url,
         max_steps=max_steps,
+        temperature=temperature,
+        max_tokens_per_step=max_tokens_per_step,
     )
     return None
 

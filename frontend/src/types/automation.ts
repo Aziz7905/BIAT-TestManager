@@ -17,7 +17,8 @@ export type ExecutionTriggerType =
   | "scheduled"
   | "webhook"
   | "nightly"
-  | "diagnostic";
+  | "diagnostic"
+  | "ai_authoring";
 export type ExecutionStepStatus = "pending" | "running" | "passed" | "failed";
 export type CheckpointStatus = "pending" | "resolved" | "cancelled" | "expired";
 export type ScriptGeneratedBy = "user" | "ai";

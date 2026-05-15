@@ -369,20 +369,58 @@ AUTOMATION_STREAM_HOLD_SECONDS = config(
     cast=int,
 )
 
-AI_PLAYWRIGHT_MCP_COMMAND = config("AI_PLAYWRIGHT_MCP_COMMAND", default="npx")
-AI_PLAYWRIGHT_MCP_ARGS = config(
-    "AI_PLAYWRIGHT_MCP_ARGS",
-    default="@playwright/mcp@latest,--headless",
-    cast=lambda value: [item.strip() for item in value.split(",") if item.strip()],
+# AI live browser authoring (Selenoid today, Moon later).
+# Authoring runs on the ai_agent Celery queue and drives Selenoid via
+# Selenium-Remote. The runner-container pipeline used by regression
+# (`automation.run_test_execution`) is not involved here.
+AI_AUTHORING_DEFAULT_BROWSER = config("AI_AUTHORING_DEFAULT_BROWSER", default="chrome")
+# Empty means "use Selenoid's default version". Set explicitly (e.g. "120.0")
+# only when the team wants to pin to an image from infra/selenoid/browsers.json.
+AI_AUTHORING_DEFAULT_BROWSER_VERSION = config(
+    "AI_AUTHORING_DEFAULT_BROWSER_VERSION",
+    default="",
 )
-AI_PLAYWRIGHT_MCP_START_TIMEOUT_SECONDS = config(
-    "AI_PLAYWRIGHT_MCP_START_TIMEOUT_SECONDS",
-    default=45,
+AI_AUTHORING_SESSION_TIMEOUT = config("AI_AUTHORING_SESSION_TIMEOUT", default="10m")
+AI_AUTHORING_ENABLE_VNC = config("AI_AUTHORING_ENABLE_VNC", default=True, cast=bool)
+AI_AUTHORING_ENABLE_VIDEO = config("AI_AUTHORING_ENABLE_VIDEO", default=False, cast=bool)
+AI_AUTHORING_OBSERVE_TIMEOUT_SECONDS = config(
+    "AI_AUTHORING_OBSERVE_TIMEOUT_SECONDS",
+    default=30,
     cast=int,
 )
-AI_PLAYWRIGHT_MCP_CALL_TIMEOUT_SECONDS = config(
-    "AI_PLAYWRIGHT_MCP_CALL_TIMEOUT_SECONDS",
+AI_AUTHORING_ACTION_TIMEOUT_SECONDS = config(
+    "AI_AUTHORING_ACTION_TIMEOUT_SECONDS",
     default=30,
+    cast=int,
+)
+
+# Per-session AI authoring knobs surfaced in the UI (request scope).
+# Defaults below are used when the request omits the field. Hard caps below
+# are the upper bound the serializer enforces — they protect the system from
+# runaway sessions / output budgets regardless of what the UI sends.
+AI_AUTHORING_DEFAULT_MAX_STEPS = config(
+    "AI_AUTHORING_DEFAULT_MAX_STEPS",
+    default=12,
+    cast=int,
+)
+AI_AUTHORING_MAX_STEPS_LIMIT = config(
+    "AI_AUTHORING_MAX_STEPS_LIMIT",
+    default=50,
+    cast=int,
+)
+AI_AUTHORING_DEFAULT_TEMPERATURE = config(
+    "AI_AUTHORING_DEFAULT_TEMPERATURE",
+    default=0.0,
+    cast=float,
+)
+AI_AUTHORING_DEFAULT_MAX_TOKENS_PER_STEP = config(
+    "AI_AUTHORING_DEFAULT_MAX_TOKENS_PER_STEP",
+    default=500,
+    cast=int,
+)
+AI_AUTHORING_MAX_TOKENS_PER_STEP_LIMIT = config(
+    "AI_AUTHORING_MAX_TOKENS_PER_STEP_LIMIT",
+    default=2000,
     cast=int,
 )
 

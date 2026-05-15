@@ -155,6 +155,8 @@ export interface StartAIAuthoringSessionPayload {
   test_case: string;
   target_url: string;
   max_steps?: number;
+  temperature?: number;
+  max_tokens_per_step?: number;
   browser?: ExecutionBrowser;
   platform?: ExecutionPlatform;
 }

@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.ai.api.views import (
+    AIAuthoringScriptSaveView,
     AIAuthoringSessionStartView,
     AIAuthoringTraceSaveView,
     AIGenerationSessionCommitView,
@@ -19,6 +20,11 @@ urlpatterns = [
         "ai/authoring/sessions/<uuid:execution_pk>/save-trace/",
         AIAuthoringTraceSaveView.as_view(),
         name="ai-authoring-trace-save",
+    ),
+    path(
+        "ai/authoring/sessions/<uuid:execution_pk>/save-script/",
+        AIAuthoringScriptSaveView.as_view(),
+        name="ai-authoring-script-save",
     ),
     path(
         "ai/generations/",

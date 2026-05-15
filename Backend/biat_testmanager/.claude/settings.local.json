@@ -13,7 +13,11 @@
       "Bash(grep \"^def \" apps/automation/services/*.py)",
       "Bash(awk -F: '{print $2}')",
       "Bash(python manage.py test --verbosity=1)",
-      "Bash(python src/manage.py check)"
+      "Bash(python src/manage.py check)",
+      "PowerShell($env:DEBUG='true'; uv run python src/manage.py makemigrations automation)",
+      "PowerShell(uv lock 2>&1)",
+      "PowerShell($env:DEBUG='true'; uv run python src/manage.py check)",
+      "PowerShell($env:DEBUG='true'; Get-Content _inspect_authoring.py -Raw | .venv\\\\Scripts\\\\python.exe src/manage.py shell)"
     ]
   }
 }

@@ -7,7 +7,7 @@ import type {
   StartAIAuthoringSessionPayload,
   StartAIGenerationPayload,
 } from "../types/ai";
-import type { TestExecution } from "../types/automation";
+import type { AutomationScript, TestExecution } from "../types/automation";
 
 export async function startAIGeneration(
   payload: StartAIGenerationPayload
@@ -55,6 +55,16 @@ export async function saveAIAuthoringTrace(
 ): Promise<SaveAIAuthoringTraceResponse> {
   const { data } = await apiClient.post<SaveAIAuthoringTraceResponse>(
     `/ai/authoring/sessions/${executionId}/save-trace/`,
+    {}
+  );
+  return data;
+}
+
+export async function saveAIAuthoringScript(
+  executionId: string
+): Promise<AutomationScript> {
+  const { data } = await apiClient.post<AutomationScript>(
+    `/ai/authoring/sessions/${executionId}/save-script/`,
     {}
   );
   return data;

@@ -14,6 +14,8 @@ EXPECTED_ROUTES = {
     "automation.run_test_execution": "regression",
     "automation.run_manual_browser_session": "interactive",
     "automation.expire_stale_execution_checkpoints": "regression",
+    "ai.run_authoring_session": "ai_agent",
+    "ai.run_generation_session": "ai_agent",
 }
 
 

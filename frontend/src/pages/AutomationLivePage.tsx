@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { saveAIAuthoringScript } from "../api/ai";
 import {
   getExecution,
   pauseExecution,
@@ -7,6 +8,7 @@ import {
   resumeExecution,
   stopExecution,
 } from "../api/automation/executions";
+import AIAuthoringControlBar from "../components/project/ai/AIAuthoringControlBar";
 import CheckpointModal from "../components/project/automation/CheckpointModal";
 import ExecutionControlBar from "../components/project/automation/ExecutionControlBar";
 import NoVncViewer from "../components/project/automation/NoVncViewer";
@@ -18,6 +20,24 @@ import {
 import { Badge, Button, EmptyState, ErrorMessage, Spinner } from "../components/ui";
 import { useExecutionStore } from "../store/executionStore";
 import type { ExecutionStep, TestExecution } from "../types/automation";
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (typeof data !== "object") return fallback;
+
+  const detail = (data as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.join(" ");
+
+  const fieldErrors = Object.values(data as Record<string, unknown>).flatMap((value) => {
+    if (Array.isArray(value)) return value.map(String);
+    if (typeof value === "string") return [value];
+    return [];
+  });
+  return fieldErrors.length > 0 ? fieldErrors.join(" ") : fallback;
+}
 
 interface StepStatusDotProps {
   readonly status: string;
@@ -68,6 +88,8 @@ export default function AutomationLivePage() {
   const [loadedExecution, setLoadedExecution] = useState<TestExecution | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
+  const [isSavingScript, setIsSavingScript] = useState(false);
+  const [savedScriptInfo, setSavedScriptInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
 
@@ -129,11 +151,23 @@ export default function AutomationLivePage() {
     };
   }, [execution, executionId, loadedExecution]);
 
+  const displayExecution = useMemo(() => {
+    if (!visibleExecution || !result) return visibleExecution;
+    if (!["passed", "failed", "error", "cancelled"].includes(result.status)) {
+      return visibleExecution;
+    }
+    return {
+      ...visibleExecution,
+      status: result.status,
+      result,
+    };
+  }, [result, visibleExecution]);
+
   const isLive =
-    visibleExecution?.status === "running" || visibleExecution?.status === "paused";
+    displayExecution?.status === "running" || displayExecution?.status === "paused";
   const showBrowser =
-    Boolean(visibleExecution?.stream_enabled) &&
-    Boolean(visibleExecution?.has_browser_session) &&
+    Boolean(displayExecution?.stream_enabled) &&
+    Boolean(displayExecution?.has_browser_session) &&
     Boolean(isLive);
 
   const runControl = useCallback(
@@ -152,6 +186,28 @@ export default function AutomationLivePage() {
     },
     [setExecution],
   );
+
+  const handleSaveScript = useCallback(async () => {
+    if (!executionId) return;
+    setIsSavingScript(true);
+    setError(null);
+    setSavedScriptInfo(null);
+    try {
+      const script = await saveAIAuthoringScript(executionId);
+      setSavedScriptInfo(
+        `Selenium script v${script.script_version} saved and activated on this test case.`,
+      );
+    } catch (err: unknown) {
+      setError(
+        getApiErrorMessage(
+          err,
+          "Could not save the AI authoring trace as a Selenium script.",
+        ),
+      );
+    } finally {
+      setIsSavingScript(false);
+    }
+  }, [executionId]);
 
   if (isLoading && !visibleExecution) {
     return (
@@ -208,19 +264,37 @@ export default function AutomationLivePage() {
           >
             Automation
           </Link>
-          <ExecutionControlBar
-            execution={visibleExecution}
-            isBusy={isMutating}
-            onPause={() => void runControl(() => pauseExecution(visibleExecution.id))}
-            onResume={() => void runControl(() => resumeExecution(visibleExecution.id))}
-            onStop={() => void runControl(() => stopExecution(visibleExecution.id))}
-          />
+          {visibleExecution.trigger_type === "ai_authoring" ? (
+            <AIAuthoringControlBar
+              execution={displayExecution}
+              isBusy={isMutating}
+              isSavingScript={isSavingScript}
+              onPause={() => void runControl(() => pauseExecution(visibleExecution.id))}
+              onResume={() => void runControl(() => resumeExecution(visibleExecution.id))}
+              onStop={() => void runControl(() => stopExecution(visibleExecution.id))}
+              onSaveScript={() => void handleSaveScript()}
+            />
+          ) : (
+            <ExecutionControlBar
+              execution={visibleExecution}
+              isBusy={isMutating}
+              onPause={() => void runControl(() => pauseExecution(visibleExecution.id))}
+              onResume={() => void runControl(() => resumeExecution(visibleExecution.id))}
+              onStop={() => void runControl(() => stopExecution(visibleExecution.id))}
+            />
+          )}
         </div>
       </header>
 
       {error && (
         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-2">
           <ErrorMessage message={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
+
+      {savedScriptInfo && (
+        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-xs font-semibold text-emerald-800">
+          {savedScriptInfo}
         </div>
       )}
 
@@ -264,7 +338,14 @@ export default function AutomationLivePage() {
           </div>
         </aside>
 
-        <section className="min-w-0 flex-1 overflow-hidden bg-slate-950">
+        <section className="relative min-w-0 flex-1 overflow-hidden bg-slate-950">
+          {visibleExecution.trigger_type === "ai_authoring" &&
+            visibleExecution.status === "paused" && (
+              <div className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-md bg-amber-500/90 px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-md">
+                Agent paused. You are driving the browser through this noVNC
+                frame. Click "Resume AI" when ready.
+              </div>
+            )}
           {showBrowser ? (
             <NoVncViewer executionId={visibleExecution.id} enabled />
           ) : visibleExecution.has_browser_session && visibleExecution.stream_enabled ? (

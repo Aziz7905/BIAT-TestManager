@@ -210,6 +210,14 @@ def run_execution(execution_id: str):
     if execution.status == ExecutionStatus.CANCELLED:
         return execution
 
+    # Queue isolation: AI authoring runs on the ai_agent queue via
+    # ai.run_authoring_session and owns its own lifecycle. If a regression
+    # dispatch (e.g. a stale resume) routes an AI_AUTHORING execution here,
+    # abort cleanly without touching its status. The ai_agent worker's polling
+    # loop will continue from where it was.
+    if execution.trigger_type == ExecutionTriggerType.AI_AUTHORING:
+        return execution
+
     if execution.run_case_id:
         acquire_run_case_lease(execution.run_case, worker_id=f"exec-{str(execution_id)[:8]}")
 
@@ -275,6 +283,12 @@ def request_execution_pause(execution):
 def request_execution_resume(execution):
     execution.resume()
     publish_execution_status_changed(execution)
+    # AI authoring resume is in-process: the ai_agent worker's pause-poll loop
+    # picks up pause_requested == False and continues with a fresh observe.
+    # Re-queueing on the regression worker would duplicate the work onto the
+    # wrong runner and overwrite the AI authoring result.
+    if execution.trigger_type == ExecutionTriggerType.AI_AUTHORING:
+        return execution
     return queue_execution(execution)
 
 

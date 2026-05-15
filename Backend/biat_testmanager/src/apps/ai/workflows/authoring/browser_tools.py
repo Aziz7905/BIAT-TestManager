@@ -1,16 +1,31 @@
+"""Live browser authoring tool backed by Selenoid via Selenium-Remote WebDriver.
+
+The agent's `observe → decide → execute` loop runs on the `ai_agent` Celery queue.
+This module opens a real visible browser inside Selenoid (later Moon) so the user
+can watch the agent work, pause it, take control over the same noVNC stream, and
+resume. It is intentionally separate from the regression and interactive queues
+which run pre-written Selenium scripts inside runner containers.
+"""
+
 from __future__ import annotations
 
-import asyncio
-import os
+import json
 import re
-import threading
 import time
-from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from django.conf import settings
+from selenium import webdriver
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    TimeoutException,
+    WebDriverException,
+)
+from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 
 class BrowserAuthoringTool(Protocol):
@@ -25,344 +40,391 @@ class BrowserAuthoringTool(Protocol):
     def close(self) -> None: ...
 
 
-class PlaywrightMCPError(RuntimeError):
-    """Raised when the Playwright MCP browser tool cannot start or execute."""
-
-
-class PlaywrightMCPClient:
-    """Synchronous wrapper around the official Playwright MCP server over stdio."""
-
-    def __init__(
-        self,
-        *,
-        command: str,
-        args: list[str],
-        env: dict[str, str] | None = None,
-        start_timeout_seconds: int = 30,
-        call_timeout_seconds: int = 30,
-    ) -> None:
-        self.command = command
-        self.args = args
-        self.env = env
-        self.start_timeout_seconds = start_timeout_seconds
-        self.call_timeout_seconds = call_timeout_seconds
-        self.tool_schemas: dict[str, dict[str, Any]] = {}
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._ready = threading.Event()
-        self._startup_error: BaseException | None = None
-        self._exit_stack: AsyncExitStack | None = None
-        self._session: Any = None
-
-    def start(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run_loop,
-            name="biat-playwright-mcp",
-            daemon=True,
-        )
-        self._thread.start()
-
-        if not self._ready.wait(self.start_timeout_seconds):
-            self.close()
-            raise PlaywrightMCPError("Timed out while starting Playwright MCP server.")
-
-        if self._startup_error is not None:
-            raise PlaywrightMCPError(str(self._startup_error)) from self._startup_error
-
-    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        if self._loop is None or self._session is None:
-            raise PlaywrightMCPError("Playwright MCP session is not started.")
-
-        future = asyncio.run_coroutine_threadsafe(
-            self._session.call_tool(name, arguments or {}),
-            self._loop,
-        )
-        return future.result(timeout=self.call_timeout_seconds)
-
-    def close(self) -> None:
-        if self._loop is not None and self._exit_stack is not None:
-            future = asyncio.run_coroutine_threadsafe(self._exit_stack.aclose(), self._loop)
-            try:
-                future.result(timeout=10)
-            except Exception:
-                pass
-
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=10)
-
-        if self._loop is not None:
-            self._loop.close()
-
-        self._loop = None
-        self._thread = None
-        self._exit_stack = None
-        self._session = None
-
-    def _run_loop(self) -> None:
-        assert self._loop is not None
-        asyncio.set_event_loop(self._loop)
-        self._loop.create_task(self._async_start())
-        self._loop.run_forever()
-
-    async def _async_start(self) -> None:
-        try:
-            from mcp import ClientSession, StdioServerParameters
-            from mcp.client.stdio import stdio_client
-
-            self._exit_stack = AsyncExitStack()
-
-            server_params = StdioServerParameters(
-                command=self.command,
-                args=self.args,
-                env=self.env,
-            )
-
-            # Important for Celery:
-            # Celery may replace sys.stderr with a LoggingProxy object.
-            # LoggingProxy does not implement fileno(), but subprocess/MCP stdio
-            # startup may require a real file descriptor for stderr logging.
-            # Therefore we explicitly pass a real file handle as errlog.
-            errlog = self._open_mcp_errlog()
-            read_stream, write_stream = await self._exit_stack.enter_async_context(
-                stdio_client(server_params, errlog=errlog)
-            )
-
-            self._session = await self._exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            await self._session.initialize()
-
-            tools_result = await self._session.list_tools()
-            self.tool_schemas = {
-                tool.name: _tool_input_schema(tool)
-                for tool in getattr(tools_result, "tools", [])
-            }
-
-        except BaseException as exc:
-            self._startup_error = exc
-
-        finally:
-            self._ready.set()
-
-    def _open_mcp_errlog(self):
-        log_path = getattr(settings, "AI_PLAYWRIGHT_MCP_LOG_FILE", "")
-
-        if log_path:
-            path = Path(log_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            return self._exit_stack.enter_context(
-                open(path, "a", encoding="utf-8")
-            )
-
-        return self._exit_stack.enter_context(
-            open(os.devnull, "w", encoding="utf-8")
-        )
+class BrowserAuthoringError(RuntimeError):
+    """Raised when the Selenoid authoring browser cannot start or execute."""
 
 
 @dataclass
-class PlaywrightMCPBrowserAuthoringTool:
-    """Browser authoring adapter backed by the official Playwright MCP server."""
+class AuthoringBrowserCapabilities:
+    """Capability bag for the AI authoring browser.
 
-    browser: str
-    command: str | None = None
-    args: list[str] | None = None
-    env: dict[str, str] | None = None
-    client_factory: Callable[..., PlaywrightMCPClient] = PlaywrightMCPClient
-    _client: PlaywrightMCPClient | None = field(default=None, init=False)
-    _last_snapshot: str = field(default="", init=False)
+    Backend is capability-based, not hardcoded. V1 UI exposes Chrome only;
+    later UI/team settings can drive every field. Each field maps cleanly to
+    Selenoid today and Moon tomorrow.
+    """
 
-    def start(self) -> None:
-        self._client = self.client_factory(
-            command=self.command or settings.AI_PLAYWRIGHT_MCP_COMMAND,
-            args=list(self.args or settings.AI_PLAYWRIGHT_MCP_ARGS),
-            env=self.env,
-            start_timeout_seconds=settings.AI_PLAYWRIGHT_MCP_START_TIMEOUT_SECONDS,
-            call_timeout_seconds=settings.AI_PLAYWRIGHT_MCP_CALL_TIMEOUT_SECONDS,
-        )
+    browser_name: str = "chrome"
+    # Empty by default — Selenoid uses whatever default version its browsers.json
+    # advertises. Passing the literal string "latest" makes Selenoid 404 with
+    # "Requested environment is not available". Override with a real version
+    # (e.g. "120.0") only when the team needs a pin.
+    browser_version: str = ""
+    platform_name: str = ""  # empty → Selenoid default
+    enable_vnc: bool = True
+    enable_video: bool = False
+    session_timeout: str = "10m"
+    extra_selenoid_options: dict[str, Any] = field(default_factory=dict)
 
-        self._client.start()
-
-        if self.browser and self.browser not in {"chromium", "chrome"}:
-            # Playwright MCP decides browser selection at server startup.
-            # Keep this explicit so unsupported per-session browser values
-            # do not silently pretend to work.
-            self._client.close()
-            self._client = None
-            raise PlaywrightMCPError(
-                "Playwright MCP authoring currently starts with the configured MCP browser. "
-                "Use chromium/chrome in BIAT until per-browser MCP launch profiles are added."
+    def to_options(self) -> Any:
+        """Build the Selenium 4 options object for this browser with Selenoid caps."""
+        browser = (self.browser_name or "chrome").lower()
+        if browser in {"chrome", "chromium"}:
+            options = webdriver.ChromeOptions()
+        elif browser == "firefox":
+            options = webdriver.FirefoxOptions()
+        elif browser == "edge":
+            options = webdriver.EdgeOptions()
+        else:
+            raise BrowserAuthoringError(
+                f"Unsupported authoring browser: {browser}. "
+                "Configure a Selenoid image first."
             )
 
-    def observe(self) -> dict[str, Any]:
-        result = self._call_tool("browser_snapshot", {})
-        snapshot = _mcp_text(result)
-        self._last_snapshot = snapshot
+        options.set_capability("browserName", "chrome" if browser == "chromium" else browser)
+        if self.browser_version:
+            options.set_capability("browserVersion", self.browser_version)
+        if self.platform_name:
+            options.set_capability("platformName", self.platform_name)
 
+        selenoid_options: dict[str, Any] = {
+            "enableVNC": bool(self.enable_vnc),
+            "enableVideo": bool(self.enable_video),
+            "sessionTimeout": self.session_timeout,
+        }
+        selenoid_options.update(self.extra_selenoid_options or {})
+        options.set_capability("selenoid:options", selenoid_options)
+        return options
+
+
+# JavaScript DOM walker. Tags every interactive element with `data-biat-ref="<n>"`
+# (reset on every observe) and returns a structured snapshot the LLM prompt
+# already knows how to consume. Keeps the contract the MCP version exposed
+# so the prompt and graph are unchanged.
+_DOM_WALKER_JS = r"""
+const SELECTOR = [
+  'a[href]', 'button', 'input', 'select', 'textarea', 'summary',
+  '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+  '[role="menuitem"]', '[role="option"]', '[role="tab"]', '[role="switch"]',
+  '[role="combobox"]', '[role="textbox"]', '[contenteditable="true"]',
+  '[onclick]', '[tabindex]:not([tabindex="-1"])'
+].join(',');
+
+// Clear stale refs first so SPA re-renders never leave us pointing at gone nodes.
+document.querySelectorAll('[data-biat-ref]').forEach(el => el.removeAttribute('data-biat-ref'));
+
+function isVisible(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+  const style = window.getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+}
+
+function elementName(el) {
+  return (
+    el.getAttribute('aria-label') ||
+    el.getAttribute('placeholder') ||
+    el.getAttribute('alt') ||
+    el.getAttribute('title') ||
+    (el.innerText || '').trim().slice(0, 120) ||
+    el.getAttribute('name') ||
+    el.getAttribute('id') ||
+    ''
+  );
+}
+
+function elementRole(el) {
+  const role = el.getAttribute('role');
+  if (role) return role;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'a') return 'link';
+  if (tag === 'button') return 'button';
+  if (tag === 'select') return 'combobox';
+  if (tag === 'textarea') return 'textbox';
+  if (tag === 'input') {
+    const t = (el.getAttribute('type') || 'text').toLowerCase();
+    if (t === 'checkbox') return 'checkbox';
+    if (t === 'radio') return 'radio';
+    if (t === 'submit' || t === 'button') return 'button';
+    return 'textbox';
+  }
+  return tag;
+}
+
+const elements = [];
+let ref = 0;
+const nodes = document.querySelectorAll(SELECTOR);
+for (const el of nodes) {
+  if (!isVisible(el)) continue;
+  ref += 1;
+  el.setAttribute('data-biat-ref', String(ref));
+  const role = elementRole(el);
+  const name = elementName(el).replace(/\s+/g, ' ').trim();
+  const line = `- ${role}` + (name ? ` "${name}"` : '') + ` [ref=${ref}]`;
+  elements.push({
+    id: String(ref),
+    ref: String(ref),
+    role: role,
+    name: name.slice(0, 200),
+    line: line.slice(0, 300),
+  });
+  if (elements.length >= 80) break;
+}
+
+const bodyText = (document.body && document.body.innerText) || '';
+const compactText = bodyText.replace(/\s+/g, ' ').trim().slice(0, 1500);
+
+const snapshotLines = [
+  `Page URL: ${location.href}`,
+  `Page Title: ${document.title || ''}`,
+  '',
+  ...elements.map(e => e.line),
+];
+
+return {
+  current_url: location.href,
+  page_title: document.title || '',
+  snapshot: snapshotLines.join('\n'),
+  visible_text_summary: compactText,
+  interactive_elements: elements,
+};
+"""
+
+
+@dataclass
+class SelenoidWebDriverAuthoringTool:
+    """Live browser authoring tool that drives Selenoid (and later Moon) directly.
+
+    Same contract as the previous Playwright MCP tool (observe / execute / start /
+    close / get_stream_session_id) so the agent prompt and graph are unchanged.
+    """
+
+    capabilities: AuthoringBrowserCapabilities = field(default_factory=AuthoringBrowserCapabilities)
+    hub_url: str | None = None
+    driver_factory: Callable[..., WebDriver] = webdriver.Remote
+    _driver: WebDriver | None = field(default=None, init=False)
+
+    def start(self) -> None:
+        hub_url = self.hub_url or settings.SELENOID_HUB_URL
+        options = self.capabilities.to_options()
+        try:
+            self._driver = self.driver_factory(command_executor=hub_url, options=options)
+        except WebDriverException as exc:
+            raise BrowserAuthoringError(
+                f"Selenoid did not accept the authoring session: {exc}"
+            ) from exc
+
+        action_timeout = int(
+            getattr(settings, "AI_AUTHORING_ACTION_TIMEOUT_SECONDS", 30) or 30
+        )
+        try:
+            self._driver.set_page_load_timeout(action_timeout)
+        except WebDriverException:
+            pass
+
+    def observe(self) -> dict[str, Any]:
+        driver = self._require_driver()
+        try:
+            payload = driver.execute_script(_DOM_WALKER_JS)
+        except WebDriverException as exc:
+            raise BrowserAuthoringError(f"DOM walker failed: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            return {
+                "current_url": "",
+                "page_title": "",
+                "snapshot": "",
+                "visible_text_summary": "",
+                "interactive_elements": [],
+            }
+
+        # Normalise types the JS layer may return in browser-specific ways.
         return {
-            "current_url": _extract_snapshot_value(snapshot, "Page URL"),
-            "page_title": _extract_snapshot_value(snapshot, "Page Title"),
-            "snapshot": snapshot,
-            "visible_text_summary": _compact_snapshot_text(snapshot),
-            "interactive_elements": _extract_interactive_elements(snapshot),
+            "current_url": str(payload.get("current_url") or driver.current_url),
+            "page_title": str(payload.get("page_title") or ""),
+            "snapshot": str(payload.get("snapshot") or ""),
+            "visible_text_summary": str(payload.get("visible_text_summary") or ""),
+            "interactive_elements": payload.get("interactive_elements") or [],
         }
 
     def execute(self, action: dict[str, Any], observation: dict[str, Any]) -> dict[str, Any]:
+        driver = self._require_driver()
         action_name = action.get("action")
         started = time.monotonic()
 
         if action_name == "navigate":
             url = action.get("url") or action.get("value")
             if not url:
-                raise PlaywrightMCPError("Navigate action requires a url.")
-
-            result = self._call_tool("browser_navigate", {"url": url})
-            return _action_result(action_name, url, result, started)
+                raise BrowserAuthoringError("navigate action requires a url.")
+            driver.get(url)
+            return _action_result(action_name, url, "Navigation requested.", started)
 
         if action_name == "wait":
-            result = self._call_wait(action)
-            return _action_result(action_name, action.get("value") or "wait", result, started)
+            return self._wait(action, started)
 
         if action_name == "assert_text":
-            expected_text = str(action.get("assertion") or action.get("value") or "").strip()
-            if not expected_text:
-                raise PlaywrightMCPError("assert_text action requires assertion or value.")
-
-            snapshot = observation.get("snapshot") or self.observe().get("snapshot") or ""
-            if expected_text.lower() not in str(snapshot).lower():
-                raise AssertionError(f"Expected text not found in snapshot: {expected_text}")
-
-            return _action_result(action_name, expected_text, "Text found in snapshot.", started)
+            return self._assert_text(action, observation, started)
 
         ref = _resolve_element_ref(action, observation)
+        target_attrs = self._capture_target_attrs(ref)
 
         if action_name == "click":
-            result = self._call_ref_tool(
-                "browser_click",
-                ref,
-                element=action.get("target") or action.get("element") or action.get("reason"),
-            )
-            return _action_result(action_name, ref, result, started)
+            element = self._find_by_ref(ref)
+            element.click()
+            return _action_result(action_name, ref, "Element clicked.", started, target_attrs)
 
         if action_name == "fill":
-            text = action.get("value")
-            if text is None:
-                raise PlaywrightMCPError("fill action requires value.")
-
-            result = self._call_ref_tool("browser_type", ref, text=str(text))
-            return _action_result(action_name, ref, result, started)
+            value = action.get("value")
+            if value is None:
+                raise BrowserAuthoringError("fill action requires value.")
+            element = self._find_by_ref(ref)
+            try:
+                element.clear()
+            except WebDriverException:
+                pass
+            element.send_keys(str(value))
+            return _action_result(action_name, ref, "Element filled.", started, target_attrs)
 
         if action_name == "select":
             value = action.get("value")
             if value is None:
-                raise PlaywrightMCPError("select action requires value.")
-
-            result = self._call_ref_tool(
-                "browser_select_option",
-                ref,
-                values=[str(value)],
-                value=str(value),
-            )
-            return _action_result(action_name, ref, result, started)
+                raise BrowserAuthoringError("select action requires value.")
+            element = self._find_by_ref(ref)
+            select = Select(element)
+            try:
+                select.select_by_visible_text(str(value))
+            except WebDriverException:
+                select.select_by_value(str(value))
+            return _action_result(action_name, ref, "Option selected.", started, target_attrs)
 
         if action_name == "assert_visible":
-            if not _snapshot_contains_ref(observation, ref):
-                raise AssertionError(f"Element ref is not visible in snapshot: {ref}")
+            element = self._find_by_ref(ref)
+            if not element.is_displayed():
+                raise AssertionError(f"Element ref is not visible: {ref}")
+            return _action_result(action_name, ref, "Element is visible.", started, target_attrs)
 
-            return _action_result(action_name, ref, "Element ref found in snapshot.", started)
-
-        raise PlaywrightMCPError(f"Unsupported browser action: {action_name}")
+        raise BrowserAuthoringError(f"Unsupported browser action: {action_name}")
 
     def get_stream_session_id(self) -> str | None:
-        return None
+        """Selenoid issues a session id that maps 1:1 to the noVNC stream URL."""
+        return self._driver.session_id if self._driver else None
 
     def close(self) -> None:
-        if self._client is None:
+        if self._driver is None:
             return
-
         try:
-            if "browser_close" in self._client.tool_schemas:
-                self._client.call_tool("browser_close", {})
-        except Exception:
+            self._driver.quit()
+        except WebDriverException:
             pass
         finally:
-            self._client.close()
-            self._client = None
+            self._driver = None
 
-    def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        if self._client is None:
-            raise PlaywrightMCPError("Playwright MCP browser tool was not started.")
+    # internal helpers ------------------------------------------------------
 
-        return self._client.call_tool(name, arguments)
+    def _require_driver(self) -> WebDriver:
+        if self._driver is None:
+            raise BrowserAuthoringError("Authoring tool was not started.")
+        return self._driver
 
-    def _call_ref_tool(self, tool_name: str, ref: str, **extra: Any) -> Any:
-        schema = self._tool_schema(tool_name)
-        args = {_ref_argument_name(schema): ref}
-        args.update(_filter_tool_args(schema, extra))
-        return self._call_tool(tool_name, args)
+    def _find_by_ref(self, ref: str):
+        driver = self._require_driver()
+        try:
+            return driver.find_element(By.CSS_SELECTOR, f'[data-biat-ref="{ref}"]')
+        except NoSuchElementException as exc:
+            raise BrowserAuthoringError(
+                f"Element ref {ref!r} is no longer in the DOM. "
+                "The agent must observe again before retrying."
+            ) from exc
 
-    def _call_wait(self, action: dict[str, Any]) -> Any:
+    def _capture_target_attrs(self, ref: str) -> dict[str, Any]:
+        """Read the live element's durable attributes for later Selenium translation.
+
+        Best-effort: failures return an empty dict. The trace -> Selenium script
+        translator falls back to other selector strategies when fields are
+        missing.
+        """
+        driver = self._require_driver()
+        try:
+            payload = driver.execute_script(_TARGET_ATTRS_JS, ref)
+        except WebDriverException:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            "tag": str(payload.get("tag") or ""),
+            "type": str(payload.get("type") or ""),
+            "id": str(payload.get("id") or ""),
+            "name": str(payload.get("name") or ""),
+            "aria_label": str(payload.get("aria_label") or ""),
+            "data_testid": str(payload.get("data_testid") or ""),
+            "role": str(payload.get("role") or ""),
+            "text": str(payload.get("text") or "").strip()[:200],
+            "placeholder": str(payload.get("placeholder") or ""),
+        }
+
+    def _wait(self, action: dict[str, Any], started: float) -> dict[str, Any]:
+        driver = self._require_driver()
         text = action.get("assertion") or action.get("value")
-        seconds = _parse_wait_seconds(text)
-        schema = self._tool_schema("browser_wait_for")
+        observe_timeout = int(
+            getattr(settings, "AI_AUTHORING_OBSERVE_TIMEOUT_SECONDS", 30) or 30
+        )
 
         if text and not str(text).replace(".", "", 1).isdigit():
-            args = {"text": str(text)}
-        elif "time" in _schema_properties(schema):
-            args = {"time": seconds}
-        else:
-            args = {"time": seconds}
+            try:
+                WebDriverWait(driver, observe_timeout).until(
+                    EC.text_to_be_present_in_element((By.TAG_NAME, "body"), str(text))
+                )
+            except TimeoutException as exc:
+                raise BrowserAuthoringError(
+                    f"Timed out waiting for text {text!r}."
+                ) from exc
+            return _action_result("wait", str(text), "Text appeared.", started)
 
-        return self._call_tool("browser_wait_for", args)
+        try:
+            seconds = float(text) if text else 1.0
+        except (TypeError, ValueError):
+            seconds = 1.0
+        seconds = min(max(seconds, 0.1), 5.0)
+        time.sleep(seconds)
+        return _action_result("wait", f"{seconds:.1f}s", "Sleep completed.", started)
 
-    def _tool_schema(self, name: str) -> dict[str, Any]:
-        if self._client is None:
-            return {}
+    def _assert_text(
+        self,
+        action: dict[str, Any],
+        observation: dict[str, Any],
+        started: float,
+    ) -> dict[str, Any]:
+        driver = self._require_driver()
+        expected = str(action.get("assertion") or action.get("value") or "").strip()
+        if not expected:
+            raise BrowserAuthoringError("assert_text requires assertion or value.")
 
-        return self._client.tool_schemas.get(name, {})
-
-
-def build_browser_authoring_tool(browser: str) -> BrowserAuthoringTool:
-    return PlaywrightMCPBrowserAuthoringTool(browser=browser)
-
-
-def _tool_input_schema(tool: Any) -> dict[str, Any]:
-    schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {}
-    return schema if isinstance(schema, dict) else {}
-
-
-def _schema_properties(schema: dict[str, Any]) -> dict[str, Any]:
-    properties = schema.get("properties") if isinstance(schema, dict) else None
-    return properties if isinstance(properties, dict) else {}
-
-
-def _filter_tool_args(schema: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
-    properties = _schema_properties(schema)
-
-    if not properties:
-        return {key: value for key, value in values.items() if value is not None}
-
-    return {
-        key: value
-        for key, value in values.items()
-        if value is not None and key in properties
-    }
-
-
-def _ref_argument_name(schema: dict[str, Any]) -> str:
-    properties = _schema_properties(schema)
-
-    if "ref" in properties or "target" not in properties:
-        return "ref"
-
-    return "target"
+        haystack = (
+            observation.get("snapshot")
+            or observation.get("visible_text_summary")
+            or driver.page_source
+            or ""
+        )
+        if expected.lower() not in str(haystack).lower():
+            raise AssertionError(f"Expected text not found on page: {expected}")
+        return _action_result("assert_text", expected, "Text present on page.", started)
 
 
 def _resolve_element_ref(action: dict[str, Any], observation: dict[str, Any]) -> str:
+    """Pick the best ref from the agent's action against the latest observation.
+
+    The prompt tells the agent to use only the integer ``element_ref``. In
+    practice models sometimes fall back to CSS selectors or ids. This resolver
+    has three tiers:
+
+      1. Exact match: candidate is already a ref like "1".
+      2. Hint extraction: pull identifier tokens out of CSS patterns
+         (``input[name='username']``, ``#login``, ``.submit``, etc.) and
+         substring-match them against element name/role/line.
+      3. Plain-string substring match against element name/role/line.
+
+    Only after all three fail do we ask the agent to observe again.
+    """
     raw_candidates = [
         action.get("element_ref"),
         action.get("ref"),
@@ -370,140 +432,185 @@ def _resolve_element_ref(action: dict[str, Any], observation: dict[str, Any]) ->
         action.get("selector"),
         action.get("target"),
     ]
-
     elements = [
         element
         for element in observation.get("interactive_elements", [])
         if isinstance(element, dict)
     ]
-
     refs = {
         str(element.get("ref") or element.get("id")): element
         for element in elements
         if element.get("ref") or element.get("id")
     }
 
+    # Tier 1: exact ref match.
     for candidate in raw_candidates:
         if not candidate:
             continue
-
         candidate_text = str(candidate).strip()
         if candidate_text in refs:
             return candidate_text
 
-    normalized_candidates = [
-        _normalize_ref_lookup(str(candidate))
-        for candidate in raw_candidates
-        if candidate
-    ]
+    # Tiers 2 + 3: build hint tokens from each candidate and substring-match.
+    hint_tokens: list[str] = []
+    for candidate in raw_candidates:
+        if not candidate:
+            continue
+        hint_tokens.extend(_extract_hint_tokens(str(candidate)))
 
+    normalized_hints = [_normalize(token) for token in hint_tokens if token]
     for element in elements:
-        haystack = _normalize_ref_lookup(
+        haystack = _normalize(
             " ".join(
                 str(element.get(key) or "")
-                for key in ("name", "role", "line", "selector", "id", "ref")
+                for key in ("name", "role", "line")
             )
         )
-
-        if any(candidate and candidate in haystack for candidate in normalized_candidates):
+        if any(hint and hint in haystack for hint in normalized_hints):
             return str(element.get("ref") or element.get("id"))
 
-    raise PlaywrightMCPError("Browser action requires an element_ref from the latest MCP snapshot.")
+    raise BrowserAuthoringError(
+        "Action references an element that is not in the latest observation. "
+        "The agent must observe again."
+    )
 
 
-def _normalize_ref_lookup(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.lower())
+# Tokens we extract from CSS-shaped strings so the substring fallback can
+# still find an element when the agent forgets to use the bare ref.
+_CSS_ATTR_PATTERN = re.compile(r"\[([a-zA-Z-]+)\s*[*^$~|]?=\s*['\"]?([^'\"\]]+)['\"]?\]")
+_CSS_ID_PATTERN = re.compile(r"#([A-Za-z_][\w-]*)")
+_CSS_CLASS_PATTERN = re.compile(r"\.([A-Za-z_][\w-]+)")
 
 
-def _snapshot_contains_ref(observation: dict[str, Any], ref: str) -> bool:
-    return ref in {
-        str(element.get("ref") or element.get("id"))
-        for element in observation.get("interactive_elements", [])
-        if isinstance(element, dict)
-    }
+def _extract_hint_tokens(value: str) -> list[str]:
+    """Pull human-readable identifier tokens out of a candidate string.
+
+    Examples:
+        "input[name='username']" -> ["input", "username"]
+        "#login-btn"             -> ["login-btn"]
+        ".btn.submit"            -> ["btn", "submit"]
+        "Username"               -> ["Username"]
+    """
+    raw = value.strip()
+    if not raw:
+        return []
+
+    tokens: list[str] = []
+    for _attr, attr_value in _CSS_ATTR_PATTERN.findall(raw):
+        if attr_value:
+            tokens.append(attr_value)
+    for id_value in _CSS_ID_PATTERN.findall(raw):
+        tokens.append(id_value)
+    for class_value in _CSS_CLASS_PATTERN.findall(raw):
+        tokens.append(class_value)
+
+    # Strip all CSS-specific syntax to get a plain remainder candidate.
+    plain = _CSS_ATTR_PATTERN.sub("", raw)
+    plain = _CSS_ID_PATTERN.sub("", plain)
+    plain = _CSS_CLASS_PATTERN.sub("", plain)
+    plain = plain.strip().strip(":,>+~ ")
+    if plain:
+        tokens.append(plain)
+    elif not tokens:
+        # Fully plain candidate — use the whole value.
+        tokens.append(raw)
+    return tokens
 
 
-def _mcp_text(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-
-    if isinstance(result, dict):
-        content = result.get("content", [])
-    else:
-        content = getattr(result, "content", [])
-
-    chunks: list[str] = []
-
-    for item in content or []:
-        if isinstance(item, dict):
-            text = item.get("text")
-        else:
-            text = getattr(item, "text", None)
-
-        if text:
-            chunks.append(str(text))
-
-    if chunks:
-        return "\n".join(chunks)
-
-    return str(result or "")
+def _normalize(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
-def _extract_interactive_elements(snapshot: str) -> list[dict[str, str]]:
-    elements: list[dict[str, str]] = []
-
-    for line in snapshot.splitlines():
-        ref_match = re.search(r"\[ref=([^\]]+)\]", line)
-        if not ref_match:
-            continue
-
-        stripped = line.strip()
-        role_match = re.match(r"-\s*([a-zA-Z_ -]+)", stripped)
-        name_match = re.search(r'"([^"]+)"', stripped)
-        ref = ref_match.group(1)
-
-        elements.append(
-            {
-                "id": ref,
-                "ref": ref,
-                "role": (role_match.group(1).strip() if role_match else ""),
-                "name": (name_match.group(1).strip() if name_match else ""),
-                "line": stripped,
-            }
-        )
-
-    return elements[:80]
-
-
-def _extract_snapshot_value(snapshot: str, label: str) -> str:
-    pattern = re.compile(rf"{re.escape(label)}:\s*(.+)", re.IGNORECASE)
-
-    for line in snapshot.splitlines():
-        match = pattern.search(line)
-        if match:
-            return match.group(1).strip()
-
-    return ""
-
-
-def _compact_snapshot_text(snapshot: str) -> str:
-    return "\n".join(line.strip() for line in snapshot.splitlines() if line.strip())[:4000]
-
-
-def _parse_wait_seconds(value: Any) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = 1.0
-
-    return min(max(parsed, 0.1), 5.0)
-
-
-def _action_result(action_name: str, target: Any, result: Any, started: float) -> dict[str, Any]:
+def _action_result(
+    action_name: str,
+    target: Any,
+    message: str,
+    started: float,
+    target_attrs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "status": "passed",
         "action": action_name,
         "target": str(target or ""),
-        "mcp_result": _mcp_text(result)[:4000],
+        "message": message,
         "duration_ms": int((time.monotonic() - started) * 1000),
+        "target_attrs": target_attrs or {},
     }
+
+
+# Reads the live element's durable identifier attributes so the trace -> Selenium
+# script translator can pick a stable selector (id / data-testid / name /
+# aria-label / text-xpath) instead of the session-local data-biat-ref. Best-effort
+# — fields that don't exist on the element return "".
+_TARGET_ATTRS_JS = r"""
+const ref = arguments[0];
+const el = document.querySelector('[data-biat-ref="' + ref + '"]');
+if (!el) return {};
+const tag = el.tagName.toLowerCase();
+const text = (el.innerText || el.value || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+return {
+  tag: tag,
+  type: el.getAttribute('type') || '',
+  id: el.id || '',
+  name: el.getAttribute('name') || '',
+  aria_label: el.getAttribute('aria-label') || '',
+  data_testid: (
+    el.getAttribute('data-testid')
+    || el.getAttribute('data-test-id')
+    || el.getAttribute('data-test')
+    || el.getAttribute('data-cy')
+    || el.getAttribute('data-qa')
+    || ''
+  ),
+  role: el.getAttribute('role') || '',
+  text: text,
+  placeholder: el.getAttribute('placeholder') || '',
+};
+"""
+
+
+def build_browser_authoring_tool(browser: str | None = None) -> BrowserAuthoringTool:
+    """Default factory: Selenoid WebDriver tool with Chrome capabilities.
+
+    `browser` is the request-supplied hint (UI dropdown today). Falls back to
+    the team/global default `AI_AUTHORING_DEFAULT_BROWSER` setting.
+    """
+    default_browser = getattr(settings, "AI_AUTHORING_DEFAULT_BROWSER", "chrome")
+    default_version = getattr(settings, "AI_AUTHORING_DEFAULT_BROWSER_VERSION", "latest")
+    session_timeout = getattr(settings, "AI_AUTHORING_SESSION_TIMEOUT", "10m")
+    enable_vnc = bool(getattr(settings, "AI_AUTHORING_ENABLE_VNC", True))
+    enable_video = bool(getattr(settings, "AI_AUTHORING_ENABLE_VIDEO", False))
+
+    caps = AuthoringBrowserCapabilities(
+        browser_name=(browser or default_browser),
+        browser_version=default_version,
+        enable_vnc=enable_vnc,
+        enable_video=enable_video,
+        session_timeout=session_timeout,
+    )
+    return SelenoidWebDriverAuthoringTool(capabilities=caps)
+
+
+__all__ = [
+    "AuthoringBrowserCapabilities",
+    "BrowserAuthoringError",
+    "BrowserAuthoringTool",
+    "SelenoidWebDriverAuthoringTool",
+    "build_browser_authoring_tool",
+]
+
+
+# Convenience JSON dumper for places that want to log the capability config.
+def capabilities_to_json(caps: AuthoringBrowserCapabilities) -> str:
+    return json.dumps(
+        {
+            "browser_name": caps.browser_name,
+            "browser_version": caps.browser_version,
+            "platform_name": caps.platform_name,
+            "enable_vnc": caps.enable_vnc,
+            "enable_video": caps.enable_video,
+            "session_timeout": caps.session_timeout,
+            "extra_selenoid_options": caps.extra_selenoid_options,
+        },
+        ensure_ascii=True,
+    )

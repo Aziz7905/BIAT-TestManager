@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.ai.models import (
@@ -192,7 +193,27 @@ class AIAuthoringSessionStartSerializer(serializers.Serializer):
         ).all()
     )
     target_url = serializers.URLField()
-    max_steps = serializers.IntegerField(required=False, min_value=2, max_value=12, default=12)
+    # Per-session AI authoring knobs surfaced in the UI. Bounds come from
+    # settings so the team manager (or env) can tighten/loosen without code
+    # changes; serializer defaults fall back to the team default when omitted.
+    max_steps = serializers.IntegerField(
+        required=False,
+        min_value=2,
+        max_value=settings.AI_AUTHORING_MAX_STEPS_LIMIT,
+        default=settings.AI_AUTHORING_DEFAULT_MAX_STEPS,
+    )
+    temperature = serializers.FloatField(
+        required=False,
+        min_value=0.0,
+        max_value=1.0,
+        default=settings.AI_AUTHORING_DEFAULT_TEMPERATURE,
+    )
+    max_tokens_per_step = serializers.IntegerField(
+        required=False,
+        min_value=50,
+        max_value=settings.AI_AUTHORING_MAX_TOKENS_PER_STEP_LIMIT,
+        default=settings.AI_AUTHORING_DEFAULT_MAX_TOKENS_PER_STEP,
+    )
     browser = serializers.ChoiceField(
         choices=ExecutionBrowser.choices,
         required=False,
@@ -215,8 +236,8 @@ class AIAuthoringSessionStartSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {
                     "browser": (
-                        "Playwright MCP authoring currently supports chromium/chrome. "
-                        "Configure AI_PLAYWRIGHT_MCP_ARGS for other browser launch profiles later."
+                        "AI browser authoring currently supports chromium/chrome. "
+                        "Configure Selenoid browser capabilities for other launch profiles later."
                     )
                 }
             )

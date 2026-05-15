@@ -25,6 +25,7 @@ class ExecutionTriggerType(models.TextChoices):
     WEBHOOK = "webhook", "Webhook"
     NIGHTLY = "nightly", "Nightly"
     DIAGNOSTIC = "diagnostic", "Diagnostic"
+    AI_AUTHORING = "ai_authoring", "AI Authoring"
 
 
 class ExecutionStatus(models.TextChoices):

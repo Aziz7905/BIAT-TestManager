@@ -23,6 +23,9 @@ from apps.ai.services.sessions import (
     get_generation_session_queryset_for_actor,
     start_generation_session,
 )
+from apps.ai.workflows.authoring.commit_script import (
+    commit_authoring_trace_as_selenium_script,
+)
 from apps.ai.workflows.authoring.service import (
     AIAuthoringError,
     start_browser_authoring_session,
@@ -30,7 +33,7 @@ from apps.ai.workflows.authoring.service import (
 from apps.ai.workflows.authoring.trace import save_authoring_trace_as_draft_steps
 from apps.ai.workflows.generation.commit import AICommitError, commit_selected_drafts
 from apps.automation.models import TestExecution
-from apps.automation.serializers import TestExecutionSerializer
+from apps.automation.serializers import AutomationScriptSerializer, TestExecutionSerializer
 from apps.testing.services.access import can_manage_test_design_for_project
 
 
@@ -177,3 +180,36 @@ class AIAuthoringTraceSaveView(APIView):
         except AIAuthoringError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
         return Response(summary, status=status.HTTP_200_OK)
+
+
+class AIAuthoringScriptSaveView(APIView):
+    """Translate a passed AI authoring trace into a runnable Selenium Python
+    script and persist it as an ``AutomationScript`` row attached to the same
+    test case. The new script becomes the active one for the
+    (test_case, framework=selenium, language=python) tuple, so the regression
+    pipeline picks it up on the next run."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, execution_pk):
+        execution = get_object_or_404(
+            TestExecution.objects.select_related(
+                "test_case",
+                "test_case__scenario",
+                "test_case__scenario__section",
+                "test_case__scenario__section__suite",
+                "test_case__scenario__section__suite__project",
+            ),
+            pk=execution_pk,
+        )
+        try:
+            script = commit_authoring_trace_as_selenium_script(
+                execution=execution,
+                user=request.user,
+            )
+        except AIAuthoringError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        return Response(
+            AutomationScriptSerializer(script, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )

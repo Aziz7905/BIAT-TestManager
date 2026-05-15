@@ -27,6 +27,12 @@ class ExecutionStep(models.Model):
     stack_trace = models.TextField(null=True, blank=True)
     duration_ms = models.IntegerField(null=True, blank=True)
     executed_at = models.DateTimeField(null=True, blank=True)
+    # Durable element attributes captured at action time (AI authoring).
+    # Stores {id, name, aria_label, data_testid, role, text, tag, type, ...}
+    # so the trace -> Selenium script translator can pick a stable selector
+    # (id / data-testid / name / aria-label / text-xpath) instead of the
+    # session-local data-biat-ref the agent used.
+    target_attrs = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "automation_execution_step"

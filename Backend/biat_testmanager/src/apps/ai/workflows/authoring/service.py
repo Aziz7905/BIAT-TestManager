@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 import traceback
 from typing import Any, Callable
 
+from django.conf import settings
 from django.db.models import Max
 from django.utils import timezone
 
@@ -35,7 +38,9 @@ from apps.automation.services.streaming import (
     publish_execution_step_updated,
 )
 
-MAX_AUTHORING_STEPS = 12
+logger = logging.getLogger(__name__)
+
+PAUSE_POLL_INTERVAL_SECONDS = 2
 
 
 class AIAuthoringError(Exception):
@@ -47,9 +52,11 @@ def start_browser_authoring_session(
     user,
     test_case,
     target_url: str,
-    max_steps: int = MAX_AUTHORING_STEPS,
+    max_steps: int | None = None,
     browser: str = ExecutionBrowser.CHROMIUM,
     platform: str = ExecutionPlatform.DESKTOP,
+    temperature: float | None = None,
+    max_tokens_per_step: int | None = None,
 ) -> TestExecution:
     if not can_trigger_test_execution(user, test_case):
         raise AIAuthoringError("You do not have permission to author this test case.")
@@ -75,7 +82,7 @@ def start_browser_authoring_session(
         script=None,
         environment=None,
         triggered_by=user,
-        trigger_type=ExecutionTriggerType.MANUAL,
+        trigger_type=ExecutionTriggerType.AI_AUTHORING,
         status=ExecutionStatus.QUEUED,
         browser=browser,
         platform=platform,
@@ -89,6 +96,8 @@ def start_browser_authoring_session(
             str(execution.id),
             target_url=target_url,
             max_steps=_bounded_max_steps(max_steps),
+            temperature=_bounded_temperature(temperature),
+            max_tokens_per_step=_bounded_max_tokens(max_tokens_per_step),
         )
         if task_identifier:
             execution.celery_task_id = task_identifier
@@ -111,7 +120,9 @@ def run_browser_authoring_session(
     execution_id: str,
     *,
     target_url: str,
-    max_steps: int = MAX_AUTHORING_STEPS,
+    max_steps: int | None = None,
+    temperature: float | None = None,
+    max_tokens_per_step: int | None = None,
     browser_tool_factory: Callable[[str], BrowserAuthoringTool] = build_browser_authoring_tool,
     provider: LLMProvider | None = None,
 ) -> TestExecution:
@@ -128,6 +139,8 @@ def run_browser_authoring_session(
         return execution
 
     max_steps = _bounded_max_steps(max_steps)
+    temperature = _bounded_temperature(temperature)
+    max_tokens_per_step = _bounded_max_tokens(max_tokens_per_step)
     provider = provider or get_team_brain(
         execution.test_case.scenario.section.suite.project.team,
         purpose=ModelProfilePurpose.EXECUTION,
@@ -170,6 +183,15 @@ def run_browser_authoring_session(
             if execution.status == ExecutionStatus.CANCELLED:
                 return execution
 
+            # Pause means the user wants to drive the same Selenoid browser via
+            # noVNC. Keep the tool alive, do NOT call tool.close(); poll until
+            # the user resumes or cancels. On resume we observe a fresh DOM so
+            # the agent sees whatever the user changed during take-over.
+            if execution.pause_requested or execution.status == ExecutionStatus.PAUSED:
+                _wait_until_resumed(execution)
+                if execution.status == ExecutionStatus.CANCELLED:
+                    return execution
+
             observation = tool.observe()
             decision = _next_browser_action(
                 provider,
@@ -177,6 +199,8 @@ def run_browser_authoring_session(
                 observation=observation,
                 trace=trace,
                 max_steps=max_steps,
+                temperature=temperature,
+                max_tokens_per_step=max_tokens_per_step,
             )
             action_name = decision.get("action")
             if action_name == "stop":
@@ -190,9 +214,13 @@ def run_browser_authoring_session(
                     failed_steps=failed_steps,
                     error_message="" if status == ExecutionStatus.PASSED else decision.get("message", ""),
                 )
+                if status == ExecutionStatus.PASSED:
+                    _auto_commit_authoring_script(execution)
                 return execution
 
             if action_name == "ask_user":
+                # Agent itself decided it needs the human. Same end state as a
+                # user-initiated pause: keep tool alive, poll for resume.
                 execution.status = ExecutionStatus.PAUSED
                 execution.pause_requested = True
                 execution.save(update_fields=["status", "pause_requested"])
@@ -206,7 +234,12 @@ def run_browser_authoring_session(
                     value="",
                     status=ExecutionStepStatus.PENDING,
                 )
-                return execution
+                _wait_until_resumed(execution)
+                if execution.status == ExecutionStatus.CANCELLED:
+                    return execution
+                # Fall through to the next loop iteration; observe() picks up
+                # whatever state the user left the browser in.
+                continue
 
             try:
                 result = tool.execute(decision, observation)
@@ -226,6 +259,7 @@ def run_browser_authoring_session(
                     value=decision.get("value") or decision.get("assertion") or "",
                     status=ExecutionStepStatus.PASSED,
                     duration_ms=result.get("duration_ms"),
+                    target_attrs=result.get("target_attrs") or {},
                 )
                 passed_steps += 1
                 trace.append({**decision, **result})
@@ -296,6 +330,8 @@ def _next_browser_action(
     observation: dict[str, Any],
     trace: list[dict[str, Any]],
     max_steps: int,
+    temperature: float,
+    max_tokens_per_step: int,
 ) -> dict[str, Any]:
     messages = [
         {
@@ -315,7 +351,8 @@ def _next_browser_action(
     response = provider.chat(
         messages,
         response_format={"type": "json_object"},
-        max_tokens=500,
+        temperature=temperature,
+        max_tokens=max_tokens_per_step,
     )
     decision = parse_json_content(response.content)
     action_name = decision.get("action")
@@ -349,6 +386,7 @@ def _record_step(
     duration_ms: int | None = None,
     error_message: str = "",
     stack_trace: str = "",
+    target_attrs: dict[str, Any] | None = None,
 ) -> ExecutionStep:
     return ExecutionStep.objects.create(
         execution=execution,
@@ -362,15 +400,90 @@ def _record_step(
         stack_trace=stack_trace or None,
         duration_ms=duration_ms,
         executed_at=timezone.now(),
+        target_attrs=target_attrs or {},
     )
 
 
-def _bounded_max_steps(value: int) -> int:
+def _auto_commit_authoring_script(execution: TestExecution) -> None:
+    if execution.triggered_by_id is None:
+        logger.warning(
+            "Skipping AI authoring script auto-save for execution %s without triggered_by.",
+            execution.id,
+        )
+        return
+
+    try:
+        from apps.ai.workflows.authoring.commit_script import (
+            commit_authoring_trace_as_selenium_script,
+        )
+
+        script = commit_authoring_trace_as_selenium_script(
+            execution=execution,
+            user=execution.triggered_by,
+        )
+        logger.info(
+            "Auto-saved AI authoring Selenium script %s for execution %s.",
+            script.id,
+            execution.id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to auto-save AI authoring Selenium script for execution %s.",
+            execution.id,
+        )
+
+
+def _wait_until_resumed(execution: TestExecution) -> None:
+    """Block the authoring loop while the user drives the Selenoid browser.
+
+    The tool stays alive — user has full noVNC keyboard/mouse over the same
+    browser session. Returns when ``pause_requested`` is cleared (resume) or
+    when ``status`` becomes CANCELLED. On resume we transition status back to
+    RUNNING and publish so the frontend updates.
+
+    Trade-off: holds a gevent slot on the ai_agent queue. Acceptable at the
+    default 20-session cap; a future V2 swaps to session-reattachment so a
+    paused session frees its slot.
+    """
+    if execution.status != ExecutionStatus.PAUSED:
+        execution.status = ExecutionStatus.PAUSED
+        execution.save(update_fields=["status"])
+    publish_execution_status_changed(execution)
+
+    while True:
+        time.sleep(PAUSE_POLL_INTERVAL_SECONDS)
+        execution.refresh_from_db(fields=["status", "pause_requested"])
+        if execution.status == ExecutionStatus.CANCELLED:
+            return
+        if not execution.pause_requested:
+            execution.status = ExecutionStatus.RUNNING
+            execution.save(update_fields=["status"])
+            publish_execution_status_changed(execution)
+            return
+
+
+def _bounded_max_steps(value: int | None) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        parsed = MAX_AUTHORING_STEPS
-    return max(2, min(parsed, MAX_AUTHORING_STEPS))
+        parsed = settings.AI_AUTHORING_DEFAULT_MAX_STEPS
+    return max(2, min(parsed, settings.AI_AUTHORING_MAX_STEPS_LIMIT))
+
+
+def _bounded_temperature(value: float | None) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = settings.AI_AUTHORING_DEFAULT_TEMPERATURE
+    return max(0.0, min(parsed, 1.0))
+
+
+def _bounded_max_tokens(value: int | None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = settings.AI_AUTHORING_DEFAULT_MAX_TOKENS_PER_STEP
+    return max(50, min(parsed, settings.AI_AUTHORING_MAX_TOKENS_PER_STEP_LIMIT))
 
 
 def _cache_session_if_available(execution: TestExecution, tool: BrowserAuthoringTool) -> None:

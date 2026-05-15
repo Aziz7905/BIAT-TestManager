@@ -4,6 +4,17 @@ import type { StartAIAuthoringSessionPayload } from "../../../types/ai";
 import { Button, ErrorMessage, Input, Modal } from "../../ui";
 
 const BROWSER_OPTIONS: ExecutionBrowser[] = ["chromium", "chrome"];
+const MAX_STEPS_MIN = 2;
+const MAX_STEPS_MAX = 50;
+const TEMPERATURE_MIN = 0;
+const TEMPERATURE_MAX = 1;
+const MAX_TOKENS_MIN = 50;
+const MAX_TOKENS_MAX = 2000;
+
+function clampNumber(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(value, min), max);
+}
 
 interface AIAuthoringStartModalProps {
   readonly open: boolean;
@@ -28,6 +39,8 @@ export default function AIAuthoringStartModal({
 }: AIAuthoringStartModalProps) {
   const [targetUrl, setTargetUrl] = useState(defaultTargetUrl);
   const [maxSteps, setMaxSteps] = useState(12);
+  const [temperature, setTemperature] = useState(0);
+  const [maxTokensPerStep, setMaxTokensPerStep] = useState(500);
   const [browser, setBrowser] = useState<ExecutionBrowser>("chromium");
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -38,6 +51,8 @@ export default function AIAuthoringStartModal({
       test_case: testCaseId,
       target_url: trimmedUrl,
       max_steps: maxSteps,
+      temperature,
+      max_tokens_per_step: maxTokensPerStep,
       browser,
       platform: "desktop",
     });
@@ -48,7 +63,7 @@ export default function AIAuthoringStartModal({
       open={open}
       onClose={onClose}
       title="Author with AI"
-      size="md"
+      size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
@@ -101,14 +116,68 @@ export default function AIAuthoringStartModal({
           <Input
             label="Max steps"
             type="number"
-            min={2}
-            max={12}
+            min={MAX_STEPS_MIN}
+            max={MAX_STEPS_MAX}
             value={maxSteps}
             onChange={(event) =>
-              setMaxSteps(Math.min(Math.max(Number(event.target.value) || 2, 2), 12))
+              setMaxSteps(
+                Math.round(
+                  clampNumber(
+                    Number(event.target.value),
+                    MAX_STEPS_MIN,
+                    MAX_STEPS_MAX,
+                    MAX_STEPS_MIN
+                  )
+                )
+              )
             }
           />
         </div>
+
+        <details className="rounded-md border border-slate-200 px-3 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700">
+            Advanced
+          </summary>
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input
+              label="Temperature"
+              type="number"
+              min={TEMPERATURE_MIN}
+              max={TEMPERATURE_MAX}
+              step={0.1}
+              value={temperature}
+              onChange={(event) =>
+                setTemperature(
+                  clampNumber(
+                    Number(event.target.value),
+                    TEMPERATURE_MIN,
+                    TEMPERATURE_MAX,
+                    TEMPERATURE_MIN
+                  )
+                )
+              }
+            />
+            <Input
+              label="Max tokens per step"
+              type="number"
+              min={MAX_TOKENS_MIN}
+              max={MAX_TOKENS_MAX}
+              value={maxTokensPerStep}
+              onChange={(event) =>
+                setMaxTokensPerStep(
+                  Math.round(
+                    clampNumber(
+                      Number(event.target.value),
+                      MAX_TOKENS_MIN,
+                      MAX_TOKENS_MAX,
+                      500
+                    )
+                  )
+                )
+              }
+            />
+          </div>
+        </details>
       </form>
     </Modal>
   );
