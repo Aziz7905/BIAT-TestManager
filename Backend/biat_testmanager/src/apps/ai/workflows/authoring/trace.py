@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from apps.ai.workflows.authoring.service import AIAuthoringError
+from apps.ai.workflows.authoring.trace_utils import (
+    describe_target,
+    display_input_value,
+)
 from apps.automation.models import ExecutionStep, TestExecution
 from apps.automation.models.choices import ExecutionStepStatus
 from apps.testing.models.choices import TestCaseDesignStatus
@@ -53,15 +57,22 @@ def save_authoring_trace_as_draft_steps(*, execution: TestExecution, user) -> di
 
 
 def _trace_step_to_case_step(step: ExecutionStep) -> dict[str, str]:
-    target = step.target_element or "current page"
+    target = describe_target(step.target_attrs or {}, fallback=step.target_element or "current page")
+    display_value = display_input_value(
+        action=step.action,
+        value=step.input_value,
+        attrs=step.target_attrs or {},
+        target=target,
+    )
     if step.action == "navigate":
+        target = step.target_element or "current page"
         return {
             "step": f"Open {target}.",
             "outcome": "The target page is loaded.",
         }
     if step.action == "fill":
         return {
-            "step": f"Fill {target} with {step.input_value or 'the required value'}.",
+            "step": f"Fill {target} with {display_value or 'the required value'}.",
             "outcome": f"{target} contains the entered value.",
         }
     if step.action == "click":
@@ -71,13 +82,19 @@ def _trace_step_to_case_step(step: ExecutionStep) -> dict[str, str]:
         }
     if step.action == "select":
         return {
-            "step": f"Select {step.input_value or 'the required option'} in {target}.",
+            "step": f"Select {display_value or 'the required option'} in {target}.",
             "outcome": f"{target} shows the selected option.",
         }
     if step.action == "assert_text":
         return {
-            "step": f"Verify text {step.input_value or target} is visible.",
+            "step": f"Verify text {display_value or target} is visible.",
             "outcome": "The expected text is present on the page.",
+        }
+    if step.action == "assert_url":
+        expected = display_value or step.input_value or target
+        return {
+            "step": f"Verify URL contains {expected}.",
+            "outcome": "The browser is on the expected page.",
         }
     if step.action == "assert_visible":
         return {

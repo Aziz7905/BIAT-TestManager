@@ -42,7 +42,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             payload=payload,
             headers={"Authorization": f"Bearer {self.api_key}"},
             timeout_seconds=90,
-            max_retries=1,
+            max_retries=3,
         )
         try:
             choice = raw["choices"][0]

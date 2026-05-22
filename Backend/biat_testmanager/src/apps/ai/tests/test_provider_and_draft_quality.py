@@ -69,7 +69,40 @@ class ProviderTimeoutTests(SimpleTestCase):
         self.assertEqual(kwargs["max_retries"], 0)
         self.assertIs(kwargs["payload"]["stream"], False)
 
-    def test_openai_compatible_keeps_cloud_timeout_and_one_429_retry(self):
+    def test_ollama_chat_json_uses_structured_schema_format(self):
+        provider = OllamaProvider(
+            endpoint="http://localhost:11434",
+            model_name="mistral",
+            temperature=0.1,
+            max_tokens=512,
+        )
+        schema = {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {"tool": {"enum": ["browser_snapshot"]}},
+        }
+
+        with patch("apps.ai.providers.ollama.post_json") as post:
+            post.return_value = {
+                "message": {"content": '{"tool": "browser_snapshot"}'},
+                "prompt_eval_count": 1,
+                "eval_count": 1,
+            }
+            result = provider.chat_json(
+                [{"role": "user", "content": "next action"}],
+                schema,
+                temperature=0.2,
+                max_tokens=128,
+            )
+
+        _, kwargs = post.call_args
+        self.assertEqual(result, {"tool": "browser_snapshot"})
+        self.assertEqual(kwargs["payload"]["format"], schema)
+        self.assertIs(kwargs["payload"]["stream"], False)
+        self.assertEqual(kwargs["payload"]["options"]["temperature"], 0.2)
+        self.assertEqual(kwargs["payload"]["options"]["num_predict"], 128)
+
+    def test_openai_compatible_keeps_cloud_timeout_and_rate_limit_retries(self):
         provider = OpenAICompatibleProvider(
             name="groq",
             api_key="test",
@@ -88,7 +121,7 @@ class ProviderTimeoutTests(SimpleTestCase):
 
         _, kwargs = post.call_args
         self.assertEqual(kwargs["timeout_seconds"], 90)
-        self.assertEqual(kwargs["max_retries"], 1)
+        self.assertEqual(kwargs["max_retries"], 3)
 
     def test_post_json_retries_429_using_try_again_delay(self):
         request = httpx.Request("POST", "https://example.test/chat")
@@ -124,6 +157,43 @@ class ProviderTimeoutTests(SimpleTestCase):
         self.assertEqual(result, {"ok": True})
         sleep.assert_called_once_with(3.0)
         self.assertEqual(calls[0]["timeout"], 90)
+
+    def test_post_json_retries_429_using_millisecond_delay(self):
+        request = httpx.Request("POST", "https://example.test/chat")
+        responses = [
+            httpx.Response(
+                429,
+                request=request,
+                text='{"error":{"message":"Rate limit reached. Please try again in 674.999999ms."}}',
+            ),
+            httpx.Response(200, request=request, json={"ok": True}),
+        ]
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, *args, **kwargs):
+                return responses.pop(0)
+
+        with patch("apps.ai.providers.base.httpx.Client", FakeClient), patch(
+            "apps.ai.providers.base.time.sleep"
+        ) as sleep:
+            result = post_json(
+                url="https://example.test/chat",
+                payload={"messages": []},
+                headers={},
+                max_retries=1,
+            )
+
+        self.assertEqual(result, {"ok": True})
+        sleep.assert_called_once_with(1.674999999)
 
 
 class DraftSchemaQualityTests(SimpleTestCase):

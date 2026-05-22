@@ -69,16 +69,20 @@ function StepStatusDot({ status }: StepStatusDotProps) {
 
 interface LiveStepItemProps { readonly step: ExecutionStep; }
 function LiveStepItem({ step }: LiveStepItemProps) {
+  const summary = step.display_summary || `${formatLabel(step.action)} ${step.target_element ?? ""}`.trim();
+  const target = step.display_target || step.target_element;
+  const showTarget = Boolean(target) && target !== summary;
+
   return (
     <div className="border-b border-slate-100 px-3 py-2.5 last:border-b-0">
       <div className="flex items-start gap-2">
         <StepStatusDot status={step.status} />
         <div className="min-w-0">
           <p className="text-xs font-medium leading-tight text-slate-800">
-            {step.step_index + 1}. {step.action}
+            {step.step_index + 1}. {summary}
           </p>
-          {step.target_element && (
-            <p className="mt-0.5 truncate text-[11px] text-slate-400">{step.target_element}</p>
+          {showTarget && (
+            <p className="mt-0.5 truncate text-[11px] text-slate-400">{target}</p>
           )}
           {step.error_message && (
             <p className="mt-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">

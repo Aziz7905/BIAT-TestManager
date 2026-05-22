@@ -393,6 +393,16 @@ AI_AUTHORING_ACTION_TIMEOUT_SECONDS = config(
     default=30,
     cast=int,
 )
+AI_AUTHORING_VISUAL_ACTION_DELAY_MS = config(
+    "AI_AUTHORING_VISUAL_ACTION_DELAY_MS",
+    default=250,
+    cast=int,
+)
+AI_AUTHORING_TYPE_DELAY_MS = config(
+    "AI_AUTHORING_TYPE_DELAY_MS",
+    default=25,
+    cast=int,
+)
 
 # Per-session AI authoring knobs surfaced in the UI (request scope).
 # Defaults below are used when the request omits the field. Hard caps below

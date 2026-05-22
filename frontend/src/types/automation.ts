@@ -70,6 +70,10 @@ export interface ExecutionStep {
   target_element: string | null;
   selector_used: string | null;
   input_value: string | null;
+  target_attrs?: Record<string, unknown>;
+  display_target?: string;
+  display_input_value?: string;
+  display_summary?: string;
   screenshot_url: string | null;
   status: ExecutionStepStatus;
   error_message: string | null;

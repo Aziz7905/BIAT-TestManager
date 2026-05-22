@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from django.utils import timezone
 
 from apps.automation.models import TestResult
@@ -9,6 +11,9 @@ from apps.automation.services.streaming import (
     publish_execution_result_ready,
     publish_execution_status_changed,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 EXECUTION_STATUS_TO_RESULT_STATUS = {
@@ -33,9 +38,23 @@ def finalize_execution_result(
     video_url: str | None = None,
     issues_count: int = 0,
 ):
+    ended_at = execution.ended_at or timezone.now()
     execution.status = status
-    execution.ended_at = execution.ended_at or timezone.now()
-    execution.save(update_fields=["status", "ended_at"])
+    execution.ended_at = ended_at
+    updated = execution.__class__.objects.filter(pk=execution.pk).update(
+        status=status,
+        ended_at=ended_at,
+    )
+    if not updated:
+        logger.warning(
+            "Skipping result finalization for missing execution %s. "
+            "Original status=%s error=%s",
+            execution.pk,
+            status,
+            error_message,
+        )
+        return None
+
     cancel_pending_execution_checkpoints(execution)
     publish_execution_status_changed(execution)
 

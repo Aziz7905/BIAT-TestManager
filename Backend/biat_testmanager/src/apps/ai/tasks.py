@@ -77,10 +77,37 @@ def _run_authoring_session(
         temperature=temperature,
         max_tokens_per_step=max_tokens_per_step,
     )
-    return {
+    return _execution_task_payload(execution)
+
+
+def _execution_task_payload(execution):
+    payload = {
         "execution_id": str(execution.id),
         "status": execution.status,
     }
+
+    try:
+        result = execution.result
+    except Exception:
+        result = None
+    if result and result.error_message:
+        payload["error_message"] = result.error_message[:1000]
+
+    failed_step = (
+        execution.steps.filter(status="failed")
+        .order_by("step_index")
+        .first()
+    )
+    if failed_step is not None:
+        payload["failed_step"] = {
+            "step_index": failed_step.step_index,
+            "action": failed_step.action,
+            "target": failed_step.target_element,
+            "selector": failed_step.selector_used,
+            "error_message": (failed_step.error_message or "")[:1000],
+        }
+
+    return payload
 
 
 def enqueue_generation_session_task(session_id: str):

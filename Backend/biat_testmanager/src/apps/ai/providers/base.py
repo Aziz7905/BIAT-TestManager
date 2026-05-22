@@ -109,9 +109,17 @@ def _retry_delay_seconds(response: httpx.Response) -> float:
         except ValueError:
             pass
 
-    match = re.search(r"try again in\s+([0-9]+(?:\.[0-9]+)?)s", response.text, re.IGNORECASE)
+    match = re.search(
+        r"try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s|sec|secs|second|seconds)\b",
+        response.text,
+        re.IGNORECASE,
+    )
     if match:
-        return float(match.group(1)) + 1.0
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        if unit == "ms":
+            return (value / 1000.0) + 1.0
+        return value + 1.0
     return 1.0
 
 

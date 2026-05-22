@@ -15,6 +15,7 @@ from apps.automation.models import (
     ExecutionStatus,
     TestArtifact,
     TestExecution,
+    TestResult,
 )
 from apps.automation.models.choices import (
     ArtifactType,
@@ -164,6 +165,30 @@ class AutomationServiceTests(TestCase):
         self.assertIsNotNone(execution.ended_at)
         self.assertEqual(result.status, "passed")
         self.assertEqual(result.total_steps, 1)
+
+    def test_finalize_execution_result_handles_missing_execution_row(self):
+        execution = create_execution_record(
+            test_case=self.test_case,
+            triggered_by=self.user,
+            trigger_type=ExecutionTriggerType.MANUAL,
+            browser="chromium",
+            platform="desktop",
+        )
+        execution_id = execution.id
+        TestExecution.objects.filter(pk=execution_id).delete()
+
+        result = finalize_execution_result(
+            execution,
+            status=ExecutionStatus.ERROR,
+            duration_ms=0,
+            total_steps=0,
+            passed_steps=0,
+            failed_steps=0,
+            error_message="Selenoid did not accept the session.",
+        )
+
+        self.assertIsNone(result)
+        self.assertFalse(TestResult.objects.filter(execution_id=execution_id).exists())
 
     def test_execution_pause_resume_and_stop_methods_are_state_safe(self):
         execution = TestExecution.objects.create(

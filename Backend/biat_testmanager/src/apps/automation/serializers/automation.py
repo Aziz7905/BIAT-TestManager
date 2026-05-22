@@ -1,5 +1,10 @@
 from rest_framework import serializers
 
+from apps.ai.workflows.authoring.trace_utils import (
+    describe_target,
+    display_input_value,
+    display_summary,
+)
 from apps.automation.models import (
     AutomationScript,
     AutomationScriptGeneratedBy,
@@ -161,6 +166,10 @@ class AutomationScriptWriteSerializer(serializers.ModelSerializer):
 
 
 class ExecutionStepSerializer(serializers.ModelSerializer):
+    display_target = serializers.SerializerMethodField()
+    display_input_value = serializers.SerializerMethodField()
+    display_summary = serializers.SerializerMethodField()
+
     class Meta:
         model = ExecutionStep
         fields = [
@@ -171,6 +180,10 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "target_element",
             "selector_used",
             "input_value",
+            "target_attrs",
+            "display_target",
+            "display_input_value",
+            "display_summary",
             "screenshot_url",
             "status",
             "error_message",
@@ -178,6 +191,27 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "duration_ms",
             "executed_at",
         ]
+
+    def get_display_target(self, obj):
+        return describe_target(obj.target_attrs or {}, fallback=obj.target_element or "")
+
+    def get_display_input_value(self, obj):
+        target = self.get_display_target(obj)
+        return display_input_value(
+            action=obj.action,
+            value=obj.input_value,
+            attrs=obj.target_attrs or {},
+            target=target,
+        )
+
+    def get_display_summary(self, obj):
+        target = self.get_display_target(obj)
+        return display_summary(
+            action=obj.action,
+            target=target,
+            input_value=obj.input_value or "",
+            attrs=obj.target_attrs or {},
+        )
 
 
 class ExecutionCheckpointSerializer(serializers.ModelSerializer):

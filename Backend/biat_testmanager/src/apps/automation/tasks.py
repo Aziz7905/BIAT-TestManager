@@ -21,10 +21,7 @@ from apps.automation.services.manual_browser import run_manual_browser_session
 @shared_task(bind=True, name="automation.run_test_execution")
 def run_test_execution_task(self, execution_id: str):
     execution = run_execution(execution_id)
-    return {
-        "execution_id": str(execution.id),
-        "status": execution.status,
-    }
+    return _execution_task_payload(execution)
 
 
 @shared_task(name="automation.expire_stale_execution_checkpoints")
@@ -38,10 +35,37 @@ def expire_stale_execution_checkpoints_task():
 @shared_task(bind=True, name="automation.run_manual_browser_session")
 def run_manual_browser_session_task(self, execution_id: str, target_url: str = ""):
     execution = run_manual_browser_session(execution_id, target_url=target_url)
-    return {
+    return _execution_task_payload(execution)
+
+
+def _execution_task_payload(execution):
+    payload = {
         "execution_id": str(execution.id),
         "status": execution.status,
     }
+
+    try:
+        result = execution.result
+    except Exception:
+        result = None
+    if result and result.error_message:
+        payload["error_message"] = result.error_message[:1000]
+
+    failed_step = (
+        execution.steps.filter(status="failed")
+        .order_by("step_index")
+        .first()
+    )
+    if failed_step is not None:
+        payload["failed_step"] = {
+            "step_index": failed_step.step_index,
+            "action": failed_step.action,
+            "target": failed_step.target_element,
+            "selector": failed_step.selector_used,
+            "error_message": (failed_step.error_message or "")[:1000],
+        }
+
+    return payload
 
 
 def enqueue_execution_task(execution_id: str):
