@@ -1,11 +1,11 @@
 from apps.specs.models import SpecificationSourceType
 
+from .base import SpecificationSourceParseError
 from .csv_parser import CSVSpecificationSourceParser
 from .docx_parser import DOCXSpecificationSourceParser
 from .jira_parser import JiraSpecificationSourceParser
 from .pdf_parser import PDFSpecificationSourceParser
 from .text_parser import TextSpecificationSourceParser
-from .url_parser import URLSpecificationSourceParser
 from .xlsx_parser import XLSXSpecificationSourceParser
 
 
@@ -17,12 +17,16 @@ PARSER_MAP = {
     SpecificationSourceType.PDF: PDFSpecificationSourceParser,
     SpecificationSourceType.DOCX: DOCXSpecificationSourceParser,
     SpecificationSourceType.JIRA_ISSUE: JiraSpecificationSourceParser,
-    SpecificationSourceType.URL: URLSpecificationSourceParser,
     SpecificationSourceType.FILE_UPLOAD: TextSpecificationSourceParser,
 }
 
 
 def get_parser_for_source(source):
+    if source.source_type == SpecificationSourceType.URL:
+        raise SpecificationSourceParseError(
+            "URL specification sources are disabled. Upload a file, paste text, or provide a Jira issue key."
+        )
+
     parser_class = PARSER_MAP.get(source.source_type)
 
     if source.source_type == SpecificationSourceType.FILE_UPLOAD and source.file:
@@ -40,4 +44,3 @@ def get_parser_for_source(source):
         parser_class = TextSpecificationSourceParser
 
     return parser_class()
-

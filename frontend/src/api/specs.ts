@@ -1,6 +1,7 @@
 import apiClient from "./client";
 import type { PaginatedResponse } from "../types/common";
 import type {
+  ApplyRegionMappingPayload,
   CreateSpecificationSourcePayload,
   ImportSpecificationSourceResponse,
   SpecificationDetail,
@@ -99,6 +100,17 @@ export async function importSpecificationSource(
 ): Promise<ImportSpecificationSourceResponse> {
   const { data } = await apiClient.post<ImportSpecificationSourceResponse>(
     `/specification-sources/${sourceId}/import/`
+  );
+  return data;
+}
+
+export async function applyRegionMapping(
+  sourceId: string,
+  payload: ApplyRegionMappingPayload
+): Promise<SpecificationSourceDetail> {
+  const { data } = await apiClient.post<SpecificationSourceDetail>(
+    `/specification-sources/${sourceId}/region-mapping/`,
+    payload
   );
   return data;
 }

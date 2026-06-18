@@ -21,9 +21,11 @@ import type {
   SpecificationSourceListItem,
   SpecificationSourceRecord,
   SpecificationSourceType,
+  SpecRegionMappingTarget,
 } from "../../../types/specs";
 import CreateSpecificationSourceModal from "./CreateSpecificationSourceModal";
 import DeleteSpecificationModal from "./DeleteSpecificationModal";
+import RegionMappingModal from "./RegionMappingModal";
 import SourceRecordEditModal from "./SourceRecordEditModal";
 import SpecificationDetailPane from "./SpecificationDetailPane";
 import SpecificationListPane from "./SpecificationListPane";
@@ -52,6 +54,7 @@ export default function ProjectSpecificationsWorkspace({
   const [sourceDetailError, setSourceDetailError] = useState<string | null>(null);
   const [createSourceOpen, setCreateSourceOpen] = useState(false);
   const [recordEditTarget, setRecordEditTarget] = useState<SpecificationSourceRecord | null>(null);
+  const [mappingRegion, setMappingRegion] = useState<SpecRegionMappingTarget | null>(null);
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deletingSource, setDeletingSource] = useState(false);
@@ -370,6 +373,7 @@ export default function ProjectSpecificationsWorkspace({
                 onImportSelected={handleImportSource}
                 onDeleteSelectedRecords={handleDeleteSelectedRecords}
                 onEditRecord={setRecordEditTarget}
+                onMapRegion={setMappingRegion}
                 onOpenSpec={(specId) => {
                   setSelectedSpecificationId(specId);
                   setMode("specifications");
@@ -445,6 +449,17 @@ export default function ProjectSpecificationsWorkspace({
         onClose={() => setRecordEditTarget(null)}
         onSaved={async () => {
           setRecordEditTarget(null);
+          await Promise.all([refreshSelectedSource(), loadSourcesPage(sourcePage)]);
+        }}
+      />
+
+      <RegionMappingModal
+        open={Boolean(mappingRegion)}
+        sourceId={selectedSourceId}
+        region={mappingRegion}
+        onClose={() => setMappingRegion(null)}
+        onSaved={async () => {
+          setMappingRegion(null);
           await Promise.all([refreshSelectedSource(), loadSourcesPage(sourcePage)]);
         }}
       />

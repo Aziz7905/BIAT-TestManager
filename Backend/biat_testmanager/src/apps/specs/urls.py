@@ -10,6 +10,7 @@ from apps.specs.views import (
     SpecificationSourceRecordDetailView,
     SpecificationSourceRecordListView,
     SpecificationSourceRecordSelectedDeleteView,
+    SpecificationSourceRegionMappingView,
 )
 
 urlpatterns = [
@@ -32,6 +33,11 @@ urlpatterns = [
         "specification-sources/<uuid:pk>/import/",
         SpecificationSourceImportView.as_view(),
         name="specification-source-import",
+    ),
+    path(
+        "specification-sources/<uuid:pk>/region-mapping/",
+        SpecificationSourceRegionMappingView.as_view(),
+        name="specification-source-region-mapping",
     ),
     path(
         "specification-sources/<uuid:source_pk>/records/",

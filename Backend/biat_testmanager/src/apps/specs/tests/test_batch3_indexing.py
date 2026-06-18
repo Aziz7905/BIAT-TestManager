@@ -21,6 +21,7 @@ from apps.specs.serializers import SpecificationSerializer
 from apps.specs.services.embeddings import EmbeddingResult
 from apps.specs.services.embedding_models import infer_embedding_provider
 from apps.specs.services.indexing import synchronize_specification_index
+from apps.specs.services.indexing import full_text_retrieve_chunks, hybrid_retrieve_chunks
 from apps.specs.services.ingestion import parse_specification_source
 from apps.specs.services.parsers.base import ParsedSourceRecord, ParsedSourceResult
 
@@ -207,3 +208,60 @@ class Batch3SpecificationIndexingTests(TestCase):
         updated_specification = serializer.save()
 
         synchronize_index_mock.assert_called_once_with(updated_specification, force=True)
+
+    def test_full_text_retrieval_finds_matching_requirement_chunks(self):
+        matching = Specification.objects.create(
+            project=self.project,
+            title="REQ-TRANSFER",
+            content="Customer transfer limits must be validated before approval.",
+            source_type=SpecificationSourceType.MANUAL,
+            uploaded_by=self.user,
+        )
+        unrelated = Specification.objects.create(
+            project=self.project,
+            title="REQ-CARDS",
+            content="Card activation uses a different workflow.",
+            source_type=SpecificationSourceType.MANUAL,
+            uploaded_by=self.user,
+        )
+        matching_chunk = matching.chunks.create(
+            chunk_index=0,
+            content="Business Rule: validate transfer limits before approval.",
+        )
+        unrelated.chunks.create(
+            chunk_index=0,
+            content="Card activation workflow.",
+        )
+
+        results = full_text_retrieve_chunks(
+            "transfer approval limits",
+            project=self.project,
+            top_k=5,
+        )
+
+        self.assertEqual(results[0].id, matching_chunk.id)
+        self.assertGreater(getattr(results[0], "search_rank"), 0)
+
+    @patch("apps.specs.services.indexing.retrieve_similar_chunks", side_effect=RuntimeError("vector unavailable"))
+    def test_hybrid_retrieval_uses_full_text_when_vector_is_unavailable(self, _vector_mock):
+        specification = Specification.objects.create(
+            project=self.project,
+            title="REQ-PAYMENT",
+            content="Payment approval requires dual validation.",
+            source_type=SpecificationSourceType.MANUAL,
+            uploaded_by=self.user,
+        )
+        chunk = specification.chunks.create(
+            chunk_index=0,
+            content="Expected Result: payment approval appears in audit history.",
+        )
+
+        results = hybrid_retrieve_chunks(
+            "payment approval audit",
+            project=self.project,
+            top_k=3,
+        )
+
+        self.assertEqual(results[0].id, chunk.id)
+        self.assertEqual(results[0].retrieval_strategy, "hybrid")
+        self.assertIn("full_text", results[0].retrieval_sources)

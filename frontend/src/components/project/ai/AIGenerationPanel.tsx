@@ -25,6 +25,9 @@ interface AIGenerationPanelProps {
   tree: ProjectTree;
   initialSuiteId?: string | null;
   initialSectionId?: string | null;
+  initialObjective?: string;
+  initialSourceRefs?: Record<string, unknown>;
+  initialJiraIssueKey?: string;
   onClose: () => void;
   onCommitted: () => Promise<void> | void;
 }
@@ -46,6 +49,9 @@ export default function AIGenerationPanel({
   tree,
   initialSuiteId,
   initialSectionId,
+  initialObjective = "",
+  initialSourceRefs,
+  initialJiraIssueKey = "",
   onClose,
   onCommitted,
 }: AIGenerationPanelProps) {
@@ -70,18 +76,18 @@ export default function AIGenerationPanel({
 
   useEffect(() => {
     if (!open) return;
-    setObjective("");
+    setObjective(initialObjective);
     setSelectedSuiteId(initialSuiteId ?? "");
     setSelectedSectionId(initialSectionId ?? "");
     setSelectedSpecificationId("");
-    setJiraIssueKey("");
+    setJiraIssueKey(initialJiraIssueKey);
     setSession(null);
     setDraft(null);
     setSelectedCaseIds(new Set());
     setGenerating(false);
     setSaving(null);
     setError("");
-  }, [initialSectionId, initialSuiteId, open]);
+  }, [initialJiraIssueKey, initialObjective, initialSectionId, initialSuiteId, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -145,10 +151,14 @@ export default function AIGenerationPanel({
       const nextSession = await startAIGeneration({
         project: projectId,
         objective: objective.trim(),
-        source_type: selectedSpecificationId || jiraIssueKey.trim() ? "mixed" : "prompt",
+        source_type:
+          selectedSpecificationId || jiraIssueKey.trim() || hasSourceRefs(initialSourceRefs)
+            ? "mixed"
+            : "prompt",
         target_suite: selectedSuiteId || null,
         target_section: selectedSectionId || null,
         attached_specification: selectedSpecificationId || null,
+        source_refs: initialSourceRefs,
         jira_issue_key: jiraIssueKey.trim(),
       });
       setSession(nextSession);
@@ -796,4 +806,8 @@ function errorMessage(error: unknown) {
     return JSON.stringify(data);
   }
   return "Something went wrong.";
+}
+
+function hasSourceRefs(sourceRefs: Record<string, unknown> | undefined) {
+  return Boolean(sourceRefs && Object.keys(sourceRefs).length > 0);
 }

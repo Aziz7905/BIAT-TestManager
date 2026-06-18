@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getProject, getProjectTree } from "../api/projects/projects";
 import { getCasesForScenario } from "../api/testing";
 import type { Project } from "../types/project";
@@ -22,6 +22,7 @@ type AIPanelTarget = { suiteId?: string; sectionId?: string } | null;
 
 export default function ProjectWorkspacePage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [project, setProject] = useState<Project | null>(null);
@@ -189,6 +190,21 @@ export default function ProjectWorkspacePage() {
               <p className="mt-0.5 text-xs text-slate-500">{project.team_name}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => navigate(`/projects/${id}/testpilot`)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100"
+                title="Open TestPilot Studio"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"
+                  />
+                </svg>
+                TestPilot
+              </button>
               <button
                 onClick={() => setAiPanelTarget({})}
                 className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"

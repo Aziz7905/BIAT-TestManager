@@ -4,10 +4,14 @@ from typing import Any
 
 from apps.ai.models import AIGenerationContextType, AIGenerationRetrievedContext
 from apps.specs.models import SpecChunk, Specification, SpecificationSource
-from apps.specs.services.indexing import keyword_retrieve_chunks, retrieve_similar_chunks
+from apps.specs.services.indexing import (
+    hybrid_retrieve_chunks,
+    keyword_retrieve_chunks,
+    retrieve_similar_chunks,
+)
 
 MAX_CHUNK_CONTENT_CHARS = 1800
-MAX_SOURCE_BUNDLE_CHUNKS = 30
+MAX_SOURCE_BUNDLE_CHUNKS = 40
 
 
 def retrieve_generation_context(
@@ -25,6 +29,7 @@ def retrieve_generation_context(
     chunks: list[SpecChunk] = []
     if specifications and bundle_mode:
         chunks = _retrieve_bundle_chunks(
+            query,
             specifications,
             max_chunks=max(top_k, min(MAX_SOURCE_BUNDLE_CHUNKS, len(specifications) * 2)),
         )
@@ -71,6 +76,8 @@ def retrieve_generation_context(
                 "chunk_index": chunk.chunk_index,
                 "chunk_type": chunk.chunk_type,
                 "component_tag": chunk.component_tag,
+                "retrieval_strategy": getattr(chunk, "retrieval_strategy", ""),
+                "retrieval_sources": sorted(getattr(chunk, "retrieval_sources", set()) or []),
             },
         )
 
@@ -78,17 +85,30 @@ def retrieve_generation_context(
 
 
 def _retrieve_bundle_chunks(
+    query: str,
     specifications: list[Specification],
     *,
     max_chunks: int,
 ) -> list[SpecChunk]:
-    chunks = list(
+    coverage_seed = list(
         SpecChunk.objects.filter(specification__in=specifications)
         .select_related("specification", "specification__project")
-        .order_by("specification__title", "chunk_index")[:max_chunks]
+        .order_by("specification__title", "chunk_index")
     )
+    first_chunk_by_spec: dict[str, SpecChunk] = {}
+    for chunk in coverage_seed:
+        first_chunk_by_spec.setdefault(str(chunk.specification_id), chunk)
+
+    ranked_chunks = list(
+        hybrid_retrieve_chunks(
+            query,
+            top_k=max_chunks,
+            specifications=specifications,
+        )
+    )
+    chunks = _dedupe_chunks([*first_chunk_by_spec.values(), *ranked_chunks])
     if chunks:
-        return chunks
+        return chunks[:max_chunks]
 
     return [
         chunk
@@ -106,7 +126,7 @@ def _retrieve_chunks_for_specification(
 ) -> list[SpecChunk]:
     try:
         chunks = list(
-            retrieve_similar_chunks(
+            hybrid_retrieve_chunks(
                 query,
                 top_k=top_k,
                 project=project,
@@ -206,6 +226,20 @@ def _dedupe_chunks(chunks: list[SpecChunk]) -> list[SpecChunk]:
 
 
 def _score_chunk(chunk: SpecChunk) -> float | None:
+    retrieval_score = getattr(chunk, "retrieval_score", None)
+    if retrieval_score is not None:
+        try:
+            return float(retrieval_score)
+        except (TypeError, ValueError):
+            pass
+
+    search_rank = getattr(chunk, "search_rank", None)
+    if search_rank is not None:
+        try:
+            return float(search_rank)
+        except (TypeError, ValueError):
+            pass
+
     distance = getattr(chunk, "distance", None)
     if distance is None:
         return None
@@ -230,5 +264,7 @@ def _chunk_context_item(
         "chunk_type": chunk.chunk_type,
         "component_tag": chunk.component_tag,
         "score": score,
+        "retrieval_strategy": getattr(chunk, "retrieval_strategy", ""),
+        "retrieval_sources": sorted(getattr(chunk, "retrieval_sources", set()) or []),
         "content": chunk.content[:max_content_chars],
     }

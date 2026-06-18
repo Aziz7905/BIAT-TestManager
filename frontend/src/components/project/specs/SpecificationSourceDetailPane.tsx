@@ -1,5 +1,10 @@
+import { useMemo } from "react";
 import { Badge, Button, EmptyState, Spinner } from "../../ui";
-import type { SpecificationSourceDetail, SpecificationSourceRecord } from "../../../types/specs";
+import type {
+  SpecificationSourceDetail,
+  SpecificationSourceRecord,
+  SpecRegionMappingTarget,
+} from "../../../types/specs";
 import {
   formatDateTime,
   parserStatusColor,
@@ -21,8 +26,85 @@ interface SpecificationSourceDetailPaneProps {
   onImportSelected: () => void;
   onDeleteSelectedRecords: () => void;
   onEditRecord: (record: SpecificationSourceRecord) => void;
+  onMapRegion: (region: SpecRegionMappingTarget) => void;
   onOpenSpec: (specId: string) => void;
   onToggleRecordSelection: (record: SpecificationSourceRecord, selected: boolean) => void;
+}
+
+interface RegionGroup {
+  id: string;
+  structuralType: string;
+  target: SpecRegionMappingTarget;
+  records: SpecificationSourceRecord[];
+}
+
+function buildRegionGroups(records: SpecificationSourceRecord[]): RegionGroup[] {
+  const order: string[] = [];
+  const buckets = new Map<string, SpecificationSourceRecord[]>();
+
+  for (const record of records) {
+    const regionId = record.record_metadata?.structure?.region_id ?? record.id;
+    if (!buckets.has(regionId)) {
+      order.push(regionId);
+      buckets.set(regionId, []);
+    }
+    buckets.get(regionId)!.push(record);
+  }
+
+  return order.map((id) => {
+    const grouped = buckets.get(id)!;
+    const structure = grouped[0]?.record_metadata?.structure;
+    const review = grouped.find((record) => record.record_metadata?.review)?.record_metadata?.review;
+    return {
+      id,
+      structuralType: structure?.structural_type ?? "unknown",
+      records: grouped,
+      target: {
+        region_id: structure?.region_id ?? id,
+        container: structure?.container ?? "",
+        source_range: structure?.source_range ?? "",
+        structural_type: structure?.structural_type ?? "unknown",
+        columns: regionColumns(grouped),
+        record_type: review?.record_type ?? null,
+        column_mapping: review?.column_mapping ?? {},
+      },
+    };
+  });
+}
+
+function regionColumns(records: SpecificationSourceRecord[]): string[] {
+  const structure = records[0]?.record_metadata?.structure;
+  const headerValues = structure?.header_candidates?.[0]?.values;
+  if (headerValues && headerValues.length) {
+    return headerValues.filter(Boolean);
+  }
+  const byColumn = new Map<number, string>();
+  for (const record of records) {
+    for (const cell of record.record_metadata?.structure?.row?.cells ?? []) {
+      if (!byColumn.has(cell.column)) {
+        byColumn.set(cell.column, cell.header_candidate);
+      }
+    }
+  }
+  if (byColumn.size) {
+    return [...byColumn.entries()].sort((a, b) => a[0] - b[0]).map(([, label]) => label);
+  }
+  // Context regions carry the full grid; use its first row as the column labels.
+  const firstGridRow = structure?.grid?.[0];
+  if (firstGridRow) {
+    return firstGridRow.map((cell) => cell.displayed_value || cell.raw_value).filter(Boolean);
+  }
+  return [];
+}
+
+function regionStatus(group: RegionGroup): { label: string; color: "yellow" | "green" | "slate" } {
+  const review = group.records.find((record) => record.record_metadata?.review)?.record_metadata?.review;
+  if (review?.record_type === "ignore") return { label: "Ignored", color: "slate" };
+  if (group.structuralType === "table") {
+    if (review?.confirmed) return { label: `Mapped: ${review.record_type}`, color: "green" };
+    return { label: "Needs mapping", color: "yellow" };
+  }
+  return { label: review?.record_type ?? group.structuralType, color: "slate" };
 }
 
 export default function SpecificationSourceDetailPane({
@@ -39,9 +121,15 @@ export default function SpecificationSourceDetailPane({
   onImportSelected,
   onDeleteSelectedRecords,
   onEditRecord,
+  onMapRegion,
   onOpenSpec,
   onToggleRecordSelection,
 }: SpecificationSourceDetailPaneProps) {
+  const regionGroups = useMemo(
+    () => (detail ? buildRegionGroups(detail.records) : []),
+    [detail]
+  );
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -129,9 +217,9 @@ export default function SpecificationSourceDetailPane({
       <div className="px-6 py-5">
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
-            <h4 className="text-sm font-semibold text-slate-900">Source records</h4>
+            <h4 className="text-sm font-semibold text-slate-900">Detected regions</h4>
             <p className="mt-0.5 text-xs text-slate-500">
-              Review the parsed requirement rows before import.
+              Confirm a type and column mapping for tables before import.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -149,77 +237,96 @@ export default function SpecificationSourceDetailPane({
           </div>
         </div>
 
-        {detail.records.length === 0 ? (
+        {regionGroups.length === 0 ? (
           <EmptyState
             title="No records yet"
             description="Parse this source to populate records for review."
           />
         ) : (
-          <div className="overflow-hidden rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Import</th>
-                  <th className="px-4 py-3">Title</th>
-                  <th className="px-4 py-3">Reference</th>
-                  <th className="px-4 py-3">Section</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Specification</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {detail.records.map((record) => (
-                  <tr
-                    key={record.id}
-                    onClick={() => onEditRecord(record)}
-                    className="cursor-pointer transition hover:bg-slate-50"
-                  >
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        checked={record.is_selected}
-                        disabled={Boolean(recordUpdatingIds[record.id])}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={(event) =>
-                          onToggleRecordSelection(record, event.target.checked)
-                        }
-                        className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="max-w-[420px]">
-                        <p className="truncate font-medium text-slate-900">{record.title}</p>
-                        <p className="mt-0.5 truncate text-xs text-slate-500">{record.content}</p>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{record.external_reference || "--"}</td>
-                    <td className="px-4 py-3 text-slate-600">{record.section_label || "--"}</td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        label={record.import_status}
-                        color={recordStatusColor(record.import_status)}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      {record.linked_specification_id ? (
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onOpenSpec(record.linked_specification_id ?? "");
-                          }}
-                          className="max-w-[200px] truncate text-left text-xs font-medium text-blue-600 hover:underline"
-                          title={record.linked_specification_title ?? undefined}
+          <div className="space-y-5">
+            {regionGroups.map((group) => {
+              const status = regionStatus(group);
+              const isTable = group.structuralType === "table";
+              return (
+                <section key={group.id} className="rounded-lg border border-slate-200">
+                  <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span className="font-semibold text-slate-700">
+                        {group.target.container || "Region"}
+                      </span>
+                      <span>{group.target.source_range}</span>
+                      <Badge label={group.structuralType} />
+                      <Badge label={status.label} color={status.color} />
+                      <span>{group.records.length} {isTable ? "rows" : "block"}</span>
+                    </div>
+                    <Button size="sm" variant="secondary" onClick={() => onMapRegion(group.target)}>
+                      {isTable ? "Map columns" : "Set type"}
+                    </Button>
+                  </header>
+
+                  <table className="w-full text-sm">
+                    <thead className="bg-white text-left text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3">Import</th>
+                        <th className="px-4 py-3">Title</th>
+                        <th className="px-4 py-3">Reference</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Specification</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {group.records.map((record) => (
+                        <tr
+                          key={record.id}
+                          onClick={() => onEditRecord(record)}
+                          className="cursor-pointer transition hover:bg-slate-50"
                         >
-                          {record.linked_specification_title ?? "View spec"}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-400">--</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={record.is_selected}
+                              disabled={Boolean(recordUpdatingIds[record.id])}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) => onToggleRecordSelection(record, event.target.checked)}
+                              className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="max-w-[420px]">
+                              <p className="truncate font-medium text-slate-900">{record.title}</p>
+                              <p className="mt-0.5 truncate text-xs text-slate-500">{record.content}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">{record.external_reference || "--"}</td>
+                          <td className="px-4 py-3">
+                            <Badge
+                              label={record.import_status}
+                              color={recordStatusColor(record.import_status)}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            {record.linked_specification_id ? (
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onOpenSpec(record.linked_specification_id ?? "");
+                                }}
+                                className="max-w-[200px] truncate text-left text-xs font-medium text-blue-600 hover:underline"
+                                title={record.linked_specification_title ?? undefined}
+                              >
+                                {record.linked_specification_title ?? "View spec"}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400">--</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </section>
+              );
+            })}
           </div>
         )}
       </div>

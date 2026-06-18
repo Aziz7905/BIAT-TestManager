@@ -12,6 +12,8 @@ from .deduplication import build_spec_content_hash, find_duplicate_specification
 from .embedding_models import get_or_create_default_embedding_model, infer_embedding_provider
 from .evaluation import evaluate_retrieval_cases, load_evaluation_cases
 from .indexing import (
+    full_text_retrieve_chunks,
+    hybrid_retrieve_chunks,
     index_specification,
     keyword_retrieve_chunks,
     reindex_specification_queryset,
@@ -19,6 +21,7 @@ from .indexing import (
     synchronize_specification_index,
 )
 from .ingestion import (
+    apply_region_mapping,
     delete_selected_records,
     import_selected_records,
     infer_source_name,
@@ -26,6 +29,7 @@ from .ingestion import (
 )
 
 __all__ = [
+    "apply_region_mapping",
     "build_chunks_from_content",
     "build_spec_content_hash",
     "can_create_specifications",
@@ -35,9 +39,11 @@ __all__ = [
     "can_view_specifications",
     "evaluate_retrieval_cases",
     "find_duplicate_specification",
+    "full_text_retrieve_chunks",
     "get_or_create_default_embedding_model",
     "get_specification_queryset_for_actor",
     "get_specification_source_queryset_for_actor",
+    "hybrid_retrieve_chunks",
     "index_specification",
     "infer_embedding_provider",
     "delete_selected_records",

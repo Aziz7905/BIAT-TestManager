@@ -3,6 +3,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.specs.models import SpecChunkType
 from apps.specs.services.chunking import (
     build_chunks_from_content,
+    extract_heading_context,
     infer_chunk_type,
 )
 
@@ -61,3 +62,18 @@ class SpecificationChunkingTests(SimpleTestCase):
         chunks = build_chunks_from_content(content)
 
         self.assertEqual(chunks[0].component_tag, "generate-invoice-output-for-rxt")
+
+    def test_heading_context_is_carried_into_split_chunks(self):
+        content = (
+            "Transfer Management\n"
+            "- The customer must create a transfer request with a beneficiary.\n"
+            "- The system must validate the transfer amount against account balance.\n"
+            "- The system must show the transfer in pending approval.\n"
+            "- The customer must be able to cancel a pending transfer before validation."
+        )
+
+        chunks = build_chunks_from_content(content)
+
+        self.assertEqual(extract_heading_context(content), "Transfer Management")
+        self.assertIn("Transfer Management", chunks[0].content)
+        self.assertEqual(chunks[0].chunk_type, SpecChunkType.FUNCTIONAL_REQUIREMENT)

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import re
+import unicodedata
 
 from django.conf import settings
 
@@ -46,7 +47,7 @@ def estimate_token_count(content: str) -> int:
 
 
 def infer_chunk_type(content: str) -> str:
-    lowered = content.lower()
+    lowered = _normalize_for_matching(content)
 
     if any(phrase in lowered for phrase in ["as a ", "i want ", "so that "]):
         return SpecChunkType.USER_STORY
@@ -64,6 +65,8 @@ def infer_chunk_type(content: str) -> str:
             "must ",
             "should ",
             "requirement",
+            "business rule",
+            "business requirement",
             "selectionner ",
             "sélectionner ",
             "obtenir ",
@@ -78,6 +81,15 @@ def infer_chunk_type(content: str) -> str:
     return SpecChunkType.OTHER
 
 
+def _normalize_for_matching(content: str) -> str:
+    normalized = unicodedata.normalize("NFKD", content.lower())
+    return "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character)
+    )
+
+
 def infer_component_tag(content: str) -> str:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     if not lines:
@@ -86,7 +98,7 @@ def infer_component_tag(content: str) -> str:
     first_line = lines[0]
     if first_line.lower().startswith("contexte:") and len(lines) > 1:
         first_line = lines[1]
-    first_line = first_line.lstrip("#- ").strip().lower()
+    first_line = _normalize_for_matching(first_line.lstrip("#- ").strip())
     normalized = re.sub(r"[^a-z0-9]+", "-", first_line).strip("-")
     return normalized[:100]
 
@@ -97,6 +109,28 @@ def split_into_sections(content: str) -> list[str]:
 
     sections = [section.strip() for section in re.split(r"\n\s*\n", content) if section.strip()]
     return sections or [content.strip()]
+
+
+def extract_heading_context(section: str) -> str:
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return ""
+
+    first_line = lines[0].strip("#- ").strip()
+    if not first_line or len(first_line) > 180:
+        return ""
+
+    if first_line.endswith(":"):
+        return first_line
+
+    if re.match(r"^\d+(?:[.)-]\d+)*[.)-]?\s+\S", first_line):
+        return first_line
+
+    words = first_line.split()
+    if 1 <= len(words) <= 12 and first_line[:1].isupper():
+        return first_line
+
+    return ""
 
 
 def split_section_by_sentences(section: str, *, max_chars: int, overlap_chars: int) -> list[str]:
@@ -193,14 +227,17 @@ def build_chunks_from_content(content: str) -> list[ChunkDraft]:
             context_consumed = False
             continue
 
+        heading_context = extract_heading_context(section)
         for part in split_section_by_sentences(
             section,
             max_chars=int(config["max_chars"]),
             overlap_chars=int(config["overlap_chars"]),
         ):
             chunk_content = part
+            if heading_context and not part.startswith(heading_context):
+                chunk_content = f"{heading_context}\n{part}"
             if active_context and not context_consumed:
-                chunk_content = f"{active_context}\n{part}"
+                chunk_content = f"{active_context}\n{chunk_content}"
                 context_consumed = True
             drafts.append(
                 ChunkDraft(

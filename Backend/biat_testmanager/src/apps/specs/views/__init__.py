@@ -8,6 +8,7 @@ from .specifications import (
     SpecificationSourceRecordDetailView,
     SpecificationSourceRecordListView,
     SpecificationSourceRecordSelectedDeleteView,
+    SpecificationSourceRegionMappingView,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "SpecificationSourceRecordDetailView",
     "SpecificationSourceRecordListView",
     "SpecificationSourceRecordSelectedDeleteView",
+    "SpecificationSourceRegionMappingView",
 ]

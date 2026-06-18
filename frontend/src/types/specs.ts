@@ -8,8 +8,7 @@ export type SpecificationSourceType =
   | "pdf"
   | "docx"
   | "jira_issue"
-  | "file_upload"
-  | "url";
+  | "file_upload";
 
 export type SpecificationSourceParserStatus =
   | "uploaded"
@@ -52,6 +51,56 @@ export interface LinkedTestCaseCompact {
   suite_name: string;
 }
 
+export type StructuralType = "table" | "key_value_block" | "list" | "text_block" | "unknown";
+export type RegionRecordType = "requirement" | "test_case" | "test_data" | "context" | "ignore";
+
+export interface SpecRecordReview {
+  needs_mapping: boolean;
+  confirmed: boolean;
+  record_type: RegionRecordType | null;
+  column_mapping: Record<string, string>;
+}
+
+export interface SpecRecordCellRef {
+  coordinate: string;
+  column: number;
+  column_letter: string;
+  header_candidate: string;
+  raw_value: string;
+  displayed_value: string;
+}
+
+export interface SpecGridCell {
+  coordinate?: string;
+  row?: number | null;
+  column: number;
+  column_letter: string;
+  raw_value: string;
+  displayed_value: string;
+}
+
+export interface SpecRecordStructure {
+  region_id: string;
+  container: string;
+  structural_type: StructuralType;
+  source_range: string;
+  header_candidates: { row: number; values: string[] }[];
+  row?: {
+    row_number: number;
+    source_range: string;
+    cells: SpecRecordCellRef[];
+  };
+  grid?: SpecGridCell[][];
+}
+
+export interface SpecRecordMetadata {
+  source_mode?: string;
+  structure?: SpecRecordStructure;
+  review?: SpecRecordReview;
+  validation?: { fatal_errors?: string[]; warnings?: string[] };
+  [key: string]: unknown;
+}
+
 export interface SpecificationSourceRecord {
   id: string;
   record_index: number;
@@ -60,7 +109,7 @@ export interface SpecificationSourceRecord {
   row_number: number | null;
   title: string;
   content: string;
-  record_metadata: Record<string, unknown>;
+  record_metadata: SpecRecordMetadata;
   is_selected: boolean;
   import_status: SpecificationSourceRecordStatus;
   error_message: string;
@@ -69,6 +118,46 @@ export interface SpecificationSourceRecord {
   created_at: string;
   updated_at: string;
 }
+
+export interface ApplyRegionMappingPayload {
+  region_id: string;
+  record_type: RegionRecordType;
+  column_mapping: Record<string, string>;
+}
+
+// A structural region grouped from a source's records, used by the mapping UI.
+export interface SpecRegionMappingTarget {
+  region_id: string;
+  container: string;
+  source_range: string;
+  structural_type: StructuralType;
+  columns: string[];
+  record_type: RegionRecordType | null;
+  column_mapping: Record<string, string>;
+}
+
+// Canonical mapping targets the user chooses from (fixed target schema).
+export const BIAT_MAPPING_FIELDS: { value: string; label: string }[] = [
+  { value: "", label: "Keep as extra field" },
+  { value: "external_id", label: "External ID" },
+  { value: "title", label: "Title" },
+  { value: "description", label: "Description" },
+  { value: "acceptance_criteria", label: "Acceptance criteria" },
+  { value: "preconditions", label: "Preconditions" },
+  { value: "steps", label: "Steps" },
+  { value: "expected_result", label: "Expected result" },
+  { value: "priority", label: "Priority" },
+  { value: "module", label: "Module" },
+  { value: "section", label: "Section" },
+];
+
+export const REGION_RECORD_TYPE_OPTIONS: { value: RegionRecordType; label: string }[] = [
+  { value: "requirement", label: "Requirements" },
+  { value: "test_case", label: "Test cases" },
+  { value: "context", label: "Generic context" },
+  { value: "test_data", label: "Test data" },
+  { value: "ignore", label: "Ignore" },
+];
 
 export interface SpecificationSourceListItem {
   id: string;
@@ -140,7 +229,7 @@ export type SpecificationDetail = SpecificationListItem;
 export interface CreateSpecificationSourcePayload {
   project: string;
   name?: string;
-  source_type: SpecificationSourceType;
+  source_type?: SpecificationSourceType;
   file?: File | null;
   raw_text?: string;
   source_url?: string;

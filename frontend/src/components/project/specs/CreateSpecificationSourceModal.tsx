@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Modal } from "../../ui";
 import { createSpecificationSource } from "../../../api/specs";
 import type {
   CreateSpecificationSourcePayload,
   SpecificationSourceDetail,
-  SpecificationSourceType,
 } from "../../../types/specs";
-import { sourceTypeLabel } from "./shared";
 
 interface CreateSpecificationSourceModalProps {
   open: boolean;
@@ -15,24 +13,13 @@ interface CreateSpecificationSourceModalProps {
   onCreated: (source: SpecificationSourceDetail) => void;
 }
 
-const SOURCE_TYPE_OPTIONS: SpecificationSourceType[] = [
-  "plain_text",
-  "url",
-  "jira_issue",
-  "pdf",
-  "docx",
-  "xlsx",
-  "csv",
-  "file_upload",
-];
+type SourceInputMode = "file" | "jira" | "text";
 
 function createInitialForm(projectId: string): CreateSpecificationSourcePayload {
   return {
     project: projectId,
     name: "",
-    source_type: "plain_text",
     raw_text: "",
-    source_url: "",
     jira_issue_key: "",
     file: null,
     auto_parse: true,
@@ -49,32 +36,38 @@ export default function CreateSpecificationSourceModal({
   const [form, setForm] = useState<CreateSpecificationSourcePayload>(() =>
     createInitialForm(projectId)
   );
+  const [mode, setMode] = useState<SourceInputMode>("file");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setForm(createInitialForm(projectId));
+      setMode("file");
       setError(null);
     }
   }, [open, projectId]);
 
-  const needsFile = useMemo(
-    () => ["pdf", "docx", "xlsx", "csv", "file_upload"].includes(form.source_type),
-    [form.source_type]
-  );
-
-  const needsText = form.source_type === "plain_text" || form.source_type === "manual";
-  const needsUrl = form.source_type === "url";
-  const needsJira = form.source_type === "jira_issue";
-
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (mode === "file" && !form.file) {
+      setError("Choose a requirement file first.");
+      return;
+    }
+    if (mode === "jira" && !form.jira_issue_key?.trim()) {
+      setError("Enter a Jira issue key.");
+      return;
+    }
+    if (mode === "text" && !form.raw_text?.trim()) {
+      setError("Paste requirement text first.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
     try {
-      const source = await createSpecificationSource(form);
+      const source = await createSpecificationSource(buildPayloadForMode(form, mode));
       onCreated(source);
     } catch {
       setError("Could not create this source.");
@@ -101,43 +94,55 @@ export default function CreateSpecificationSourceModal({
       }
     >
       <form id="create-specification-source-form" onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Name</label>
-            <input
-              value={form.name ?? ""}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Optional source name"
-              className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Source type</label>
-            <select
-              value={form.source_type}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  source_type: event.target.value as SpecificationSourceType,
-                  file: null,
-                }))
-              }
-              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
-            >
-              {SOURCE_TYPE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {sourceTypeLabel(option)}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">Name</label>
+          <input
+            value={form.name ?? ""}
+            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+            placeholder="Optional source name"
+            className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
+          />
+          <p className="text-xs text-slate-500">
+            BIAT detects PDF, DOCX, XLSX, CSV, Jira, or pasted text automatically.
+          </p>
         </div>
 
-        {needsFile && (
+        <div className="grid gap-2 md:grid-cols-3">
+          {[
+            { value: "file" as const, label: "Upload file", description: "PDF, DOCX, XLSX, CSV" },
+            { value: "jira" as const, label: "Jira issue", description: "Import by issue key" },
+            { value: "text" as const, label: "Paste text", description: "Quick requirement input" },
+          ].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setMode(option.value)}
+              className={[
+                "rounded-xl border px-3.5 py-3 text-left transition",
+                mode === option.value
+                  ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+              ].join(" ")}
+            >
+              <span className="block text-sm font-semibold">{option.label}</span>
+              <span
+                className={[
+                  "mt-1 block text-xs",
+                  mode === option.value ? "text-slate-200" : "text-slate-500",
+                ].join(" ")}
+              >
+                {option.description}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {mode === "file" && (
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">File</label>
+            <label className="text-sm font-medium text-slate-700">Requirement file</label>
             <input
               type="file"
+              accept=".pdf,.docx,.xlsx,.csv,.txt"
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
@@ -149,36 +154,7 @@ export default function CreateSpecificationSourceModal({
           </div>
         )}
 
-        {needsText && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Text content</label>
-            <textarea
-              rows={10}
-              value={form.raw_text ?? ""}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, raw_text: event.target.value }))
-              }
-              placeholder="Paste the requirement text here."
-              className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-          </div>
-        )}
-
-        {needsUrl && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Source URL</label>
-            <input
-              value={form.source_url ?? ""}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, source_url: event.target.value }))
-              }
-              placeholder="https://..."
-              className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
-            />
-          </div>
-        )}
-
-        {needsJira && (
+        {mode === "jira" && (
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700">Jira issue key</label>
             <input
@@ -192,8 +168,43 @@ export default function CreateSpecificationSourceModal({
           </div>
         )}
 
+        {mode === "text" && (
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-slate-700">Text content</label>
+            <textarea
+              rows={10}
+              value={form.raw_text ?? ""}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, raw_text: event.target.value }))
+              }
+              placeholder="Paste the requirement, acceptance criteria, or workflow notes here."
+              className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600"
+            />
+          </div>
+        )}
+
         {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
     </Modal>
   );
+}
+
+function buildPayloadForMode(
+  form: CreateSpecificationSourcePayload,
+  mode: SourceInputMode
+): CreateSpecificationSourcePayload {
+  const base = {
+    project: form.project,
+    name: form.name,
+    auto_parse: form.auto_parse,
+    auto_import: form.auto_import,
+  };
+
+  if (mode === "file") {
+    return { ...base, file: form.file ?? null };
+  }
+  if (mode === "jira") {
+    return { ...base, jira_issue_key: form.jira_issue_key?.trim() ?? "" };
+  }
+  return { ...base, raw_text: form.raw_text?.trim() ?? "" };
 }

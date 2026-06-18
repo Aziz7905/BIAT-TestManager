@@ -114,7 +114,6 @@ export default function SpecificationListPane({
             >
               <option value="all">All source types</option>
               <option value="plain_text">Plain text</option>
-              <option value="url">URL</option>
               <option value="jira_issue">Jira issue</option>
               <option value="pdf">PDF</option>
               <option value="docx">DOCX</option>

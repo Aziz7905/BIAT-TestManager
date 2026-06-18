@@ -110,6 +110,18 @@ class SpecificationSourceRecordUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class SpecificationSourceRegionMappingSerializer(serializers.Serializer):
+    REGION_RECORD_TYPES = ("requirement", "test_case", "test_data", "context", "ignore")
+
+    region_id = serializers.CharField(max_length=512)
+    record_type = serializers.ChoiceField(choices=REGION_RECORD_TYPES)
+    column_mapping = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        default=dict,
+    )
+
+
 class SpecificationSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.select_related("team", "team__organization").all()
@@ -409,6 +421,25 @@ class SpecificationSourceDetailSerializer(SpecificationSourceListSerializer):
         ]
 
 
+def infer_source_type_from_payload(*, uploaded_file, raw_text: str, jira_issue_key: str | None):
+    if jira_issue_key:
+        return SpecificationSourceType.JIRA_ISSUE
+    if uploaded_file is not None:
+        filename = getattr(uploaded_file, "name", "").lower()
+        if filename.endswith(".csv"):
+            return SpecificationSourceType.CSV
+        if filename.endswith(".xlsx"):
+            return SpecificationSourceType.XLSX
+        if filename.endswith(".pdf"):
+            return SpecificationSourceType.PDF
+        if filename.endswith(".docx"):
+            return SpecificationSourceType.DOCX
+        return SpecificationSourceType.FILE_UPLOAD
+    if raw_text:
+        return SpecificationSourceType.PLAIN_TEXT
+    return SpecificationSourceType.PLAIN_TEXT
+
+
 class SpecificationSourceCreateSerializer(serializers.ModelSerializer):
     name = serializers.CharField(required=False, allow_blank=True)
     file = serializers.FileField(required=False, allow_null=True)
@@ -416,7 +447,7 @@ class SpecificationSourceCreateSerializer(serializers.ModelSerializer):
     source_url = serializers.URLField(required=False, allow_blank=True, allow_null=True)
     jira_issue_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     auto_parse = serializers.BooleanField(required=False, default=True, write_only=True)
-    auto_import = serializers.BooleanField(required=False, default=True, write_only=True)
+    auto_import = serializers.BooleanField(required=False, default=False, write_only=True)
 
     class Meta:
         model = SpecificationSource
@@ -431,19 +462,37 @@ class SpecificationSourceCreateSerializer(serializers.ModelSerializer):
             "auto_parse",
             "auto_import",
         ]
+        extra_kwargs = {
+            "source_type": {"required": False},
+        }
 
     def validate(self, attrs):
         project = attrs["project"]
-        source_type = attrs["source_type"]
         actor = self.context["request"].user
         uploaded_file = attrs.get("file")
         raw_text = (attrs.get("raw_text") or "").strip()
         source_url = attrs.get("source_url")
         jira_issue_key = attrs.get("jira_issue_key")
+        source_type = attrs.get("source_type") or infer_source_type_from_payload(
+            uploaded_file=uploaded_file,
+            raw_text=raw_text,
+            jira_issue_key=jira_issue_key,
+        )
+        attrs["source_type"] = source_type
 
         if not can_create_specifications(actor, project):
             raise serializers.ValidationError(
                 {"project": "You do not have permission to import specifications for this project."}
+            )
+
+        if source_type == SpecificationSourceType.URL or source_url:
+            raise serializers.ValidationError(
+                {
+                    "source_type": (
+                        "URL specification sources are disabled. Upload a file, paste text, "
+                        "or provide a Jira issue key."
+                    )
+                }
             )
 
         file_required_types = {
@@ -462,9 +511,6 @@ class SpecificationSourceCreateSerializer(serializers.ModelSerializer):
 
         if source_type == SpecificationSourceType.JIRA_ISSUE and not jira_issue_key:
             raise serializers.ValidationError({"jira_issue_key": "A Jira issue key is required."})
-
-        if source_type == SpecificationSourceType.URL and not source_url:
-            raise serializers.ValidationError({"source_url": "A source URL is required."})
 
         return attrs
 

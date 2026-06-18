@@ -12,9 +12,11 @@ from apps.specs.serializers import (
     SpecificationSourceListSerializer,
     SpecificationSourceRecordSerializer,
     SpecificationSourceRecordUpdateSerializer,
+    SpecificationSourceRegionMappingSerializer,
     SpecificationSourceUpdateSerializer,
 )
 from apps.specs.services import (
+    apply_region_mapping,
     delete_selected_records,
     can_manage_specification_record,
     can_manage_specification_source,
@@ -229,6 +231,28 @@ class SpecificationSourceRecordSelectedDeleteView(APIView):
 
         deleted_count = delete_selected_records(source)
         return Response({"deleted_count": deleted_count}, status=status.HTTP_200_OK)
+
+
+class SpecificationSourceRegionMappingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        source = get_object_or_404(get_specification_source_queryset_for_actor(request.user), pk=pk)
+        if not can_manage_specification_source(request.user, source):
+            raise PermissionDenied("You do not have permission to map this source.")
+
+        serializer = SpecificationSourceRegionMappingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        apply_region_mapping(
+            source,
+            region_id=serializer.validated_data["region_id"],
+            record_type=serializer.validated_data["record_type"],
+            column_mapping=serializer.validated_data.get("column_mapping") or {},
+        )
+
+        source = get_specification_source_queryset_for_actor(request.user).get(pk=pk)
+        detail = SpecificationSourceDetailSerializer(source, context={"request": request})
+        return Response(detail.data)
 
 
 class SpecificationSourceImportView(APIView):

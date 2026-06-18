@@ -21,10 +21,13 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                "Keyword recall@k={keyword_recall:.3f}, keyword mrr={keyword_mrr:.3f}, "
+                "FTS recall@k={full_text_recall:.3f}, FTS mrr={full_text_mrr:.3f}, "
+                "hybrid recall@k={hybrid_recall:.3f}, hybrid mrr={hybrid_mrr:.3f}, "
                 "vector recall@k={vector_recall:.3f}, vector mrr={vector_mrr:.3f}".format(
-                    keyword_recall=summary["keyword"]["recall_at_k"],
-                    keyword_mrr=summary["keyword"]["mrr"],
+                    full_text_recall=summary["full_text"]["recall_at_k"],
+                    full_text_mrr=summary["full_text"]["mrr"],
+                    hybrid_recall=summary["hybrid"]["recall_at_k"],
+                    hybrid_mrr=summary["hybrid"]["mrr"],
                     vector_recall=summary["vector"]["recall_at_k"],
                     vector_mrr=summary["vector"]["mrr"],
                 )

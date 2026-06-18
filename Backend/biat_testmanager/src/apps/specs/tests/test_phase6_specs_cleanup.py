@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -147,3 +148,56 @@ class SpecificationNonAICleanupRegressionTests(APITestCase):
                 external_reference="REQ-RESET",
             ).exists()
         )
+
+    @patch("apps.specs.services.ingestion.synchronize_specification_index")
+    def test_source_create_infers_plain_text_type_when_ui_omits_source_type(self, index_mock):
+        response = self.client.post(
+            reverse("specification-source-list-create"),
+            {
+                "project": str(self.project.id),
+                "name": "Login requirements",
+                "raw_text": "REQ-LOGIN\nUsers can sign in with valid credentials.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["source_type"], SpecificationSourceType.PLAIN_TEXT)
+        self.assertEqual(response.data["imported_record_count"], 1)
+        index_mock.assert_called_once()
+
+    @patch("apps.specs.services.ingestion.synchronize_specification_index")
+    def test_source_create_infers_file_type_from_extension(self, index_mock):
+        upload = SimpleUploadedFile(
+            "requirements.csv",
+            b"Reference,Title,Description\nREQ-1,Login,Users can login\n",
+            content_type="text/csv",
+        )
+
+        response = self.client.post(
+            reverse("specification-source-list-create"),
+            {
+                "project": str(self.project.id),
+                "file": upload,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["source_type"], SpecificationSourceType.CSV)
+        self.assertEqual(response.data["imported_record_count"], 1)
+        index_mock.assert_called_once()
+
+    def test_url_source_creation_is_rejected(self):
+        response = self.client.post(
+            reverse("specification-source-list-create"),
+            {
+                "project": str(self.project.id),
+                "source_type": SpecificationSourceType.URL,
+                "source_url": "https://example.com/spec",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("source_type", response.data)

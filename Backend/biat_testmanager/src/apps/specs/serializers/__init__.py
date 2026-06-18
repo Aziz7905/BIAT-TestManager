@@ -6,6 +6,7 @@ from .specifications import (
     SpecificationSourceListSerializer,
     SpecificationSourceRecordSerializer,
     SpecificationSourceRecordUpdateSerializer,
+    SpecificationSourceRegionMappingSerializer,
     SpecificationSourceUpdateSerializer,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "SpecificationSourceListSerializer",
     "SpecificationSourceRecordSerializer",
     "SpecificationSourceRecordUpdateSerializer",
+    "SpecificationSourceRegionMappingSerializer",
     "SpecificationSourceUpdateSerializer",
 ]

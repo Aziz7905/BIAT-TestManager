@@ -6,6 +6,7 @@ import LoginPage from "../pages/LoginPage";
 import AutomationLivePage from "../pages/AutomationLivePage";
 import ProjectsPage from "../pages/ProjectsPage";
 import ProjectWorkspacePage from "../pages/ProjectWorkspacePage";
+import TestPilotStudioPage from "../pages/TestPilotStudioPage";
 import ProfilePage from "../pages/ProfilePage";
 import UsersPage from "../pages/admin/UsersPage";
 import TeamsPage from "../pages/admin/TeamsPage";
@@ -43,6 +44,7 @@ export default function AppRouter() {
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectWorkspacePage />} />
+          <Route path="/projects/:id/testpilot" element={<TestPilotStudioPage />} />
           <Route
             path="/projects/:id/automation/executions/:executionId/live"
             element={<AutomationLivePage />}
