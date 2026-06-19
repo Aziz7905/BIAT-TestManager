@@ -27,7 +27,51 @@ ALLOWED_PRIORITIES = {value for value, _ in TestPriority.choices}
 ALLOWED_BUSINESS_PRIORITIES = {value for value, _ in BusinessPriority.choices}
 ALLOWED_POLARITIES = {value for value, _ in TestScenarioPolarity.choices}
 
+PRIORITY_ALIASES = {}
+BUSINESS_PRIORITY_ALIASES = {}
+POLARITY_ALIASES = {}
+
+
+def _normalize_choice_key(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _choice_aliases(choices: Any) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for value, label in choices.choices:
+        aliases[_normalize_choice_key(value)] = str(value)
+        aliases[_normalize_choice_key(label)] = str(value)
+    return aliases
+
+
 SCENARIO_TYPE_ALIASES = {
+    **_choice_aliases(TestScenarioType),
+    "acceptance": TestScenarioType.HAPPY_PATH,
+    "acceptance_test": TestScenarioType.HAPPY_PATH,
+    "acceptance_testing": TestScenarioType.HAPPY_PATH,
+    "functional": TestScenarioType.HAPPY_PATH,
+    "functional_test": TestScenarioType.HAPPY_PATH,
+    "functional_testing": TestScenarioType.HAPPY_PATH,
+    "positive": TestScenarioType.HAPPY_PATH,
+    "positive_case": TestScenarioType.HAPPY_PATH,
+    "success": TestScenarioType.HAPPY_PATH,
+    "success_case": TestScenarioType.HAPPY_PATH,
+    "smoke": TestScenarioType.HAPPY_PATH,
+    "smoke_test": TestScenarioType.HAPPY_PATH,
+    "regression": TestScenarioType.HAPPY_PATH,
+    "regression_test": TestScenarioType.HAPPY_PATH,
+    "business_rule": TestScenarioType.ALTERNATIVE_FLOW,
+    "business_rules": TestScenarioType.ALTERNATIVE_FLOW,
+    "validation": TestScenarioType.ALTERNATIVE_FLOW,
+    "validation_rule": TestScenarioType.ALTERNATIVE_FLOW,
+    "validation_rules": TestScenarioType.ALTERNATIVE_FLOW,
+    "alternate": TestScenarioType.ALTERNATIVE_FLOW,
+    "alternate_flow": TestScenarioType.ALTERNATIVE_FLOW,
+    "alternative": TestScenarioType.ALTERNATIVE_FLOW,
     "error_case": TestScenarioType.EDGE_CASE
     if TestScenarioType.EDGE_CASE in ALLOWED_SCENARIO_TYPES
     else TestScenarioType.ALTERNATIVE_FLOW,
@@ -43,7 +87,34 @@ SCENARIO_TYPE_ALIASES = {
     "negative_case": TestScenarioType.ALTERNATIVE_FLOW
     if TestScenarioType.ALTERNATIVE_FLOW in ALLOWED_SCENARIO_TYPES
     else TestScenarioType.EDGE_CASE,
+    "boundary": TestScenarioType.EDGE_CASE,
+    "boundary_case": TestScenarioType.EDGE_CASE,
+    "edge": TestScenarioType.EDGE_CASE,
+    "edge_cases": TestScenarioType.EDGE_CASE,
+    "non_functional": TestScenarioType.PERFORMANCE,
+    "nonfunctional": TestScenarioType.PERFORMANCE,
+    "load": TestScenarioType.PERFORMANCE,
+    "load_test": TestScenarioType.PERFORMANCE,
+    "performance_test": TestScenarioType.PERFORMANCE,
+    "security_test": TestScenarioType.SECURITY,
+    "access_control": TestScenarioType.SECURITY,
+    "authorization": TestScenarioType.SECURITY,
+    "authentication": TestScenarioType.SECURITY,
+    "accessibility_test": TestScenarioType.ACCESSIBILITY,
+    "a11y": TestScenarioType.ACCESSIBILITY,
 }
+PRIORITY_ALIASES = _choice_aliases(TestPriority)
+BUSINESS_PRIORITY_ALIASES = {
+    **_choice_aliases(BusinessPriority),
+    "critical": BusinessPriority.MUST_HAVE,
+    "high": BusinessPriority.MUST_HAVE,
+    "medium": BusinessPriority.SHOULD_HAVE,
+    "normal": BusinessPriority.SHOULD_HAVE,
+    "standard": BusinessPriority.SHOULD_HAVE,
+    "low": BusinessPriority.COULD_HAVE,
+    "minor": BusinessPriority.COULD_HAVE,
+}
+POLARITY_ALIASES = _choice_aliases(TestScenarioPolarity)
 
 DRAFT_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -134,6 +205,9 @@ DRAFT_JSON_SCHEMA: dict[str, Any] = {
                                         "expected_result": {"type": "string"},
                                         "test_data": {"type": "object"},
                                         "linked_spec_ids": {"type": "array"},
+                                        "source_refs": {"type": "array"},
+                                        "warnings": {"type": "array"},
+                                        "coverage": {"type": "object"},
                                         "possible_duplicates": {"type": "array"},
                                     },
                                 },
@@ -273,17 +347,20 @@ def _normalize_scenario(raw: Any, *, scenario_index: int) -> dict[str, Any]:
     priority = _choice(
         raw.get("priority"),
         allowed=ALLOWED_PRIORITIES,
+        aliases=PRIORITY_ALIASES,
         default=TestPriority.MEDIUM,
         field_name="priority",
     )
     business_priority = _nullable_choice(
         raw.get("business_priority"),
         allowed=ALLOWED_BUSINESS_PRIORITIES,
+        aliases=BUSINESS_PRIORITY_ALIASES,
         field_name="business_priority",
     )
     polarity = _choice(
         raw.get("polarity"),
         allowed=ALLOWED_POLARITIES,
+        aliases=POLARITY_ALIASES,
         default=TestScenarioPolarity.POSITIVE,
         field_name="polarity",
     )
@@ -338,6 +415,9 @@ def _normalize_case(raw: Any, *, case_index: int) -> dict[str, Any]:
         "expected_result": expected_result,
         "test_data": _json_object(raw.get("test_data")),
         "linked_spec_ids": _string_list(raw.get("linked_spec_ids")),
+        "source_refs": _json_list(raw.get("source_refs")),
+        "warnings": _string_list(raw.get("warnings")),
+        "coverage": _json_object(raw.get("coverage")),
         "possible_duplicates": _json_list(raw.get("possible_duplicates")),
         "order_index": _integer(raw.get("order_index"), case_index),
         "jira_issue_key": _clean_string(raw.get("jira_issue_key")),
@@ -433,8 +513,16 @@ def _confidence(value: Any) -> float | None:
     return max(0.0, min(1.0, parsed))
 
 
-def _choice(value: Any, *, allowed: set[str], default: str, field_name: str) -> str:
+def _choice(
+    value: Any,
+    *,
+    allowed: set[str],
+    aliases: dict[str, str] | None = None,
+    default: str,
+    field_name: str,
+) -> str:
     cleaned = _clean_string(value) or default
+    cleaned = (aliases or {}).get(_choice_key(cleaned), cleaned)
     if cleaned not in allowed:
         raise DraftValidationError(f"Invalid {field_name}: {cleaned}.")
     return cleaned
@@ -447,17 +535,28 @@ def _scenario_type_choice(
     default: str,
     field_name: str,
 ) -> str:
-    cleaned = _clean_string(value) or default
-    cleaned = SCENARIO_TYPE_ALIASES.get(cleaned, cleaned)
+    cleaned = _choice_key(value) or default
+    cleaned = str(SCENARIO_TYPE_ALIASES.get(cleaned, cleaned))
     if cleaned not in allowed:
         raise DraftValidationError(f"Invalid {field_name}: {cleaned}.")
     return cleaned
 
 
-def _nullable_choice(value: Any, *, allowed: set[str], field_name: str) -> str | None:
+def _choice_key(value: Any) -> str:
+    return _normalize_choice_key(value)
+
+
+def _nullable_choice(
+    value: Any,
+    *,
+    allowed: set[str],
+    aliases: dict[str, str] | None = None,
+    field_name: str,
+) -> str | None:
     cleaned = _clean_string(value)
     if not cleaned:
         return None
+    cleaned = (aliases or {}).get(_choice_key(cleaned), cleaned)
     if cleaned not in allowed:
         raise DraftValidationError(f"Invalid {field_name}: {cleaned}.")
     return cleaned

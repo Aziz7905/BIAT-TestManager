@@ -25,6 +25,14 @@ export default function ProjectOverviewPanel({
         subtitle={`${overview.project.team_name} / ${overview.project.organization_name}`}
       />
 
+      {overview.project.description ? (
+        <PanelSection title="Project user stories">
+          <p className="whitespace-pre-line text-sm leading-6 text-slate-700">
+            {overview.project.description}
+          </p>
+        </PanelSection>
+      ) : null}
+
       <PanelSection title="Repository mix">
         <SummaryBreakdown summary={overview.summary} />
       </PanelSection>

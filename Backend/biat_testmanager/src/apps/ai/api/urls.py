@@ -5,8 +5,11 @@ from apps.ai.api.views import (
     AIAuthoringSessionStartView,
     AIAuthoringTraceSaveView,
     AIGenerationSessionCommitView,
+    AIGenerationSessionCancelView,
+    AIGenerationSessionClarifyView,
     AIGenerationSessionDetailView,
     AIGenerationSessionListCreateView,
+    AIGenerationSessionRefineView,
     AIGenerationSessionReviewView,
 )
 
@@ -45,5 +48,20 @@ urlpatterns = [
         "ai/generations/<uuid:pk>/commit/",
         AIGenerationSessionCommitView.as_view(),
         name="ai-generation-commit",
+    ),
+    path(
+        "ai/generations/<uuid:pk>/cancel/",
+        AIGenerationSessionCancelView.as_view(),
+        name="ai-generation-cancel",
+    ),
+    path(
+        "ai/generations/<uuid:pk>/clarify/",
+        AIGenerationSessionClarifyView.as_view(),
+        name="ai-generation-clarify",
+    ),
+    path(
+        "ai/generations/<uuid:pk>/refine/",
+        AIGenerationSessionRefineView.as_view(),
+        name="ai-generation-refine",
     ),
 ]

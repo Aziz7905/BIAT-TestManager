@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from django.conf import settings
 from rest_framework import serializers
 
@@ -83,6 +85,30 @@ class AIGenerationSessionSerializer(serializers.ModelSerializer):
         return full_name or obj.created_by.email or obj.created_by.username
 
 
+class UploadedFilesListField(serializers.ListField):
+    """Accept repeated multipart file fields as a normal list of files."""
+
+    def get_value(self, dictionary):
+        request = self.root.context.get("request") if self.root else None
+        uploaded_files = getattr(request, "FILES", None)
+        if uploaded_files is not None:
+            values = uploaded_files.getlist(self.field_name)
+            if values:
+                return values
+        if hasattr(dictionary, "getlist"):
+            values = dictionary.getlist(self.field_name)
+            if values:
+                return values
+        return super().get_value(dictionary)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = list(data.values())
+        elif data and not isinstance(data, (list, tuple)):
+            data = [data]
+        return super().to_internal_value(data)
+
+
 class AIGenerationSessionStartSerializer(serializers.Serializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.select_related("team", "team__organization").all()
@@ -108,6 +134,17 @@ class AIGenerationSessionStartSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    selected_specifications = serializers.PrimaryKeyRelatedField(
+        queryset=Specification.objects.select_related("project").all(),
+        required=False,
+        many=True,
+    )
+    temporary_attachments = UploadedFilesListField(
+        child=serializers.FileField(),
+        required=False,
+        write_only=True,
+        allow_empty=True,
+    )
     source_refs = serializers.JSONField(required=False, default=dict)
     jira_issue_key = serializers.CharField(required=False, allow_blank=True, default="")
 
@@ -117,6 +154,7 @@ class AIGenerationSessionStartSerializer(serializers.Serializer):
         target_suite = attrs.get("target_suite")
         target_section = attrs.get("target_section")
         attached_specification = attrs.get("attached_specification")
+        selected_specifications = attrs.get("selected_specifications") or []
 
         if not get_project_queryset_for_actor(request.user).filter(pk=project.pk).exists():
             raise serializers.ValidationError(
@@ -161,8 +199,37 @@ class AIGenerationSessionStartSerializer(serializers.Serializer):
                         )
                     }
                 )
+        for specification in selected_specifications:
+            if specification.project_id != project.id:
+                raise serializers.ValidationError(
+                    {
+                        "selected_specifications": (
+                            "Selected specifications must belong to the selected project."
+                        )
+                    }
+                )
+            if not get_specification_queryset_for_actor(request.user).filter(
+                pk=specification.pk
+            ).exists():
+                raise serializers.ValidationError(
+                    {
+                        "selected_specifications": (
+                            "You do not have access to one or more selected specifications."
+                        )
+                    }
+                )
 
         return attrs
+
+    def validate_source_refs(self, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError("source_refs must be valid JSON.") from exc
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("source_refs must be a JSON object.")
+        return value
 
 
 class AIGenerationReviewSerializer(serializers.Serializer):
@@ -172,6 +239,19 @@ class AIGenerationReviewSerializer(serializers.Serializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("Review decisions must be a JSON object.")
         return value
+
+
+class AIGenerationClarifySerializer(serializers.Serializer):
+    answers = serializers.CharField(trim_whitespace=True)
+
+
+class AIGenerationRefineSerializer(serializers.Serializer):
+    instruction = serializers.CharField(trim_whitespace=True)
+    draft_ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+    )
 
 
 class AIGenerationCommitSerializer(serializers.Serializer):

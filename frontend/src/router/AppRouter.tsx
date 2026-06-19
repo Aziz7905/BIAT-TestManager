@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import ProtectedRoute from "./ProtectedRoute";
 import LoginPage from "../pages/LoginPage";
@@ -35,6 +35,11 @@ function TeamsRoute({ children }: { children: ReactNode }) {
   return (isAdmin || isManager) ? <>{children}</> : <Navigate to="/projects" replace />;
 }
 
+function LegacyProjectTestPilotRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={id ? `/testpilot?project=${encodeURIComponent(id)}` : "/testpilot"} replace />;
+}
+
 export default function AppRouter() {
   return (
     <BrowserRouter>
@@ -44,7 +49,8 @@ export default function AppRouter() {
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectWorkspacePage />} />
-          <Route path="/projects/:id/testpilot" element={<TestPilotStudioPage />} />
+          <Route path="/testpilot" element={<TestPilotStudioPage />} />
+          <Route path="/projects/:id/testpilot" element={<LegacyProjectTestPilotRedirect />} />
           <Route
             path="/projects/:id/automation/executions/:executionId/live"
             element={<AutomationLivePage />}

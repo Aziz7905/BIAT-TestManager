@@ -5,6 +5,7 @@ from django.utils import timezone
 from apps.ai.models import AIGenerationSession, AIGenerationSessionStatus
 from apps.ai.workflows.generation.prompts import DESIGN_PROMPT_VERSION
 from apps.ai.workflows.generation.schemas import SCHEMA_VERSION
+from apps.ai.workflows.generation.nodes import GenerationCancelled
 from apps.ai.workflows.generation.state import TestGenerationState
 from apps.specs.services.mlflow_tracking import MLflowRunLogger
 
@@ -44,6 +45,9 @@ def run_test_generation_workflow(session_id: str) -> TestGenerationState:
             tracker.log_dict(result.get("draft_payload", {}), "draft_payload.json")
             tracker.log_dict(result.get("critic_report", {}), "critic_report.json")
             return result
+        except GenerationCancelled:
+            session = AIGenerationSession.objects.get(pk=session_id)
+            return {"session_id": session_id, "session": session, "status": session.status}
         except Exception as exc:
             mark_generation_failed(session_id, str(exc), state=state)
             raise

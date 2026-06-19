@@ -3,13 +3,16 @@ from __future__ import annotations
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, Throttled, ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.ai.api.serializers import (
     AIAuthoringSessionStartSerializer,
+    AIGenerationClarifySerializer,
     AIGenerationCommitSerializer,
+    AIGenerationRefineSerializer,
     AIGenerationReviewSerializer,
     AIGenerationSessionSerializer,
     AIGenerationSessionStartSerializer,
@@ -19,8 +22,11 @@ from apps.ai.providers.base import LLMProviderError
 from apps.ai.services.capacity import AICapacityExceededError
 from apps.ai.services.sessions import (
     AIGenerationPermissionError,
+    answer_clarification,
     apply_review_decisions,
+    cancel_generation_session,
     get_generation_session_queryset_for_actor,
+    request_draft_refinement,
     start_generation_session,
 )
 from apps.ai.workflows.authoring.commit_script import (
@@ -40,6 +46,7 @@ from apps.testing.services.access import can_manage_test_design_for_project
 class AIGenerationSessionListCreateView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = AIGenerationSessionSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
         queryset = get_generation_session_queryset_for_actor(self.request.user)
@@ -49,8 +56,9 @@ class AIGenerationSessionListCreateView(generics.ListAPIView):
         return queryset
 
     def post(self, request):
+        request_data = _normalize_generation_start_data(request)
         serializer = AIGenerationSessionStartSerializer(
-            data=request.data,
+            data=request_data,
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
@@ -74,6 +82,21 @@ class AIGenerationSessionDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return get_generation_session_queryset_for_actor(self.request.user)
+
+
+def _normalize_generation_start_data(request):
+    data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+    files = []
+    if hasattr(request, "FILES"):
+        files = request.FILES.getlist("temporary_attachments")
+        if not files:
+            files = request.FILES.getlist("temporary_attachments[]")
+    if files:
+        if hasattr(data, "setlist"):
+            data.setlist("temporary_attachments", files)
+        else:
+            data["temporary_attachments"] = files
+    return data
 
 
 class AIGenerationSessionReviewView(APIView):
@@ -131,6 +154,72 @@ class AIGenerationSessionCommitView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AIGenerationSessionCancelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        session = get_object_or_404(
+            get_generation_session_queryset_for_actor(request.user),
+            pk=pk,
+        )
+        try:
+            session = cancel_generation_session(session=session, user=request.user)
+        except AIGenerationPermissionError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        return Response(AIGenerationSessionSerializer(session).data, status=status.HTTP_200_OK)
+
+
+class AIGenerationSessionClarifyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        session = get_object_or_404(
+            get_generation_session_queryset_for_actor(request.user),
+            pk=pk,
+        )
+        serializer = AIGenerationClarifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            session = answer_clarification(
+                session=session,
+                user=request.user,
+                answers=serializer.validated_data["answers"],
+            )
+        except AIGenerationPermissionError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except AICapacityExceededError as exc:
+            raise Throttled(detail=str(exc)) from exc
+        except (ValueError, LLMProviderError) as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(AIGenerationSessionSerializer(session).data, status=status.HTTP_200_OK)
+
+
+class AIGenerationSessionRefineView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        session = get_object_or_404(
+            get_generation_session_queryset_for_actor(request.user),
+            pk=pk,
+        )
+        serializer = AIGenerationRefineSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            session = request_draft_refinement(
+                session=session,
+                user=request.user,
+                instruction=serializer.validated_data["instruction"],
+                draft_ids=serializer.validated_data.get("draft_ids") or [],
+            )
+        except AIGenerationPermissionError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except AICapacityExceededError as exc:
+            raise Throttled(detail=str(exc)) from exc
+        except (ValueError, LLMProviderError) as exc:
+            raise ValidationError(str(exc)) from exc
+        return Response(AIGenerationSessionSerializer(session).data, status=status.HTTP_200_OK)
 
 
 class AIAuthoringSessionStartView(APIView):

@@ -3,14 +3,19 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getProject, getProjectTree } from "../api/projects/projects";
 import { getCasesForScenario } from "../api/testing";
 import type { Project } from "../types/project";
-import type { ProjectTree as ProjectTreeData, TreeCase } from "../types/testing";
+import type {
+  ProjectTree as ProjectTreeData,
+  TreeCase,
+  TreeScenario,
+  TreeSection,
+  TreeSuite,
+} from "../types/testing";
 import type { TreeMutationRequest, TreeSelection } from "../types/tree";
 import { selectionExistsInTree } from "../types/tree";
 import AppLayout from "../components/layout/AppLayout";
 import ProjectTree from "../components/project/ProjectTree";
 import RepositoryDetailPane from "../components/project/RepositoryDetailPane";
 import ProjectMembersModal from "../components/project/ProjectMembersModal";
-import AIGenerationPanel from "../components/project/ai/AIGenerationPanel";
 import CaseEditorModal from "../components/project/case-editor/CaseEditorModal";
 import ProjectAutomationWorkspace from "../components/project/automation/ProjectAutomationWorkspace";
 import ProjectSpecificationsWorkspace from "../components/project/specs/ProjectSpecificationsWorkspace";
@@ -18,7 +23,15 @@ import ProjectTestRunsWorkspace from "../components/project/test-runs/ProjectTes
 import { Spinner } from "../components/ui";
 
 type ProjectWorkspaceTab = "repository" | "specs" | "automation" | "test-runs";
-type AIPanelTarget = { suiteId?: string; sectionId?: string } | null;
+type TestPilotGenerationTarget = { suiteId?: string; sectionId?: string };
+
+interface TestPilotLaunchContext {
+  selectionType?: TreeSelection["type"];
+  suite?: TreeSuite;
+  section?: TreeSection;
+  scenario?: TreeScenario;
+  caseItem?: TreeCase;
+}
 
 export default function ProjectWorkspacePage() {
   const { id } = useParams<{ id: string }>();
@@ -35,7 +48,6 @@ export default function ProjectWorkspacePage() {
   const [scenarioCasesById, setScenarioCasesById] = useState<Record<string, TreeCase[]>>({});
   const [loadingScenarioIds, setLoadingScenarioIds] = useState<Record<string, boolean>>({});
   const [focusedExecutionId, setFocusedExecutionId] = useState<string | null>(null);
-  const [aiPanelTarget, setAiPanelTarget] = useState<AIPanelTarget>(null);
   const [treeWidth, setTreeWidth] = useState(320);
   const [resizing, setResizing] = useState(false);
 
@@ -160,6 +172,40 @@ export default function ProjectWorkspacePage() {
     setProject(nextProject);
   }, [id]);
 
+  const openTestPilot = useCallback(
+    (target?: TestPilotGenerationTarget) => {
+      if (!id || !tree) return;
+      const launchContext = buildTestPilotLaunchContext({
+        tree,
+        selection,
+        scenarioCasesById,
+        target,
+      });
+      const params = new URLSearchParams();
+      params.set("project", id);
+      params.set("projectName", project?.name ?? tree.project_name);
+      if (launchContext.selectionType) params.set("selection", launchContext.selectionType);
+      if (launchContext.suite) {
+        params.set("suite", launchContext.suite.id);
+        params.set("suiteName", launchContext.suite.name);
+      }
+      if (launchContext.section) {
+        params.set("section", launchContext.section.id);
+        params.set("sectionName", launchContext.section.name);
+      }
+      if (launchContext.scenario) {
+        params.set("scenario", launchContext.scenario.id);
+        params.set("scenarioTitle", launchContext.scenario.title);
+      }
+      if (launchContext.caseItem) {
+        params.set("case", launchContext.caseItem.id);
+        params.set("caseTitle", launchContext.caseItem.title);
+      }
+      navigate(`/testpilot?${params.toString()}`);
+    },
+    [id, navigate, project?.name, scenarioCasesById, selection, tree]
+  );
+
   if (loading) {
     return (
       <AppLayout>
@@ -191,24 +237,9 @@ export default function ProjectWorkspacePage() {
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button
-                onClick={() => navigate(`/projects/${id}/testpilot`)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-100"
-                title="Open TestPilot Studio"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"
-                  />
-                </svg>
-                TestPilot
-              </button>
-              <button
-                onClick={() => setAiPanelTarget({})}
+                onClick={() => openTestPilot()}
                 className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
-                title="Generate with AI"
+                title="Generate with TestPilot"
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -218,7 +249,7 @@ export default function ProjectWorkspacePage() {
                     d="M12 3l1.7 5.1L19 10l-5.3 1.9L12 17l-1.7-5.1L5 10l5.3-1.9L12 3z"
                   />
                 </svg>
-                Generate with AI
+                Generate tests
               </button>
               <button
                 onClick={() => setShowMembers(true)}
@@ -277,7 +308,7 @@ export default function ProjectWorkspacePage() {
                   loadingScenarioIds={loadingScenarioIds}
                   onLoadScenarioCases={loadScenarioCases}
                   onOpenCaseEditor={setEditingCaseId}
-                  onGenerateWithAI={(target) => setAiPanelTarget(target)}
+                  onGenerateWithAI={(target) => openTestPilot(target)}
                   onMutate={refreshTree}
                 />
               </div>
@@ -354,16 +385,113 @@ export default function ProjectWorkspacePage() {
         }
       />
 
-      <AIGenerationPanel
-        open={Boolean(aiPanelTarget)}
-        projectId={id ?? ""}
-        projectName={project.name}
-        tree={tree}
-        initialSuiteId={aiPanelTarget?.suiteId ?? null}
-        initialSectionId={aiPanelTarget?.sectionId ?? null}
-        onClose={() => setAiPanelTarget(null)}
-        onCommitted={() => refreshTree({ resetCaseCache: true })}
-      />
     </AppLayout>
   );
+}
+
+function buildTestPilotLaunchContext({
+  tree,
+  selection,
+  scenarioCasesById,
+  target,
+}: {
+  tree: ProjectTreeData;
+  selection: TreeSelection | null;
+  scenarioCasesById: Record<string, TreeCase[]>;
+  target?: TestPilotGenerationTarget;
+}): TestPilotLaunchContext {
+  if (target?.sectionId) {
+    const sectionContext = findSectionContext(tree, target.sectionId);
+    if (sectionContext) {
+      return {
+        selectionType: "section",
+        suite: sectionContext.suite,
+        section: sectionContext.section,
+      };
+    }
+  }
+
+  if (target?.suiteId) {
+    const suite = tree.suites.find((item) => item.id === target.suiteId);
+    if (suite) return { selectionType: "suite", suite };
+  }
+
+  if (!selection) return {};
+
+  if (selection.type === "suite") {
+    const suite = tree.suites.find((item) => item.id === selection.id);
+    return suite ? { selectionType: "suite", suite } : {};
+  }
+
+  if (selection.type === "section") {
+    const sectionContext = findSectionContext(tree, selection.id);
+    if (!sectionContext) return {};
+    return {
+      selectionType: "section",
+      suite: sectionContext.suite,
+      section: sectionContext.section,
+    };
+  }
+
+  const scenarioId = selection.type === "scenario" ? selection.id : selection.parentId;
+  if (!scenarioId) return {};
+  const scenarioContext = findScenarioContext(tree, scenarioId);
+  if (!scenarioContext) return {};
+
+  const caseItem =
+    selection.type === "case"
+      ? (scenarioCasesById[scenarioId] ?? []).find((item) => item.id === selection.id)
+      : undefined;
+
+  return {
+    selectionType: selection.type,
+    suite: scenarioContext.suite,
+    section: scenarioContext.section,
+    scenario: scenarioContext.scenario,
+    caseItem,
+  };
+}
+
+function findSectionContext(
+  tree: ProjectTreeData,
+  sectionId: string
+): { suite: TreeSuite; section: TreeSection } | null {
+  for (const suite of tree.suites) {
+    const section = findSection(suite.sections, sectionId);
+    if (section) return { suite, section };
+  }
+  return null;
+}
+
+function findScenarioContext(
+  tree: ProjectTreeData,
+  scenarioId: string
+): { suite: TreeSuite; section: TreeSection; scenario: TreeScenario } | null {
+  for (const suite of tree.suites) {
+    const result = findScenarioInSections(suite.sections, scenarioId);
+    if (result) return { suite, ...result };
+  }
+  return null;
+}
+
+function findSection(sections: TreeSection[], sectionId: string): TreeSection | null {
+  for (const section of sections) {
+    if (section.id === sectionId) return section;
+    const child = findSection(section.children, sectionId);
+    if (child) return child;
+  }
+  return null;
+}
+
+function findScenarioInSections(
+  sections: TreeSection[],
+  scenarioId: string
+): { section: TreeSection; scenario: TreeScenario } | null {
+  for (const section of sections) {
+    const scenario = section.scenarios.find((item) => item.id === scenarioId);
+    if (scenario) return { section, scenario };
+    const child = findScenarioInSections(section.children, scenarioId);
+    if (child) return child;
+  }
+  return null;
 }

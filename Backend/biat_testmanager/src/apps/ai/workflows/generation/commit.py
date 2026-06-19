@@ -21,6 +21,9 @@ from apps.testing.services.repository import (
 )
 
 
+PROJECT_STORY_MARKER = "## TestPilot User Stories"
+
+
 class AICommitError(ValueError):
     """Raised when a reviewed AI draft cannot be committed safely."""
 
@@ -32,11 +35,15 @@ def commit_selected_drafts(
     create_as_approved: bool = False,
 ) -> dict[str, Any]:
     """Save reviewed AI drafts into canonical BIAT repository models."""
+    if session.status == AIGenerationSessionStatus.SAVED and session.saved_object_ids:
+        return session.saved_object_ids
+
     if session.status not in {
         AIGenerationSessionStatus.READY_FOR_REVIEW,
         AIGenerationSessionStatus.REVIEWING,
+        AIGenerationSessionStatus.FAILED,
     }:
-        raise AICommitError("Only reviewed AI generation sessions can be committed.")
+        raise AICommitError("Only reviewed or partially generated AI sessions can be committed.")
 
     decisions = session.review_decisions or {}
     payload = decisions.get("draft_payload") or decisions.get("reviewed_draft") or session.draft_payload
@@ -52,6 +59,7 @@ def commit_selected_drafts(
         "scenario_ids": [],
         "case_ids": [],
         "revision_ids": [],
+        "draft_map": {},
         "created_case_count": 0,
     }
 
@@ -80,6 +88,8 @@ def commit_selected_drafts(
 
     if summary["created_case_count"] == 0:
         raise AICommitError("No selected test cases were found in the reviewed draft.")
+
+    _sync_project_story_overview(session, draft)
 
     session.draft_payload = draft
     session.saved_object_ids = summary
@@ -119,6 +129,32 @@ def _resolve_suite(session: AIGenerationSession, suite_payload: dict[str, Any]) 
         suite.ai_generated = True
         suite.save(update_fields=["ai_generated"])
     return suite
+
+
+def _sync_project_story_overview(session: AIGenerationSession, draft: dict[str, Any]) -> None:
+    suite_payload = draft.get("suite") or {}
+    suite_name = str(suite_payload.get("name") or "").strip()
+    suite_description = str(suite_payload.get("description") or "").strip()
+    if not suite_name or not suite_description:
+        return
+
+    project = session.project
+    current_description = (project.description or "").strip()
+    suite_heading = f"### {suite_name}"
+    if PROJECT_STORY_MARKER in current_description and suite_heading in current_description:
+        return
+
+    if not current_description:
+        next_description = f"{PROJECT_STORY_MARKER}\n\n{suite_heading}\n{suite_description}"
+    elif PROJECT_STORY_MARKER in current_description:
+        next_description = f"{current_description}\n\n{suite_heading}\n{suite_description}"
+    else:
+        next_description = (
+            f"{current_description}\n\n{PROJECT_STORY_MARKER}\n\n"
+            f"{suite_heading}\n{suite_description}"
+        )
+    project.description = next_description.strip()
+    project.save(update_fields=["description", "updated_at"])
 
 
 def _resolve_section(
@@ -205,6 +241,7 @@ def _commit_section_tree(
             order_index=scenario_payload.get("order_index", scenario_index),
         )
         summary["scenario_ids"].append(str(scenario.id))
+        summary["draft_map"][scenario_payload["draft_id"]] = str(scenario.id)
 
         for case_index, case_payload in enumerate(selected_cases):
             linked_specifications = _resolve_linked_specifications(session, case_payload)
@@ -212,7 +249,7 @@ def _commit_section_tree(
                 scenario=scenario,
                 title=case_payload["title"],
                 preconditions=case_payload["preconditions"],
-                steps=case_payload["steps"],
+                steps=_case_steps_for_commit(case_payload),
                 expected_result=case_payload["expected_result"],
                 test_data=case_payload["test_data"],
                 design_status=design_status,
@@ -227,10 +264,14 @@ def _commit_section_tree(
                     "ai_generation_session_id": str(session.id),
                     "draft_case_id": case_payload["draft_id"],
                     "draft_scenario_id": scenario_payload["draft_id"],
+                    "source_refs": case_payload.get("source_refs") or [],
+                    "coverage": case_payload.get("coverage") or {},
+                    "warnings": case_payload.get("warnings") or [],
                 },
             )
             latest_revision = test_case.revisions.order_by("-version_number").first()
             summary["case_ids"].append(str(test_case.id))
+            summary["draft_map"][case_payload["draft_id"]] = str(test_case.id)
             if latest_revision:
                 summary["revision_ids"].append(str(latest_revision.id))
             summary["created_case_count"] += 1
@@ -248,6 +289,25 @@ def _commit_section_tree(
             parent_section=section,
             section_index=child_index,
         )
+
+
+def _case_steps_for_commit(case_payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Map AI draft steps (action/expected_outcome) to canonical repo steps (step/outcome).
+
+    The draft and review UI use ``action``/``expected_outcome``; the canonical
+    ``testing`` repository (manual editor, Design tab, serializers) reads
+    ``step``/``outcome``. Without this mapping committed cases render blank steps.
+    """
+    steps: list[dict[str, str]] = []
+    for raw in case_payload.get("steps") or []:
+        if not isinstance(raw, dict):
+            continue
+        step_text = str(raw.get("step") or raw.get("action") or "").strip()
+        outcome_text = str(raw.get("outcome") or raw.get("expected_outcome") or "").strip()
+        if not step_text and not outcome_text:
+            continue
+        steps.append({"step": step_text, "outcome": outcome_text})
+    return steps
 
 
 def _resolve_linked_specifications(

@@ -109,6 +109,7 @@ def build_project_repository_overview(project: Project) -> dict:
         "project": {
             "id": project.id,
             "name": project.name,
+            "description": project.description,
             "team_name": project.team.name,
             "organization_name": project.team.organization.name,
         },

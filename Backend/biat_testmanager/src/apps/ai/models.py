@@ -7,6 +7,7 @@ from django.db import models
 class AIGenerationSessionStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     GENERATING = "generating", "Generating"
+    CLARIFICATION_REQUIRED = "clarification_required", "Clarification Required"
     READY_FOR_REVIEW = "ready_for_review", "Ready For Review"
     REVIEWING = "reviewing", "Reviewing"
     SAVED = "saved", "Saved"

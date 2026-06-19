@@ -147,6 +147,7 @@ class ProjectRepositoryTreeSerializer(serializers.Serializer):
 class RepositoryProjectSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
+    description = serializers.CharField(required=False, allow_blank=True)
     team_name = serializers.CharField(required=False)
     organization_name = serializers.CharField(required=False)
 

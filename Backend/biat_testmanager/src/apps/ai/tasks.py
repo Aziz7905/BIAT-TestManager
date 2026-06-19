@@ -15,6 +15,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment-specific fa
 
 from apps.ai.models import AIGenerationSession
 from apps.ai.workflows.authoring.service import run_browser_authoring_session
+from apps.ai.workflows.generation.refine import run_draft_refinement
 from apps.ai.workflows.generation.service import (
     mark_generation_failed,
     run_test_generation_workflow,
@@ -38,6 +39,19 @@ def _run_generation_session(session_id: str):
             "status": session.status if session else "failed",
             "error_message": str(exc),
         }
+    return {
+        "session_id": str(session.id),
+        "status": session.status,
+    }
+
+
+@shared_task(bind=True, name="ai.run_generation_refine")
+def run_generation_refine_task(self, session_id: str, instruction: str = "", draft_ids=None):
+    return _run_generation_refine(session_id, instruction, draft_ids)
+
+
+def _run_generation_refine(session_id: str, instruction: str = "", draft_ids=None):
+    session = run_draft_refinement(session_id, instruction, list(draft_ids or []))
     return {
         "session_id": str(session.id),
         "status": session.status,
@@ -125,6 +139,27 @@ def enqueue_generation_session_task(session_id: str):
         raise RuntimeError("Celery is required to enqueue AI generation sessions.") from _CELERY_IMPORT_ERROR
 
     _run_generation_session(session_id)
+    return None
+
+
+def enqueue_generation_refine_task(session_id: str, instruction: str = "", draft_ids=None):
+    draft_ids = list(draft_ids or [])
+    if hasattr(run_generation_refine_task, "delay"):
+        try:
+            async_result = run_generation_refine_task.delay(session_id, instruction, draft_ids)
+            return getattr(async_result, "id", None)
+        except Exception as exc:
+            if _can_run_eager_fallback():
+                _run_generation_refine(session_id, instruction, draft_ids)
+                return None
+            raise RuntimeError("Unable to enqueue AI draft refinement.") from exc
+
+    if not _can_run_eager_fallback():
+        raise RuntimeError(
+            "Celery is required to enqueue AI draft refinements."
+        ) from _CELERY_IMPORT_ERROR
+
+    _run_generation_refine(session_id, instruction, draft_ids)
     return None
 
 

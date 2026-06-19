@@ -26,14 +26,16 @@ class TestGenerationState(TypedDict, total=False):
     normalized_intent: dict[str, Any]
     requirement_extraction: dict[str, Any]
     generation_limits: dict[str, int]
+    context_plan: dict[str, bool]
     rag_context: list[dict[str, Any]]
+    temporary_context: list[dict[str, Any]]
     repository_memory: list[dict[str, Any]]
-    raw_draft_payload: dict[str, Any]
+    generation_plan: dict[str, Any]
     draft_payload: dict[str, Any]
-    critic_report: dict[str, Any]
-    validation_error: str
+    repair_counts: dict[str, Any]
+    clarification_required: bool
+    agent_termination_reason: str
     quality_warnings: list[str]
-    quality_repair_instruction: str
     input_tokens: int
     output_tokens: int
     duration_ms: int
@@ -55,9 +57,11 @@ CLOUD_GENERATION_LIMITS = {
     "rag_top_k": 12,
     "max_chunk_chars": 1000,
     "extraction_max_tokens": 1200,
+    "planning_max_tokens": 4096,
     "design_max_tokens": 4096,
     "repair_max_tokens": 3000,
     "critic_max_tokens": 1600,
+    "json_retry_max_tokens": 8192,
 }
 
 LOCAL_GENERATION_LIMITS = {
@@ -68,8 +72,10 @@ LOCAL_GENERATION_LIMITS = {
     "rag_top_k": 5,
     "max_chunk_chars": 650,
     "extraction_max_tokens": 700,
+    "planning_max_tokens": 1800,
     "design_max_tokens": 1800,
     "repair_max_tokens": 1400,
     "critic_max_tokens": 0,
+    "json_retry_max_tokens": 2600,
     "num_ctx": 4096,
 }

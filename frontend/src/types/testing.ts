@@ -149,6 +149,7 @@ export interface ProjectRepositoryOverview {
   project: {
     id: string;
     name: string;
+    description: string;
     team_name: string;
     organization_name: string;
   };

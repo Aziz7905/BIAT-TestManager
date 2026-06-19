@@ -51,6 +51,7 @@ export default function TopNav({ projectName }: TopNavProps) {
     navItems.unshift({ label: "Teams", to: "/admin/teams" });
   }
 
+  navItems.push({ label: "TestPilot", to: "/testpilot" });
   navItems.push({ label: "Projects", to: "/projects" });
 
   async function handleLogout() {

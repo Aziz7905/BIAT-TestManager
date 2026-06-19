@@ -9,6 +9,7 @@ import type { ExecutionBrowser, ExecutionPlatform } from "./automation";
 export type AIGenerationStatus =
   | "queued"
   | "generating"
+  | "clarification_required"
   | "ready_for_review"
   | "reviewing"
   | "saved"
@@ -31,6 +32,9 @@ export interface AIGenerationCaseDraft {
   expected_result: string;
   test_data: Record<string, unknown>;
   linked_spec_ids: string[];
+  source_refs?: unknown[];
+  warnings?: string[];
+  coverage?: Record<string, unknown>;
   possible_duplicates?: unknown[];
   order_index?: number;
   jira_issue_key?: string;
@@ -127,6 +131,8 @@ export interface StartAIGenerationPayload {
   target_suite?: string | null;
   target_section?: string | null;
   attached_specification?: string | null;
+  selected_specifications?: string[];
+  temporary_attachments?: File[];
   source_refs?: Record<string, unknown>;
   jira_issue_key?: string;
 }
