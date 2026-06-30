@@ -3,6 +3,8 @@
 from apps.projects.models import Project
 from apps.specs.models import (
     SpecChunk,
+    SpecItem,
+    SpecSet,
     Specification,
     SpecificationSource,
     SpecificationSourceRecord,
@@ -16,6 +18,7 @@ from apps.specs.services import (
     can_manage_specification_source_record,
     find_duplicate_specification,
     import_selected_records,
+    import_target_schemas,
     infer_source_name,
     parse_specification_source,
     synchronize_specification_index,
@@ -110,6 +113,50 @@ class SpecificationSourceRecordUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class SpecItemCompactSerializer(serializers.ModelSerializer):
+    source_record_id = serializers.UUIDField(source="source_record.id", read_only=True)
+    specification_id = serializers.UUIDField(source="specification.id", read_only=True)
+
+    class Meta:
+        model = SpecItem
+        fields = [
+            "id",
+            "source_record_id",
+            "specification_id",
+            "external_key",
+            "item_type",
+            "title",
+            "module",
+            "feature",
+            "priority",
+            "status",
+            "parent_external_key",
+            "source_metadata",
+            "extra_fields",
+        ]
+
+
+class SpecSetCompactSerializer(serializers.ModelSerializer):
+    item_count = serializers.IntegerField(read_only=True)
+    item_ids = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SpecSet
+        fields = [
+            "id",
+            "set_key",
+            "set_type",
+            "title",
+            "description",
+            "metadata",
+            "item_count",
+            "item_ids",
+        ]
+
+    def get_item_ids(self, obj):
+        return [str(item.id) for item in obj.items.all()]
+
+
 class SpecificationSourceRegionMappingSerializer(serializers.Serializer):
     REGION_RECORD_TYPES = ("requirement", "test_case", "test_data", "context", "ignore")
 
@@ -120,6 +167,13 @@ class SpecificationSourceRegionMappingSerializer(serializers.Serializer):
         required=False,
         default=dict,
     )
+
+
+class SpecificationImportTargetSchemaSerializer(serializers.Serializer):
+    schemas = serializers.SerializerMethodField()
+
+    def get_schemas(self, _obj):
+        return import_target_schemas()
 
 
 class SpecificationSerializer(serializers.ModelSerializer):
@@ -413,12 +467,22 @@ class SpecificationSourceListSerializer(serializers.ModelSerializer):
 class SpecificationSourceDetailSerializer(SpecificationSourceListSerializer):
     raw_text = serializers.CharField(read_only=True)
     records = SpecificationSourceRecordSerializer(many=True, read_only=True)
+    spec_items = SpecItemCompactSerializer(many=True, read_only=True)
+    spec_sets = serializers.SerializerMethodField()
 
     class Meta(SpecificationSourceListSerializer.Meta):
         fields = SpecificationSourceListSerializer.Meta.fields + [
             "raw_text",
             "records",
+            "spec_items",
+            "spec_sets",
         ]
+
+    def get_spec_sets(self, obj):
+        queryset = obj.spec_sets.prefetch_related("items").all()
+        for spec_set in queryset:
+            spec_set.item_count = spec_set.items.count()
+        return SpecSetCompactSerializer(queryset, many=True).data
 
 
 def infer_source_type_from_payload(*, uploaded_file, raw_text: str, jira_issue_key: str | None):

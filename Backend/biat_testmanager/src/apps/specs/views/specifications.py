@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.specs.serializers import (
+    SpecificationImportTargetSchemaSerializer,
     SpecificationSerializer,
     SpecificationSourceCreateSerializer,
     SpecificationSourceDetailSerializer,
@@ -110,6 +111,14 @@ class SpecificationSourceListCreateView(generics.ListCreateAPIView):
         ).data
         headers = self.get_success_headers(detail_data)
         return Response(detail_data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class SpecificationImportTargetSchemaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = SpecificationImportTargetSchemaSerializer(object())
+        return Response(serializer.data)
 
 
 class SpecificationSourceDetailView(generics.RetrieveUpdateDestroyAPIView):

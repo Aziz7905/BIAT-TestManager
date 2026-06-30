@@ -40,3 +40,26 @@ class SpecificationIndexStatus(models.TextChoices):
     INDEXED = "indexed", "Indexed"
     FAILED = "failed", "Failed"
     STALE = "stale", "Stale"
+
+
+class SpecItemType(models.TextChoices):
+    REQUIREMENT = "requirement", "Requirement"
+    ACCEPTANCE_CRITERION = "acceptance_criterion", "Acceptance Criterion"
+    BUSINESS_RULE = "business_rule", "Business Rule"
+    VALIDATION_RULE = "validation_rule", "Validation Rule"
+    USER_STORY = "user_story", "User Story"
+    NFR = "nfr", "Non-Functional Requirement"
+    TEST_CASE = "test_case", "Test Case"
+    TEST_DATA = "test_data", "Test Data"
+    CONTEXT = "context", "Context"
+    OTHER = "other", "Other"
+
+
+class SpecSetType(models.TextChoices):
+    SOURCE = "source", "Source"
+    SHEET = "sheet", "Sheet"
+    MODULE = "module", "Module"
+    FEATURE = "feature", "Feature"
+    USER_JOURNEY = "user_journey", "User Journey"
+    REQUIREMENT_FAMILY = "requirement_family", "Requirement Family"
+    CONTEXT = "context", "Context"

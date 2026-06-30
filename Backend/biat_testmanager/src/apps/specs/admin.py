@@ -3,6 +3,8 @@ from django.contrib import admin
 from apps.specs.models import (
     EmbeddingModel,
     SpecChunk,
+    SpecItem,
+    SpecSet,
     Specification,
     SpecificationSource,
     SpecificationSourceRecord,
@@ -173,3 +175,53 @@ class SpecificationSourceRecordAdmin(admin.ModelAdmin):
         "source__project__team",
         "source__project",
     )
+
+
+@admin.register(SpecItem)
+class SpecItemAdmin(admin.ModelAdmin):
+    list_display = (
+        "title",
+        "external_key",
+        "item_type",
+        "module",
+        "feature",
+        "source",
+        "specification",
+    )
+    search_fields = (
+        "title",
+        "external_key",
+        "content",
+        "module",
+        "feature",
+        "source__name",
+    )
+    list_filter = (
+        "item_type",
+        "source__project__team__organization",
+        "source__project__team",
+        "source__project",
+    )
+
+
+@admin.register(SpecSet)
+class SpecSetAdmin(admin.ModelAdmin):
+    list_display = (
+        "title",
+        "set_type",
+        "source",
+        "project",
+    )
+    search_fields = (
+        "title",
+        "set_key",
+        "description",
+        "source__name",
+    )
+    list_filter = (
+        "set_type",
+        "source__project__team__organization",
+        "source__project__team",
+        "source__project",
+    )
+    filter_horizontal = ("items",)

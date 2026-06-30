@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .agent import coverage_agent_loop, route_after_coverage_agent
 from .context import (
     brain_resolver,
     capacity_check,
@@ -25,6 +26,7 @@ __all__ = [
     "GenerationCancelled",
     "brain_resolver",
     "capacity_check",
+    "coverage_agent_loop",
     "finalize_generation",
     "generation_planner",
     "intent_normalizer",
@@ -36,6 +38,7 @@ __all__ = [
     "request_gate",
     "requirement_extraction",
     "route_after_context_router",
+    "route_after_coverage_agent",
     "route_after_generation_planner",
     "route_after_repository_memory_gate",
     "route_after_temporary_context",

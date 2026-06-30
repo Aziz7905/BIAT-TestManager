@@ -12,8 +12,10 @@ interface NavItem {
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
   return [
-    "rounded-md px-3 py-1.5 text-sm transition",
-    isActive ? "bg-slate-800 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white",
+    "relative rounded-md px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-300",
+    isActive
+      ? "bg-white/5 text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-[#5AB8FF]"
+      : "text-slate-300 hover:bg-white/5 hover:text-white",
   ].join(" ");
 }
 
@@ -60,18 +62,18 @@ export default function TopNav({ projectName }: TopNavProps) {
   }
 
   return (
-    <header className="h-12 shrink-0 border-b border-slate-800 bg-slate-900 px-4">
-      <div className="flex h-full items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-4">
+    <header className="h-14 shrink-0 border-b border-[#132243] bg-[#0B1733] px-5">
+      <div className="flex h-full items-center justify-between gap-5">
+        <div className="flex min-w-0 items-center gap-6">
           <button
             onClick={() => navigate("/projects")}
-            className="flex items-center gap-2 hover:opacity-80 transition"
+            className="flex items-center gap-3 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-300"
           >
             <img src="/biat_logo.png" alt="BIAT" className="h-6 w-6 rounded object-cover" />
-            <span className="hidden text-sm font-semibold text-white sm:block">BIAT TM</span>
+            <span className="hidden text-sm font-semibold text-white sm:block">BIAT Test Manager</span>
           </button>
 
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav className="hidden items-center gap-1.5 md:flex">
             {navItems.map((item) => (
               <NavLink key={item.to} to={item.to} className={navLinkClass}>
                 {item.label}

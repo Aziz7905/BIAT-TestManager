@@ -1,5 +1,6 @@
 from .specifications import (
     SpecificationDetailView,
+    SpecificationImportTargetSchemaView,
     SpecificationListCreateView,
     SpecificationSourceDetailView,
     SpecificationSourceImportView,
@@ -13,6 +14,7 @@ from .specifications import (
 
 __all__ = [
     "SpecificationDetailView",
+    "SpecificationImportTargetSchemaView",
     "SpecificationListCreateView",
     "SpecificationSourceDetailView",
     "SpecificationSourceImportView",

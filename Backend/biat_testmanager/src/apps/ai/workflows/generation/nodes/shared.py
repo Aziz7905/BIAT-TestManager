@@ -21,8 +21,7 @@ def combined_generation_context(state: TestGenerationState) -> list[dict]:
 def agent_limits(state: TestGenerationState) -> AgentLimits:
     limits = state.get("generation_limits", CLOUD_GENERATION_LIMITS)
     return AgentLimits(
-        max_scenarios=int(limits.get("max_scenarios_per_section") or 5),
-        max_cases_per_scenario=int(limits.get("max_cases_per_scenario") or 5),
+        max_agent_iterations=int(limits.get("max_agent_iterations") or 80),
     )
 
 

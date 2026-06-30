@@ -7,6 +7,11 @@ from unittest.mock import patch
 from apps.ai.providers.base import post_json
 from apps.ai.providers.ollama import OllamaProvider
 from apps.ai.providers.openai_compatible import OpenAICompatibleProvider
+from apps.ai.workflows.generation.evaluations import (
+    compare_generation_eval_runs,
+    evaluate_generation_draft,
+)
+from apps.ai.workflows.generation.guardrails import validate_scenario_guardrails
 from apps.ai.workflows.generation.quality import evaluate_draft_quality
 from apps.ai.workflows.generation.schemas import DraftValidationError, normalize_draft_payload
 
@@ -265,3 +270,85 @@ class DraftSchemaQualityTests(SimpleTestCase):
         self.assertTrue(result.should_repair)
         self.assertTrue(result.vague_steps)
         self.assertIn("Draft contains generic steps", result.warnings[0])
+
+    def test_generation_guardrails_detect_missing_traceability_and_vague_expected_result(self):
+        scenario = {
+            "draft_id": "scenario-registration",
+            "title": "Registration validation",
+            "description": "Registration validation.",
+            "scenario_type": "alternative_flow",
+            "priority": "high",
+            "polarity": "negative",
+            "cases": [
+                {
+                    "draft_id": "case-no-trace",
+                    "title": "Reject duplicate username and then reject missing username",
+                    "preconditions": "",
+                    "steps": [
+                        {
+                            "action": "Submit duplicate registration data.",
+                            "expected_outcome": "Expected state is shown.",
+                        }
+                    ],
+                    "expected_result": "Works correctly.",
+                    "test_data": {},
+                    "coverage": {"evidence_ids": []},
+                }
+            ],
+        }
+
+        result = validate_scenario_guardrails(
+            scenario_payload=scenario,
+            scenario_plan={
+                "scenario_type": "alternative_flow",
+                "covered_obligation_ids": ["OBL-1"],
+                "requirement_ids": [],
+                "source_type": "explicit_requirement",
+            },
+            coverage_obligations=[
+                {
+                    "obligation_id": "OBL-1",
+                    "behavior": "Registration rejects duplicate usernames.",
+                    "expected_outcome": "Duplicate usernames are rejected.",
+                    "requirement_ids": [],
+                }
+            ],
+        )
+
+        codes = {item.code for item in result.violations}
+        self.assertIn("missing_requirement_references", codes)
+        self.assertIn("missing_case_detail", codes)
+        self.assertIn("vague_expected_result", codes)
+        self.assertIn("combined_non_atomic_objective", codes)
+        self.assertTrue(result.should_repair)
+
+    def test_generation_eval_reports_metrics_and_deltas(self):
+        dataset = {
+            "dataset_id": "registration",
+            "expected": {
+                "requirement_ids": ["FR-AUTH-001", "FR-AUTH-002"],
+                "categories_by_requirement": {
+                    "FR-AUTH-001": "happy_path",
+                    "FR-AUTH-002": "alternative_flow",
+                },
+            },
+        }
+        before = minimal_draft()
+        after = minimal_draft()
+        scenario = after["sections"][0]["scenarios"][0]
+        scenario["scenario_type"] = "happy_path"
+        case = scenario["cases"][0]
+        case["expected_result"] = "The registration confirmation is displayed."
+        case["coverage"] = {
+            "requirement_ids": ["FR-AUTH-001"],
+            "evidence_ids": ["FR-AUTH-001"],
+            "source_type": "explicit_requirement",
+        }
+
+        before_metrics = evaluate_generation_draft(dataset=dataset, draft_payload=before)
+        after_metrics = evaluate_generation_draft(dataset=dataset, draft_payload=after)
+        delta = compare_generation_eval_runs(before=before_metrics, after=after_metrics)
+
+        self.assertEqual(after_metrics["traceability_rate"], 1.0)
+        self.assertEqual(after_metrics["requirement_coverage"], 0.5)
+        self.assertGreater(delta["traceability_rate"], 0)

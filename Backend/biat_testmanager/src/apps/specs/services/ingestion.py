@@ -12,6 +12,7 @@ from apps.specs.services.deduplication import build_spec_content_hash, find_dupl
 from apps.specs.services.indexing import synchronize_specification_index
 from apps.specs.services.parsers import get_parser_for_source
 from apps.specs.services.parsers.base import SpecificationSourceParseError, clean_text
+from apps.specs.services.spec_items import import_record_to_spec_item, sync_spec_sets_for_source
 
 
 def infer_source_name(source_type: str, *, file_name: str = "", jira_issue_key: str = "", source_url: str = "") -> str:
@@ -308,6 +309,7 @@ def import_selected_records(source: SpecificationSource, actor):
             uploaded_by=actor,
         )
         synchronize_specification_index(specification, force=True)
+        import_record_to_spec_item(record, specification)
 
         record.linked_specification = specification
         record.import_status = SpecificationSourceRecordStatus.IMPORTED
@@ -322,6 +324,8 @@ def import_selected_records(source: SpecificationSource, actor):
         )
 
         imported_specifications.append(specification)
+
+    sync_spec_sets_for_source(source)
 
     source.parser_status = (
         SpecificationSourceParserStatus.IMPORTED
@@ -351,30 +355,138 @@ def delete_selected_records(source: SpecificationSource) -> int:
 MAPPING_FIELD_ORDER = [
     "external_id",
     "title",
+    "name",
+    "summary",
     "module",
+    "feature",
     "section",
     "description",
+    "user_story",
+    "business_rule",
+    "validation_rule",
     "preconditions",
     "steps",
     "expected_result",
     "acceptance_criteria",
     "priority",
+    "status",
+    "type",
+    "parent_external_id",
+    "linked_requirement_key",
+    "test_data",
+    "scenario_type",
+    "polarity",
 ]
 MAPPING_FIELD_LABELS = {
     "external_id": "ID",
     "title": "Title",
+    "name": "Name",
+    "summary": "Summary",
     "module": "Module",
+    "feature": "Feature",
     "section": "Section",
     "description": "Description",
+    "user_story": "User Story",
+    "business_rule": "Business Rule",
+    "validation_rule": "Validation Rule",
     "preconditions": "Preconditions",
     "steps": "Steps",
     "expected_result": "Expected Result",
     "acceptance_criteria": "Acceptance Criteria",
     "priority": "Priority",
+    "status": "Status",
+    "type": "Type",
+    "parent_external_id": "Parent ID",
+    "linked_requirement_key": "Linked Requirement",
+    "test_data": "Test Data",
+    "scenario_type": "Scenario Type",
+    "polarity": "Polarity",
 }
 MAPPABLE_RECORD_TYPES = {"requirement", "test_case", "test_data", "context", "ignore"}
 TABLE_RECORD_TYPES = {"requirement", "test_case", "test_data"}
 EMPTY_REGION_MESSAGE = "Region has no readable content."
+
+IMPORT_TARGET_SCHEMAS = {
+    "requirement": {
+        "label": "Requirement",
+        "fields": [
+            "external_id",
+            "title",
+            "summary",
+            "description",
+            "acceptance_criteria",
+            "business_rule",
+            "validation_rule",
+            "user_story",
+            "priority",
+            "status",
+            "type",
+            "module",
+            "feature",
+            "section",
+            "parent_external_id",
+        ],
+    },
+    "test_case": {
+        "label": "Test Case",
+        "fields": [
+            "external_id",
+            "title",
+            "description",
+            "preconditions",
+            "steps",
+            "expected_result",
+            "priority",
+            "scenario_type",
+            "polarity",
+            "module",
+            "feature",
+            "section",
+            "linked_requirement_key",
+            "test_data",
+        ],
+    },
+    "test_data": {
+        "label": "Test Data",
+        "fields": [
+            "external_id",
+            "name",
+            "description",
+            "module",
+            "feature",
+            "section",
+            "test_data",
+        ],
+    },
+    "context": {
+        "label": "Context",
+        "fields": [
+            "title",
+            "summary",
+            "description",
+            "module",
+            "feature",
+            "section",
+        ],
+    },
+    "ignore": {
+        "label": "Ignore",
+        "fields": [],
+    },
+}
+
+
+def import_target_schemas() -> dict:
+    return {
+        record_type: {
+            **schema,
+            "fields": [
+                {"key": field, "label": MAPPING_FIELD_LABELS[field]}
+                for field in schema["fields"]
+            ],
+        }
+        for record_type, schema in IMPORT_TARGET_SCHEMAS.items()
+    }
 
 
 def _content_validation(content: str) -> dict:

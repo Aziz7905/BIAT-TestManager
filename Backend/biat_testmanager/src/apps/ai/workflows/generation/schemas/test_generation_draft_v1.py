@@ -12,14 +12,14 @@ from apps.testing.models.choices import (
 )
 
 SCHEMA_VERSION = "ai_generation_draft_v1"
-MAX_SECTIONS = 5
-MAX_SCENARIOS_PER_SECTION = 8
-MAX_CASES_PER_SCENARIO = 6
+MAX_SECTIONS = None
+MAX_SCENARIOS_PER_SECTION = None
+MAX_CASES_PER_SCENARIO = None
 MAX_STEPS_PER_CASE = 12
 
-LOCAL_MAX_SECTIONS = 2
-LOCAL_MAX_SCENARIOS_PER_SECTION = 3
-LOCAL_MAX_CASES_PER_SCENARIO = 2
+LOCAL_MAX_SECTIONS = None
+LOCAL_MAX_SCENARIOS_PER_SECTION = None
+LOCAL_MAX_CASES_PER_SCENARIO = None
 LOCAL_MAX_STEPS_PER_CASE = 6
 
 ALLOWED_SCENARIO_TYPES = {value for value, _ in TestScenarioType.choices}
@@ -256,11 +256,6 @@ def normalize_draft_payload(payload: dict[str, Any]) -> dict[str, Any]:
     raw_sections = draft.get("sections")
     if not isinstance(raw_sections, list) or not raw_sections:
         raise DraftValidationError("Draft must include at least one section.")
-    if len(raw_sections) > MAX_SECTIONS:
-        raise DraftValidationError(
-            f"Draft cannot include more than {MAX_SECTIONS} root sections."
-        )
-
     sections = [
         _normalize_section(section, section_index=index)
         for index, section in enumerate(raw_sections)
@@ -298,18 +293,9 @@ def _normalize_section(raw: Any, *, section_index: int) -> dict[str, Any]:
     raw_scenarios = raw.get("scenarios", [])
     if not isinstance(raw_scenarios, list):
         raise DraftValidationError(f"Section '{name}' scenarios must be a list.")
-    if len(raw_scenarios) > MAX_SCENARIOS_PER_SECTION:
-        raise DraftValidationError(
-            f"Section '{name}' cannot include more than "
-            f"{MAX_SCENARIOS_PER_SECTION} scenarios."
-        )
     raw_children = raw.get("children", [])
     if not isinstance(raw_children, list):
         raise DraftValidationError(f"Section '{name}' children must be a list.")
-    if len(raw_children) > MAX_SECTIONS:
-        raise DraftValidationError(
-            f"Section '{name}' cannot include more than {MAX_SECTIONS} child sections."
-        )
     if not raw_scenarios and not raw_children:
         raise DraftValidationError(
             f"Section '{name}' must include scenarios or child sections."
@@ -368,12 +354,6 @@ def _normalize_scenario(raw: Any, *, scenario_index: int) -> dict[str, Any]:
     raw_cases = raw.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
         raise DraftValidationError(f"Scenario '{title}' must include at least one case.")
-    if len(raw_cases) > MAX_CASES_PER_SCENARIO:
-        raise DraftValidationError(
-            f"Scenario '{title}' cannot include more than "
-            f"{MAX_CASES_PER_SCENARIO} test cases."
-        )
-
     return {
         "draft_id": _clean_string(raw.get("draft_id")) or _draft_id(),
         "title": title[:500],

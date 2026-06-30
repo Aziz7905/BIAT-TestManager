@@ -17,11 +17,13 @@ MAX_SOURCE_BUNDLE_CHUNKS = 40
 def retrieve_generation_context(
     session,
     *,
+    query: str | None = None,
     top_k: int = 10,
     max_content_chars: int = MAX_CHUNK_CONTENT_CHARS,
+    retrieval_metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Retrieve project-scoped specification chunks for a generation session."""
-    query = session.objective
+    retrieval_query = str(query or session.objective or "").strip()
     project = session.project
     specifications = _resolve_selected_specifications(session)
     bundle_mode = len(specifications) > 1 or _source_scope_requested(session)
@@ -29,7 +31,7 @@ def retrieve_generation_context(
     chunks: list[SpecChunk] = []
     if specifications and bundle_mode:
         chunks = _retrieve_bundle_chunks(
-            query,
+            retrieval_query,
             specifications,
             max_chunks=max(top_k, min(MAX_SOURCE_BUNDLE_CHUNKS, len(specifications) * 2)),
         )
@@ -37,7 +39,7 @@ def retrieve_generation_context(
         for specification in specifications:
             chunks.extend(
                 _retrieve_chunks_for_specification(
-                    query,
+                    retrieval_query,
                     top_k=top_k,
                     project=project,
                     specification=specification,
@@ -45,7 +47,7 @@ def retrieve_generation_context(
             )
     else:
         chunks = _retrieve_chunks_for_specification(
-            query,
+            retrieval_query,
             top_k=top_k,
             project=project,
             specification=None,
@@ -71,6 +73,8 @@ def retrieve_generation_context(
             object_id=str(chunk.id),
             score=score,
             metadata_json={
+                **(retrieval_metadata or {}),
+                "query": retrieval_query,
                 "specification_id": str(chunk.specification_id),
                 "specification_title": chunk.specification.title,
                 "chunk_index": chunk.chunk_index,
@@ -255,11 +259,13 @@ def _chunk_context_item(
     score: float | None,
     max_content_chars: int,
 ) -> dict[str, Any]:
+    spec_item = _spec_item_context(chunk)
     return {
         "context_type": AIGenerationContextType.SPEC_CHUNK,
         "chunk_id": str(chunk.id),
         "specification_id": str(chunk.specification_id),
         "specification_title": chunk.specification.title,
+        "specification_external_reference": chunk.specification.external_reference or "",
         "chunk_index": chunk.chunk_index,
         "chunk_type": chunk.chunk_type,
         "component_tag": chunk.component_tag,
@@ -267,4 +273,25 @@ def _chunk_context_item(
         "retrieval_strategy": getattr(chunk, "retrieval_strategy", ""),
         "retrieval_sources": sorted(getattr(chunk, "retrieval_sources", set()) or []),
         "content": chunk.content[:max_content_chars],
+        "spec_item": spec_item,
+        "source_metadata": chunk.specification.source_metadata or {},
+    }
+
+
+def _spec_item_context(chunk: SpecChunk) -> dict[str, Any]:
+    try:
+        item = chunk.specification.spec_item
+    except Exception:
+        return {}
+    return {
+        "id": str(item.id),
+        "external_key": item.external_key,
+        "item_type": item.item_type,
+        "title": item.title,
+        "module": item.module,
+        "feature": item.feature,
+        "priority": item.priority,
+        "status": item.status,
+        "parent_external_key": item.parent_external_key,
+        "source_metadata": item.source_metadata or {},
     }

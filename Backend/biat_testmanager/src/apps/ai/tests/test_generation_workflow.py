@@ -19,7 +19,13 @@ from apps.ai.services.sessions import start_generation_session
 from apps.ai.workflows.generation.commit import commit_selected_drafts
 from apps.ai.workflows.generation.contracts import generation_contract
 from apps.ai.workflows.generation.context import retrieve_generation_context
+from apps.ai.workflows.generation.evidence import (
+    build_coverage_obligations,
+    compile_semantic_evidence,
+)
+from apps.ai.workflows.generation.nodes.agent import coverage_agent_loop
 from apps.ai.workflows.generation.plan import SCENARIO_EXPANSION_SCHEMA
+from apps.ai.workflows.generation.prompts import empty_requirement_extraction
 from apps.ai.workflows.generation.schemas import normalize_draft_payload
 from apps.ai.workflows.generation.service import run_test_generation_workflow
 from apps.ai.workflows.generation.state import CLOUD_GENERATION_LIMITS
@@ -32,6 +38,7 @@ from apps.specs.models import (
     SpecificationSource,
     SpecificationSourceType,
 )
+from apps.specs.services.parsers.base import ParsedSourceRecord, ParsedSourceResult
 from apps.testing.models import TestCase as RepositoryTestCase
 from apps.testing.models import TestCaseDesignStatus, TestPriority
 from apps.testing.services import (
@@ -424,8 +431,185 @@ class AIGenerationApiAccessTests(AIGenerationTestBase):
         self.assertEqual(attachments[0]["filename"], "orangehrm_requirements.txt")
         self.assertTrue(attachments[0]["fragments"])
 
+    def test_temporary_attachment_keeps_all_parser_records_for_generation_memory(self):
+        records = [
+            ParsedSourceRecord(
+                title=f"Generic record {index}",
+                content=f"REQ-{index:03d}: The system shall preserve record {index}.",
+                section_label=f"Section {index % 7}",
+                row_number=index,
+                record_metadata={
+                    "structure": {
+                        "container": f"Section {index % 7}",
+                        "source_range": f"A{index}:D{index}",
+                        "region_id": f"region-{index % 7}",
+                    }
+                },
+            )
+            for index in range(1, 121)
+        ]
+
+        class FakeParser:
+            def parse(self, source):
+                return ParsedSourceResult(
+                    records=records,
+                    source_metadata={"format": "synthetic"},
+                )
+
+        uploaded = SimpleUploadedFile(
+            "generic_requirements.xlsx",
+            b"synthetic",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        with patch(
+            "apps.ai.workflows.generation.attachments.get_parser_for_source",
+            return_value=FakeParser(),
+        ), patch(
+            "apps.ai.services.sessions.get_team_brain",
+            return_value=FakeProvider([]),
+        ), patch("apps.ai.tasks.enqueue_generation_session_task"):
+            session = start_generation_session(
+                user=self.owner,
+                project=self.project,
+                objective="Generate tests from generic records.",
+                source_type=AIGenerationSourceType.MIXED,
+                temporary_attachments=[uploaded],
+            )
+
+        fragments = session.source_refs["temporary_attachments"][0]["fragments"]
+        self.assertEqual(len(fragments), 120)
+        self.assertEqual(fragments[-1]["row_number"], 120)
+        self.assertEqual(fragments[-1]["provenance"]["cell_range"], "A120:D120")
+
 
 class AIGenerationWorkflowTests(AIGenerationTestBase):
+    def _agent_state_from_context(self, session, generation_context, selected_count=1):
+        semantic_evidence = compile_semantic_evidence(
+            objective=session.objective,
+            generation_context=generation_context,
+            requirement_extraction=empty_requirement_extraction(),
+        )
+        obligations, metadata = build_coverage_obligations(semantic_evidence)
+        selected = []
+        for index, obligation in enumerate(obligations[:selected_count], start=1):
+            selected.append(
+                {
+                    "draft_scenario_id": f"scenario-{index}",
+                    "candidate_id": obligation["obligation_id"],
+                    "title": obligation["scenario_hint"],
+                    "scenario_type": obligation["scenario_type"],
+                    "polarity": obligation["polarity"],
+                    "section_path": [obligation["module_or_area"]],
+                    "covered_obligation_ids": [obligation["obligation_id"]],
+                    "evidence_ids": obligation["evidence_ids"],
+                    "requirement_ids": obligation["requirement_ids"],
+                    "source_type": obligation["source_type"],
+                }
+            )
+        return {
+            "session": session,
+            "generation_limits": {
+                **CLOUD_GENERATION_LIMITS,
+                "max_agent_iterations": 8,
+                "max_targeted_retrieval_attempts": 1,
+                "targeted_rag_top_k": 2,
+            },
+            "rag_context": [],
+            "temporary_context": generation_context,
+            "repository_memory": [],
+            "requirement_extraction": empty_requirement_extraction(),
+            "semantic_evidence": semantic_evidence,
+            "coverage_obligations": obligations,
+            "coverage_metadata": metadata,
+            "generation_plan": {
+                "objective": session.objective,
+                "selected_scenarios": selected,
+                "excluded_candidates": [],
+                "coverage_obligations": obligations,
+                "open_questions": [],
+                "assumptions": [],
+                "termination": {},
+            },
+        }
+
+    def test_coverage_agent_revises_hierarchy_without_pointless_rag(self):
+        session = self.make_session(objective="Generate transfer coverage.")
+        context = [
+            {
+                "record_id": "row-1",
+                "title": "Transfers",
+                "content": "FR-TRF-001: The system shall create a transfer for valid beneficiary data.",
+                "section_label": "Transfers",
+            },
+            {
+                "record_id": "row-2",
+                "title": "Transfers",
+                "content": "FR-TRF-002: The system shall reject transfers with missing beneficiary account.",
+                "section_label": "Transfers",
+            },
+        ]
+        state = self._agent_state_from_context(session, context, selected_count=1)
+
+        result = coverage_agent_loop(state)
+
+        self.assertEqual(result["retrieval_attempts"], [])
+        planned_ids = {
+            obligation_id
+            for scenario in result["generation_plan"]["selected_scenarios"]
+            for obligation_id in scenario["covered_obligation_ids"]
+        }
+        self.assertEqual(
+            planned_ids,
+            {obligation["obligation_id"] for obligation in result["coverage_obligations"]},
+        )
+        self.assertEqual(
+            result["selected_hierarchy_strategy"]["strategy"],
+            "obligation_grouped",
+        )
+
+    def test_coverage_agent_uses_targeted_rag_for_uncovered_source_obligation(self):
+        specification = Specification.objects.create(
+            project=self.project,
+            title="Transfer Requirements",
+            content="Transfer requirements.",
+            source_type=SpecificationSourceType.MANUAL,
+            uploaded_by=self.owner,
+        )
+        chunk = SpecChunk.objects.create(
+            specification=specification,
+            chunk_index=0,
+            chunk_type=SpecChunkType.FUNCTIONAL_REQUIREMENT,
+            content="FR-TRF-002: Missing beneficiary account must be rejected before transfer creation.",
+        )
+        session = self.make_session(objective="Generate transfer coverage.")
+        context = [
+            {
+                "record_id": "row-1",
+                "title": "Transfers",
+                "content": "FR-TRF-001: The system shall create a transfer for valid beneficiary data.",
+                "section_label": "Transfers",
+            },
+            {
+                "record_id": "row-2",
+                "title": "Transfers",
+                "content": "FR-TRF-002: The system shall reject transfers with missing beneficiary account.",
+                "section_label": "Transfers",
+            },
+        ]
+        state = self._agent_state_from_context(session, context, selected_count=1)
+
+        with patch(
+            "apps.ai.workflows.generation.context.retrieve_similar_chunks",
+            side_effect=RuntimeError("vector search unavailable"),
+        ):
+            result = coverage_agent_loop(state)
+
+        self.assertEqual(len(result["retrieval_attempts"]), 1)
+        self.assertEqual(result["retrieval_attempts"][0]["context_count"], 1)
+        self.assertEqual(result["rag_context"][0]["chunk_id"], str(chunk.id))
+        self.assertIn("FR-TRF-002", result["retrieval_attempts"][0]["query"])
+
     def test_prompt_only_generation_with_mocked_llm_reaches_review(self):
         existing_suite = create_test_suite(self.project, name="Existing Authentication", created_by=self.owner)
         existing_section = get_or_create_default_section(existing_suite)
@@ -619,8 +803,12 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
             [
                 make_requirement_extraction(),
                 timid_plan,
-                make_scenario_expansion(),
-                make_scenario_expansion(case_ids=["case-negative-a", "case-negative-b"]),
+                *[
+                    make_scenario_expansion(
+                        case_ids=[f"case-obligation-{index}-a", f"case-obligation-{index}-b"]
+                    )
+                    for index in range(1, 9)
+                ],
             ]
         )
         session = self.make_session(objective="Generate matricule login tests.")
@@ -640,7 +828,10 @@ class AIGenerationWorkflowTests(AIGenerationTestBase):
         session.refresh_from_db()
         self.assertEqual(session.status, AIGenerationSessionStatus.READY_FOR_REVIEW)
         self.assertFalse(session.critic_report["generation_plan"]["open_questions"])
-        self.assertEqual(len(session.critic_report["generation_plan"]["selected_scenarios"]), 2)
+        plan = session.critic_report["generation_plan"]
+        self.assertGreaterEqual(len(plan["selected_scenarios"]), 2)
+        self.assertTrue(plan["coverage_obligations"])
+        self.assertIn("coverage_audit", session.critic_report)
 
     def test_token_truncated_planner_json_retries_with_larger_budget(self):
         fake_provider = FakeProvider(

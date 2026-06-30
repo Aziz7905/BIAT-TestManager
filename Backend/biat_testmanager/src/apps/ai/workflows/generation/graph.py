@@ -3,6 +3,7 @@ from __future__ import annotations
 from apps.ai.workflows.generation.nodes import (
     brain_resolver,
     capacity_check,
+    coverage_agent_loop,
     finalize_generation,
     generation_planner,
     intent_normalizer,
@@ -14,6 +15,7 @@ from apps.ai.workflows.generation.nodes import (
     request_gate,
     requirement_extraction,
     route_after_context_router,
+    route_after_coverage_agent,
     route_after_generation_planner,
     route_after_repository_memory_gate,
     route_after_temporary_context,
@@ -41,6 +43,7 @@ def build_test_generation_graph():
     graph.add_node("intent_normalizer", intent_normalizer)
     graph.add_node("requirement_extraction", requirement_extraction)
     graph.add_node("generation_planner", generation_planner)
+    graph.add_node("coverage_agent_loop", coverage_agent_loop)
     graph.add_node("persist_clarification_required", persist_clarification_required)
     graph.add_node("scenario_expand_loop", scenario_expand_loop)
     graph.add_node("finalize_generation", finalize_generation)
@@ -81,6 +84,14 @@ def build_test_generation_graph():
     graph.add_conditional_edges(
         "generation_planner",
         route_after_generation_planner,
+        {
+            "persist_clarification_required": "persist_clarification_required",
+            "scenario_expand_loop": "coverage_agent_loop",
+        },
+    )
+    graph.add_conditional_edges(
+        "coverage_agent_loop",
+        route_after_coverage_agent,
         {
             "persist_clarification_required": "persist_clarification_required",
             "scenario_expand_loop": "scenario_expand_loop",

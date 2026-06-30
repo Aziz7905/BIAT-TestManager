@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from django.utils import timezone
 
 from apps.accounts.models import ModelProfilePurpose
@@ -101,9 +103,16 @@ def capacity_check(state: TestGenerationState) -> TestGenerationState:
 def plan_context_router(state: TestGenerationState) -> TestGenerationState:
     session = state["session"]
     source_refs = session.source_refs if isinstance(session.source_refs, dict) else {}
-    temporary_context = _temporary_context_from_source_refs(source_refs)
+    limits = state.get("generation_limits", CLOUD_GENERATION_LIMITS)
+    temporary_context, temporary_inventory = _temporary_context_from_source_refs(
+        source_refs,
+        query=session.objective,
+        top_k=int(limits.get("temporary_context_top_k") or 40),
+        inventory_limit=int(limits.get("temporary_context_inventory_limit") or 12),
+    )
     selected_ids = _selected_spec_ids(source_refs, session)
     state["temporary_context"] = temporary_context
+    state["temporary_inventory"] = temporary_inventory
     state["context_plan"] = {
         "use_selected_specs": bool(selected_ids),
         "use_temporary_context": bool(temporary_context),
@@ -112,6 +121,13 @@ def plan_context_router(state: TestGenerationState) -> TestGenerationState:
             or (not selected_ids and not temporary_context)
         ),
         "use_repository_memory": _project_has_repository_cases(session),
+        "temporary_fragment_count": sum(
+            len(attachment.get("fragments") or [])
+            for attachment in source_refs.get("temporary_attachments") or []
+            if isinstance(attachment, dict)
+        ),
+        "temporary_context_count": len(temporary_context),
+        "temporary_inventory_count": len(temporary_inventory),
     }
     append_generation_event(
         session,
@@ -248,25 +264,146 @@ def requirement_extraction(state: TestGenerationState) -> TestGenerationState:
     return state
 
 
-def _temporary_context_from_source_refs(source_refs: dict) -> list[dict]:
+def _temporary_context_from_source_refs(
+    source_refs: dict,
+    *,
+    query: str,
+    top_k: int,
+    inventory_limit: int,
+) -> tuple[list[dict], list[dict]]:
     fragments: list[dict] = []
     for attachment in source_refs.get("temporary_attachments") or []:
         if not isinstance(attachment, dict):
             continue
         for fragment in attachment.get("fragments") or []:
             if isinstance(fragment, dict):
-                fragments.append(
-                    {
-                        "context_type": "temporary_attachment",
-                        "attachment_id": fragment.get("attachment_id"),
-                        "fragment_id": fragment.get("fragment_id"),
-                        "filename": fragment.get("filename"),
-                        "title": fragment.get("title"),
-                        "content": fragment.get("content"),
-                        "provenance": fragment.get("provenance") or {},
-                    }
-                )
-    return fragments
+                context_item = {
+                    "context_type": "temporary_attachment",
+                    "attachment_id": fragment.get("attachment_id"),
+                    "fragment_id": fragment.get("fragment_id"),
+                    "filename": fragment.get("filename"),
+                    "file_type": fragment.get("file_type"),
+                    "title": fragment.get("title"),
+                    "content": fragment.get("content"),
+                    "external_reference": fragment.get("external_reference"),
+                    "section_label": fragment.get("section_label"),
+                    "row_number": fragment.get("row_number"),
+                    "provenance": fragment.get("provenance") or {},
+                }
+                context_item["retrieval_score"] = _temporary_fragment_score(context_item, query)
+                fragments.append(context_item)
+    selected = _select_temporary_fragments(fragments, top_k=top_k)
+    inventory = _temporary_inventory(fragments, limit=inventory_limit)
+    return selected, inventory
+
+
+def _select_temporary_fragments(fragments: list[dict], *, top_k: int) -> list[dict]:
+    if len(fragments) <= top_k:
+        return fragments
+    seeded = _first_fragment_per_group(fragments)
+    selected_by_id = {item.get("fragment_id"): item for item in seeded}
+    ranked = sorted(
+        fragments,
+        key=lambda item: (
+            -float(item.get("retrieval_score") or 0),
+            str(item.get("filename") or ""),
+            int(item.get("row_number") or 0),
+        ),
+    )
+    for item in ranked:
+        if len(selected_by_id) >= top_k:
+            break
+        selected_by_id.setdefault(item.get("fragment_id"), item)
+    return list(selected_by_id.values())[:top_k]
+
+
+def _first_fragment_per_group(fragments: list[dict]) -> list[dict]:
+    selected: list[dict] = []
+    seen: set[str] = set()
+    for item in fragments:
+        provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
+        key = "|".join(
+            str(part or "")
+            for part in (
+                item.get("filename"),
+                provenance.get("sheet"),
+                provenance.get("region_id"),
+                item.get("section_label"),
+            )
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(item)
+    return selected
+
+
+def _temporary_inventory(fragments: list[dict], *, limit: int) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for item in fragments:
+        provenance = item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
+        key = "|".join(
+            str(part or "")
+            for part in (
+                item.get("filename"),
+                provenance.get("sheet"),
+                provenance.get("region_id"),
+                item.get("section_label"),
+            )
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "filename": item.get("filename"),
+                "file_type": item.get("file_type"),
+                "sheet": provenance.get("sheet") or item.get("section_label"),
+                "region_id": provenance.get("region_id"),
+                "cell_range": provenance.get("cell_range"),
+                "section_label": item.get("section_label"),
+                "fragment_count": 0,
+                "sample_titles": [],
+            },
+        )
+        group["fragment_count"] += 1
+        if item.get("title") and len(group["sample_titles"]) < 3:
+            group["sample_titles"].append(item["title"])
+    return sorted(
+        groups.values(),
+        key=lambda item: (-item["fragment_count"], str(item.get("sheet") or "")),
+    )[:limit]
+
+
+def _temporary_fragment_score(item: dict, query: str) -> float:
+    query_terms = _terms(query)
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("title", "content", "external_reference", "section_label")
+    )
+    content_terms = _terms(text)
+    score = 0.0
+    if query_terms and content_terms:
+        score += len(query_terms & content_terms) / max(len(query_terms), 1)
+    if item.get("external_reference"):
+        score += 0.2
+    if item.get("section_label"):
+        score += 0.08
+    if _looks_structured_record(item):
+        score += 0.12
+    return round(score, 4)
+
+
+def _looks_structured_record(item: dict) -> bool:
+    content = str(item.get("content") or "")
+    labelled_lines = sum(1 for line in content.splitlines() if ":" in line)
+    return labelled_lines >= 2
+
+
+def _terms(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", str(value or "").lower())
+        if len(token) > 2
+    }
 
 
 def _selected_spec_ids(source_refs: dict, session) -> list[str]:

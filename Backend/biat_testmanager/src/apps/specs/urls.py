@@ -2,6 +2,7 @@ from django.urls import path
 
 from apps.specs.views import (
     SpecificationDetailView,
+    SpecificationImportTargetSchemaView,
     SpecificationListCreateView,
     SpecificationSourceDetailView,
     SpecificationSourceImportView,
@@ -18,6 +19,11 @@ urlpatterns = [
         "specification-sources/",
         SpecificationSourceListCreateView.as_view(),
         name="specification-source-list-create",
+    ),
+    path(
+        "specification-import-target-schemas/",
+        SpecificationImportTargetSchemaView.as_view(),
+        name="specification-import-target-schemas",
     ),
     path(
         "specification-sources/<uuid:pk>/",

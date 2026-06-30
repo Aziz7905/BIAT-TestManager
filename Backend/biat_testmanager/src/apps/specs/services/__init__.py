@@ -24,9 +24,11 @@ from .ingestion import (
     apply_region_mapping,
     delete_selected_records,
     import_selected_records,
+    import_target_schemas,
     infer_source_name,
     parse_specification_source,
 )
+from .spec_items import import_record_to_spec_item, sync_spec_sets_for_source
 
 __all__ = [
     "apply_region_mapping",
@@ -48,12 +50,15 @@ __all__ = [
     "infer_embedding_provider",
     "delete_selected_records",
     "import_selected_records",
+    "import_target_schemas",
     "infer_source_name",
+    "import_record_to_spec_item",
     "keyword_retrieve_chunks",
     "load_evaluation_cases",
     "parse_specification_source",
     "reindex_specification_queryset",
     "retrieve_similar_chunks",
     "synchronize_specification_index",
+    "sync_spec_sets_for_source",
     "sync_specification_chunks",
 ]

@@ -2,7 +2,7 @@
 
 from apps.projects.access import can_manage_project_record, get_project_queryset_for_actor
 from apps.projects.models import Project, ProjectMember, ProjectMemberRole
-from apps.specs.models import SpecChunk, Specification, SpecificationSource, SpecificationSourceRecord
+from apps.specs.models import SpecChunk, SpecItem, SpecSet, Specification, SpecificationSource, SpecificationSourceRecord
 from apps.testing.models import TestCase
 
 
@@ -25,6 +25,11 @@ LINKED_TEST_CASE_PREVIEW_QUERYSET = TestCase.objects.select_related(
 SPEC_CHUNK_QUERYSET = SpecChunk.objects.select_related("embedding_model_config").order_by(
     "chunk_index"
 )
+SPEC_ITEM_QUERYSET = SpecItem.objects.select_related(
+    "source_record",
+    "specification",
+).order_by("module", "feature", "external_key", "title")
+SPEC_SET_QUERYSET = SpecSet.objects.prefetch_related("items").order_by("set_type", "title")
 
 
 def can_view_specifications(user) -> bool:
@@ -98,7 +103,11 @@ def get_specification_source_queryset_for_actor(actor):
             "project__team__organization",
             "uploaded_by",
         )
-        .prefetch_related("records")
+        .prefetch_related(
+            "records",
+            Prefetch("spec_items", queryset=SPEC_ITEM_QUERYSET),
+            Prefetch("spec_sets", queryset=SPEC_SET_QUERYSET),
+        )
         .annotate(
             record_count=Count("records"),
             selected_record_count=Count("records", filter=Q(records__is_selected=True)),

@@ -9,7 +9,6 @@ from apps.specs.models import SpecificationSourceType
 from apps.specs.services.parsers.registry import get_parser_for_source
 
 
-MAX_TEMP_ATTACHMENT_RECORDS = 80
 MAX_TEMP_ATTACHMENT_CONTENT_CHARS = 1800
 
 
@@ -37,7 +36,7 @@ def extract_temporary_attachment_context(uploaded_file) -> TemporaryAttachmentCo
     parsed = parser.parse(source)
     attachment_id = f"temp_{content_hash[:16]}"
     fragments = []
-    for index, record in enumerate(parsed.records[:MAX_TEMP_ATTACHMENT_RECORDS]):
+    for index, record in enumerate(parsed.records):
         metadata = record.record_metadata or {}
         structure = metadata.get("structure") if isinstance(metadata.get("structure"), dict) else {}
         fragments.append(

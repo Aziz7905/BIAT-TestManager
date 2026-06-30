@@ -7,9 +7,9 @@ from apps.ai.models import AIGenerationContextType, AIGenerationRetrievedContext
 from apps.testing.models import TestCase
 
 
-def search_repository_memory(session, *, limit: int = 8) -> list[dict[str, Any]]:
+def search_repository_memory(session, *, query: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
     """Find similar existing tests so generation can avoid duplicates."""
-    query_terms = _tokenize(session.objective)
+    query_terms = _tokenize(query or session.objective)
     if not query_terms:
         return []
 
@@ -59,6 +59,7 @@ def search_repository_memory(session, *, limit: int = 8) -> list[dict[str, Any]]
                 "scenario_title": item["scenario_title"],
                 "section_id": item["section_id"],
                 "suite_id": item["suite_id"],
+                "query": query or session.objective,
                 "similarity_reason": item["similarity_reason"],
             },
         )

@@ -7,6 +7,10 @@ from apps.ai.workflows.generation.events import (
     append_generation_event,
     merge_generation_metadata,
 )
+from apps.ai.workflows.generation.evidence import (
+    build_coverage_obligations,
+    compile_semantic_evidence,
+)
 from apps.ai.workflows.generation.nodes._llm import (
     accumulate_usage,
     call_llm_json,
@@ -36,6 +40,23 @@ def generation_planner(state: TestGenerationState) -> TestGenerationState:
     stop_if_cancelled(state)
     session = state["session"]
     limits = agent_limits(state)
+    semantic_evidence = compile_semantic_evidence(
+        objective=session.objective,
+        generation_context=[
+            *(state.get("rag_context") or []),
+            *(state.get("temporary_context") or []),
+        ],
+        requirement_extraction=state.get(
+            "requirement_extraction",
+            empty_requirement_extraction(),
+        ),
+    )
+    coverage_obligations, coverage_metadata = build_coverage_obligations(
+        semantic_evidence
+    )
+    state["semantic_evidence"] = semantic_evidence
+    state["coverage_obligations"] = coverage_obligations
+    state["coverage_metadata"] = coverage_metadata
     messages = build_generation_plan_messages(
         objective=session.objective,
         project_name=session.project.name,
@@ -45,8 +66,11 @@ def generation_planner(state: TestGenerationState) -> TestGenerationState:
         ),
         rag_context=state.get("rag_context", []),
         temporary_context=state.get("temporary_context", []),
+        temporary_inventory=state.get("temporary_inventory", []),
         repository_memory=state.get("repository_memory", []),
         generation_limits=state.get("generation_limits", CLOUD_GENERATION_LIMITS),
+        semantic_evidence=semantic_evidence,
+        coverage_obligations=coverage_obligations,
     )
     append_generation_event(
         session,
@@ -67,8 +91,8 @@ def generation_planner(state: TestGenerationState) -> TestGenerationState:
         result.payload,
         objective=session.objective,
         limits=limits,
+        coverage_obligations=coverage_obligations,
     )
-    plan = _ensure_actionable_plan(plan, objective=session.objective)
     state["generation_plan"] = plan
     state["clarification_required"] = not bool(plan.get("selected_scenarios"))
     merge_generation_metadata(
@@ -78,7 +102,13 @@ def generation_planner(state: TestGenerationState) -> TestGenerationState:
             "candidate_count": len(plan.get("candidate_pool", [])),
             "selected_count": len(plan.get("selected_scenarios", [])),
             "excluded_count": len(plan.get("excluded_candidates", [])),
+            "obligation_count": len(coverage_obligations),
         },
+        semantic_evidence={
+            "count": len(semantic_evidence),
+            "types": _count_by_key(semantic_evidence, "evidence_type"),
+        },
+        coverage_metadata=coverage_metadata,
     )
     append_generation_event(
         session,
@@ -91,6 +121,14 @@ def generation_planner(state: TestGenerationState) -> TestGenerationState:
         payload={"clarification_required": state["clarification_required"]},
     )
     return state
+
+
+def _count_by_key(items: list[dict], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def persist_clarification_required(state: TestGenerationState) -> TestGenerationState:
@@ -109,6 +147,15 @@ def persist_clarification_required(state: TestGenerationState) -> TestGeneration
         },
         "sections": [],
     }
+    session.critic_report = {
+        "generation_plan": plan,
+        "agent_actions": state.get("agent_actions", []),
+        "agent_observations": state.get("agent_observations", []),
+        "retrieval_attempts": state.get("retrieval_attempts", []),
+        "obligation_state_summary": state.get("obligation_state_summary", {}),
+        "clarification_questions": plan.get("open_questions", []),
+        "agent_termination_reason": state.get("agent_termination_reason") or "clarification_required",
+    }
     session.completed_at = timezone.now()
     session.input_tokens = int(state.get("input_tokens") or 0)
     session.output_tokens = int(state.get("output_tokens") or 0)
@@ -117,6 +164,7 @@ def persist_clarification_required(state: TestGenerationState) -> TestGeneration
         update_fields=[
             "status",
             "draft_payload",
+            "critic_report",
             "completed_at",
             "input_tokens",
             "output_tokens",
@@ -131,75 +179,3 @@ def persist_clarification_required(state: TestGenerationState) -> TestGeneration
         payload={"open_questions": plan.get("open_questions", [])},
     )
     return state
-
-
-def _ensure_actionable_plan(plan: dict, *, objective: str) -> dict:
-    if plan.get("selected_scenarios"):
-        return plan
-    if not _objective_is_actionable(objective):
-        return plan
-    title = _title_from_objective(objective)
-    assumptions = [
-        "Exact alternate outcomes not supplied; generated reasonable coverage from the objective."
-    ]
-    candidate_pool = [
-        {
-            "candidate_id": "cand_1",
-            "title": title,
-            "category": "functional",
-            "priority": "must_have",
-            "user_story": objective,
-            "source_refs": [],
-            "assumptions": assumptions,
-        },
-        {
-            "candidate_id": "cand_2",
-            "title": f"{title} alternate and edge coverage"[:500],
-            "category": "functional",
-            "priority": "should_have",
-            "user_story": objective,
-            "source_refs": [],
-            "assumptions": assumptions,
-        },
-    ]
-    max_scenarios = int(plan.get("limits", {}).get("max_scenarios") or 2)
-    selected_candidates = candidate_pool[: max(1, min(2, max_scenarios))]
-    plan["candidate_pool"] = candidate_pool
-    plan["selected_scenarios"] = [
-        {
-            "draft_scenario_id": f"scenario_{index + 1}",
-            "candidate_id": candidate["candidate_id"],
-            "title": candidate["title"],
-            "category": candidate["category"],
-            "priority": candidate["priority"],
-            "intended_case_count": min(
-                3,
-                int(plan.get("limits", {}).get("max_cases_per_scenario") or 3),
-            ),
-            "user_story": objective,
-            "source_refs": [],
-            "assumptions": assumptions,
-        }
-        for index, candidate in enumerate(selected_candidates)
-    ]
-    selected_ids = {candidate["candidate_id"] for candidate in selected_candidates}
-    plan["excluded_candidates"] = [
-        {
-            "candidate_id": candidate["candidate_id"],
-            "reason": "Not selected within the scenario budget.",
-        }
-        for candidate in candidate_pool
-        if candidate["candidate_id"] not in selected_ids
-    ]
-    plan["open_questions"] = []
-    return plan
-
-
-def _objective_is_actionable(objective: str) -> bool:
-    words = " ".join(str(objective or "").split())
-    return len(words) >= 16 and any(char.isalpha() for char in words)
-
-
-def _title_from_objective(objective: str) -> str:
-    title = " ".join(str(objective or "").split())[:120].rstrip()
-    return title or "Generated test scenario"

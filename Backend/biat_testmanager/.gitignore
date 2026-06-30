@@ -63,4 +63,4 @@ uv.lock
 
 # PostgreSQL (if local)
 *.dump
-.playwright-mcp/
+docs

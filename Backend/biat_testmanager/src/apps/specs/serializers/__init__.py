@@ -1,5 +1,8 @@
 from .specifications import (
     SpecChunkSerializer,
+    SpecItemCompactSerializer,
+    SpecSetCompactSerializer,
+    SpecificationImportTargetSchemaSerializer,
     SpecificationSerializer,
     SpecificationSourceCreateSerializer,
     SpecificationSourceDetailSerializer,
@@ -12,6 +15,9 @@ from .specifications import (
 
 __all__ = [
     "SpecChunkSerializer",
+    "SpecItemCompactSerializer",
+    "SpecSetCompactSerializer",
+    "SpecificationImportTargetSchemaSerializer",
     "SpecificationSerializer",
     "SpecificationSourceCreateSerializer",
     "SpecificationSourceDetailSerializer",

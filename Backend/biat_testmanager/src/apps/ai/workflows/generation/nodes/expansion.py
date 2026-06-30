@@ -17,6 +17,10 @@ from apps.ai.workflows.generation.nodes.shared import (
     combined_generation_context,
     stop_if_cancelled,
 )
+from apps.ai.workflows.generation.guardrails import (
+    format_guardrail_repair_instruction,
+    validate_scenario_guardrails,
+)
 from apps.ai.workflows.generation.plan import (
     AgentLimits,
     SCENARIO_EXPANSION_SCHEMA,
@@ -64,7 +68,7 @@ def scenario_expand_loop(state: TestGenerationState) -> TestGenerationState:
         repair_counts[scenario_plan.get("draft_scenario_id") or scenario.get("draft_id")] = scenario_counts
         if scenario_counts.get("termination_reason") != "completed":
             termination_reason = scenario_counts["termination_reason"]
-        draft["sections"][0]["scenarios"].append(scenario)
+        _insert_scenario(draft, state["session"], scenario_plan, scenario)
         _persist_progressive_draft(state["session"], draft)
         append_generation_event(
             state["session"],
@@ -91,21 +95,24 @@ def empty_draft(session, plan: dict[str, Any]) -> dict[str, Any]:
             "draft_id": session.target_suite_id or "suite_generated",
             "name": session.target_suite.name
             if session.target_suite
-            else plan.get("objective") or "AI Generated Test Suite",
+            else _suite_name_for_plan(session, plan),
             "description": _build_suite_description(plan, session.objective),
         },
-        "sections": [
-            {
-                "draft_id": session.target_section_id or GENERATED_SECTION_ID,
-                "name": session.target_section.name
-                if session.target_section
-                else GENERATED_SECTION_NAME,
-                "order_index": 0,
-                "scenarios": [],
-                "children": [],
-            }
-        ],
+        "sections": [],
     }
+
+
+def _suite_name_for_plan(session, plan: dict[str, Any]) -> str:
+    selected = plan.get("selected_scenarios") or []
+    scenario_types = {str(item.get("scenario_type") or item.get("category") or "") for item in selected if isinstance(item, dict)}
+    if scenario_types == {"security"}:
+        return "Security"
+    if scenario_types == {"performance"}:
+        return "Performance"
+    objective = _clean_text(plan.get("objective") or session.objective)
+    if any(word in objective.lower() for word in ("api", "endpoint", "contract")):
+        return "API Regression"
+    return "Functional Regression"
 
 
 def _build_suite_description(plan: dict[str, Any], objective: str) -> str:
@@ -131,6 +138,8 @@ def _generate_scenario_with_repairs(
     counts = {
         "schema_repair_attempts": 0,
         "quality_repair_attempts": 0,
+        "guardrail_repair_attempts": 0,
+        "guardrail_violations": [],
         "termination_reason": "completed",
     }
     scenario_payload = _call_scenario_expander(state, scenario_plan)
@@ -143,6 +152,42 @@ def _generate_scenario_with_repairs(
                 scenario_plan,
                 scenario_payload,
             )
+            guardrails = validate_scenario_guardrails(
+                scenario_payload=scenario_payload,
+                scenario_plan=scenario_plan,
+                coverage_obligations=state.get("coverage_obligations")
+                or (state.get("generation_plan") or {}).get("coverage_obligations", []),
+                repository_memory=state.get("repository_memory", []),
+            )
+            counts["guardrail_violations"] = [
+                {
+                    "code": item.code,
+                    "message": item.message,
+                    "severity": item.severity,
+                    "case_id": item.case_id,
+                }
+                for item in guardrails.violations
+            ]
+            if guardrails.should_reject:
+                counts["termination_reason"] = "guardrail_rejected"
+                raise ValueError("Generated scenario rejected by deterministic guardrails.")
+            if guardrails.should_repair:
+                if counts["guardrail_repair_attempts"] >= limits.max_repairs_per_scenario:
+                    counts["termination_reason"] = "guardrail_repair_limit_reached"
+                    raise ValueError("Generated scenario failed deterministic guardrails after repair.")
+                counts["guardrail_repair_attempts"] += 1
+                scenario_payload = _repair_scenario_payload(
+                    state,
+                    scenario_plan=scenario_plan,
+                    scenario_payload=scenario_payload,
+                    instruction=format_guardrail_repair_instruction(guardrails),
+                )
+                scenario_payload = _normalize_single_scenario(
+                    state,
+                    scenario_plan,
+                    scenario_payload,
+                )
+                continue
             quality = evaluate_draft_quality(
                 _draft_for_single_scenario(state, scenario_payload),
                 state.get("requirement_extraction", empty_requirement_extraction()),
@@ -259,11 +304,15 @@ def _normalize_single_scenario(
     scenario_payload = dict(scenario_payload or {})
     scenario_payload["draft_id"] = scenario_plan["draft_scenario_id"]
     scenario_payload.setdefault("title", scenario_plan["title"])
-    scenario_payload.setdefault("business_priority", scenario_plan.get("priority"))
-    source_refs = scenario_plan.get("source_refs") or []
+    scenario_payload["business_priority"] = scenario_plan.get("business_priority") or scenario_payload.get("business_priority")
+    scenario_payload["scenario_type"] = scenario_plan.get("scenario_type") or scenario_plan.get("category") or scenario_payload.get("scenario_type")
+    scenario_payload["priority"] = _scenario_priority(scenario_plan.get("priority") or scenario_payload.get("priority"))
+    scenario_payload["polarity"] = scenario_plan.get("polarity") or scenario_payload.get("polarity")
     for case in scenario_payload.get("cases") or []:
-        if isinstance(case, dict) and not case.get("source_refs"):
-            case["source_refs"] = source_refs
+        if not isinstance(case, dict):
+            continue
+        if not isinstance(case.get("coverage"), dict):
+            case["coverage"] = {}
     draft = _draft_for_single_scenario(state, scenario_payload)
     normalized = normalize_draft_payload(draft)
     return normalized["sections"][0]["scenarios"][0]
@@ -295,3 +344,77 @@ def _draft_for_single_scenario(
 def _persist_progressive_draft(session, draft: dict[str, Any]) -> None:
     session.draft_payload = draft
     session.save(update_fields=["draft_payload", "updated_at"])
+
+
+def _scenario_priority(value: Any) -> str:
+    cleaned = _clean_text(value).lower().replace(" ", "_").replace("-", "_")
+    if cleaned in {"critical", "high", "medium", "low"}:
+        return cleaned
+    if cleaned in {"must_have", "should_have"}:
+        return "high" if cleaned == "must_have" else "medium"
+    if cleaned in {"could_have", "wont_have"}:
+        return "low"
+    return "medium"
+
+
+def _insert_scenario(
+    draft: dict[str, Any],
+    session,
+    scenario_plan: dict[str, Any],
+    scenario: dict[str, Any],
+) -> None:
+    path = _target_section_path(session) or [
+        _clean_text(item)[:300]
+        for item in scenario_plan.get("section_path", [])
+        if _clean_text(item)
+    ]
+    if not path:
+        path = [GENERATED_SECTION_NAME]
+    sections = draft.setdefault("sections", [])
+    current = _get_or_create_section(
+        sections,
+        name=path[0],
+        draft_id=GENERATED_SECTION_ID if path[0] == GENERATED_SECTION_NAME else "",
+        order_index=len(sections),
+    )
+    for name in path[1:]:
+        children = current.setdefault("children", [])
+        current = _get_or_create_section(
+            children,
+            name=name,
+            draft_id="",
+            order_index=len(children),
+        )
+    current.setdefault("scenarios", []).append(scenario)
+
+
+def _target_section_path(session) -> list[str]:
+    if not getattr(session, "target_section_id", None):
+        return []
+    path: list[str] = []
+    current = session.target_section
+    while current is not None:
+        path.append(current.name)
+        current = current.parent
+    return list(reversed(path))
+
+
+def _get_or_create_section(
+    sections: list[dict[str, Any]],
+    *,
+    name: str,
+    draft_id: str,
+    order_index: int,
+) -> dict[str, Any]:
+    for section in sections:
+        if section.get("name") == name:
+            return section
+    section = {
+        "draft_id": draft_id or f"section_{len(sections) + 1}",
+        "name": name,
+        "order_index": order_index,
+        "scenarios": [],
+        "children": [],
+    }
+    sections.append(section)
+    return section
